@@ -130,11 +130,11 @@ $ carousearch harvest "iphone 15 pro" --category 5707 --condition used --sort re
 run 12: 212 listings, 5 pages, stopped: max_pages (37 new, 4 changed)
 ```
 
-A listing already in the table is overwritten only when its title, price or condition changed (a content hash decides); that change is also appended to `listing_changes` with the old and new price. Likes and `last_seen_at` are refreshed on every pull. An identical search run in the last 30 minutes is reused instead of scraped again (`reused run 11: …`); pass `--no-reuse` to force a fresh pull. `--max-age-days N` stops once listings get older than N days and needs `--sort recent`.
+A listing already in the table is overwritten only when its title, price or condition changed (a content hash decides); that change is also appended to `listing_changes` with the old and new price. Likes, the bump time and `last_seen_at` are refreshed on every pull. An identical search run in the last 30 minutes is reused instead of scraped again (`reused run 11: …`) when that run covered at least as much (it exhausted the pages, or fetched at least as many pages, or used the same or a longer age cutoff); pass `--no-reuse` to force a fresh pull. `--max-age-days N` stops once listings get older than N days and needs `--sort recent`.
 
 ### analyze
 
-Runs the searches in an analysis spec, then prints price statistics for the union of their listings: count, min, p25, median, p75, max and mean, overall and per group, with IQR outliers listed separately and excluded by default. The spec is JSON ([docs/examples/analysis_spec.example.json](docs/examples/analysis_spec.example.json)):
+Runs the searches in an analysis spec, then prints price statistics for the union of their listings: count, min, p25, median, p75 and max, overall and per group (the mean is in the `--json` output), with IQR outliers listed separately and excluded by default. The spec is JSON ([docs/examples/analysis_spec.example.json](docs/examples/analysis_spec.example.json)):
 
 ```json
 {
@@ -155,7 +155,7 @@ All           n=184  median S$1,050  p25–p75 S$980–S$1,150  min S$700  max S
 ...
 ```
 
-`group_by` is `none`, `condition`, `week_posted` or `seller`; `title_filter` holds case-insensitive regexes (every `include` must match, no `exclude` may). `--json` prints the full result; `--spec -` reads the spec from stdin. The statistics are asking prices, not sold prices.
+`group_by` is `none`, `condition`, `week_posted` (ISO weeks in Singapore time) or `seller`; `title_filter` holds case-insensitive regexes (every `include` must match, no `exclude` may). `--json` prints the full result; `--spec -` reads the spec from stdin. The statistics are asking prices, not sold prices.
 
 ### canary
 

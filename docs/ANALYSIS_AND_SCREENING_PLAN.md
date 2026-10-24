@@ -27,14 +27,18 @@ These were settled in the design discussion. Implement them as written.
 1. **Fresh pull on every analysis question.** The `listings` table is a by-product of pulls, never the
    source of truth for "now". An analysis reads only the listings that its own pull returned.
 2. **Reuse window.** If the identical `SearchRequest` (same hash, section 3.2) was harvested successfully
-   within the last 30 minutes (configurable), reuse that run instead of scraping again. This is what makes
-   follow-up questions instant.
+   within the last 30 minutes (configurable) **and that run covers at least what is now asked for**
+   (`run_covers`, section 3.4: it exhausted the pages, or fetched at least as many pages at the same or a
+   larger page size, or stopped on the same or a longer age cutoff), reuse that run instead of scraping
+   again. This is what makes follow-up questions instant without a 1-page run masquerading as a 10-page one.
 3. **One row per listing, overwritten in place.** No append-only snapshot table. A row is keyed by
    Carousell's listing id (no synthetic identity hash). On every pull, `like_count` and `last_seen_at` are
    always written. A **content hash over `(title, price, condition)`** decides whether the listing
-   "changed": same hash, nothing else is written; different hash, the whole row is overwritten and one
-   row is appended to `listing_changes` with the old and new price, condition and title. Likes are
-   deliberately **not** in the hash: they are demand signal (used for ranking), not a market move.
+   "changed": same hash, only the always-written fields move; different hash, the whole row is overwritten
+   and one row is appended to `listing_changes` with the old and new price, condition and title. Likes and
+   the bump timestamp (`posted_or_bumped_at` / `_kind`) are deliberately **not** in the hash but are
+   always written: likes are demand signal (used for ranking) and a bump is freshness, neither is a market
+   move, yet both must be current for the age filter, `week_posted` grouping and the "newest" list.
 4. **Likes matter.** They are stored on every pull and used by rule stages and ranking. No separate
    likes history table; likes-per-day is derived from `like_count / days since posted_or_bumped_at`.
 5. **Statistics are computed by code, never by the LLM.** The LLM produces a plan (structured output,
@@ -149,7 +153,8 @@ CREATE TABLE IF NOT EXISTS harvest_runs (
     finished_at   TEXT,                         -- NULL while running
     pages_fetched INTEGER NOT NULL DEFAULT 0,
     listing_count INTEGER NOT NULL DEFAULT 0,
-    stop_reason   TEXT                          -- market.harvest.StopReason value, NULL while running
+    stop_reason   TEXT,                         -- market.harvest.StopReason value, NULL while running
+    limits_json   TEXT NOT NULL DEFAULT '{}'    -- the HarvestLimits the run was made with (for run_covers)
 );
 CREATE INDEX IF NOT EXISTS harvest_runs_lookup ON harvest_runs (request_hash, started_at);
 CREATE TABLE IF NOT EXISTS harvest_run_listings (
@@ -225,17 +230,23 @@ Duplicate ids within one call (same listing on two pages) are processed once: ke
 ```python
 def load_listing_rows(connection, listing_ids: Sequence[str]) -> list[ListingRow]     # in the order given; missing ids skipped
 def load_listing_changes(connection, listing_id: str) -> list[ListingChange]           # oldest first
-def create_harvest_run(connection, request: SearchRequest, request_hash: str, started_at: datetime) -> int
+def create_harvest_run(connection, request: SearchRequest, request_hash: str, started_at: datetime, limits: HarvestLimits | None = None) -> int
 def add_run_listings(connection, run_id: int, listing_ids: Sequence[str], first_position: int) -> None
 def finish_harvest_run(connection, run_id: int, finished_at: datetime, pages_fetched: int, listing_count: int, stop_reason: str) -> None
-def find_reusable_run(connection, request_hash: str, now: datetime, max_age: timedelta) -> HarvestRun | None
+def find_recent_runs(connection, request_hash: str, now: datetime, max_age: timedelta) -> list[HarvestRun]   # newest first
+def find_reusable_run(connection, request_hash: str, now: datetime, max_age: timedelta) -> HarvestRun | None # first of the above
 def load_run_listing_ids(connection, run_id: int) -> list[str]                           # ordered by position
 ```
-`HarvestRun` is a frozen dataclass mirroring the table. `find_reusable_run` returns the newest run with
-that hash whose `finished_at` is not NULL, `stop_reason != "error"`, and `now - finished_at <= max_age`.
+`HarvestRun` is a frozen dataclass mirroring the table (`request` parsed as a `SearchRequest`, `limits` as a
+`HarvestLimits`). `find_recent_runs` returns the runs with that hash whose `finished_at` is not NULL,
+`stop_reason != "error"`, and `now - finished_at <= max_age`; whether one covers a new request is the
+harvester's call (`run_covers`).
 `add_run_listings` uses `INSERT OR IGNORE` so a listing that appears on two pages keeps its first position.
 
-### 3.4 `market/harvest.py` (I/O: Carousell + SQLite)
+### 3.4 `market/harvest.py` (I/O: Carousell + SQLite) and `market/limits.py` (pure)
+
+`HarvestLimits` lives in `market/limits.py` so that `analysis.py` (pure) can embed it without importing the
+I/O module; `harvest.py` re-exports nothing, callers import it from `limits`.
 
 ```python
 class StopReason(StrEnum):
@@ -272,23 +283,27 @@ Algorithm:
 1. `request = request.model_copy(update={"page_cursor": None, "page_size": limits.page_size})`. If
    `limits.max_age_days` is set and `request.sort != SortOrder.RECENT`, raise `ValueError` (the cutoff is
    only sound when pages arrive newest first).
-2. `request_hash = search_request_hash(request)`. If `reuse_within` is not None and
-   `find_reusable_run(...)` returns a run, return `HarvestOutcome(run.id, load_run_listing_ids(...), run.pages_fetched, StopReason(run.stop_reason), reused=True, summary=None)` and log "reused run N".
-3. `run_id = create_harvest_run(...)`. Loop over pages with `cursor = None`:
+2. `request_hash = search_request_hash(request)`. If `reuse_within` is not None, take the newest run from
+   `find_recent_runs(...)` for which `run_covers(run, limits)` is true; if there is one, return
+   `HarvestOutcome(run.id, load_run_listing_ids(...), run.pages_fetched, StopReason(run.stop_reason), reused=True, summary=None)` and log "reused run N".
+3. `run_id = create_harvest_run(..., limits)`. Loop over pages with `cursor = None`:
    - `result = client.search(request.model_copy(update={"page_cursor": cursor}))`.
-   - `upsert_listings`, `add_run_listings` (skipping ids already in this run), update counters, call `progress`.
+   - Drop ids already seen in this run (across pages and, rarely, within one page), `upsert_listings`,
+     `add_run_listings`, update counters, call `progress`.
    - Stop reason, checked in this order by the pure function below: `NO_MORE_PAGES` if
      `result.next_page is None` or the page added no new ids; `MAX_AGE` if the cutoff applies and the
      last listing on the page with a timestamp is older than `now - max_age_days`; `MAX_PAGES` if
      `pages_fetched == limits.max_pages`.
-   - On `CarousellError`: `finish_harvest_run(..., stop_reason="error")` and re-raise. The listings
-     already written stay (they are real data); the run is simply not reusable.
+   - On any exception (Carousell, SQLite, a bad clock): `finish_harvest_run(..., stop_reason="error")` and
+     re-raise, so the run never looks "running". The listings already written stay (they are real data);
+     the run is simply not reusable.
 4. `finish_harvest_run(...)`, return the outcome with the merged `UpsertSummary`.
 
-Pure helper, unit-tested on its own:
+Pure helpers, unit-tested on their own:
 ```python
-def decide_stop(page_index: int, page_listings: list[Listing], new_ids_on_page: int, next_page: str | None,
-                limits: HarvestLimits, now: datetime) -> StopReason | None
+def decide_stop(pages_fetched: int, page_listings: list[Listing], new_ids_on_page: int, next_page: str | None,
+                limits: HarvestLimits, now: datetime) -> StopReason | None     # pages_fetched counts the page just fetched
+def run_covers(run: HarvestRun, requested: HarvestLimits) -> bool               # see decision 2
 ```
 
 ### 3.5 `market/analysis.py` (pure)
@@ -297,7 +312,7 @@ def decide_stop(page_index: int, page_listings: list[Listing], new_ids_on_page: 
 class GroupBy(StrEnum):
     NONE = "none"
     CONDITION = "condition"
-    WEEK_POSTED = "week_posted"      # ISO week of posted_or_bumped_at, key "2026-W43"; None -> "unknown"
+    WEEK_POSTED = "week_posted"      # ISO week of posted_or_bumped_at in Singapore time, key "2026-W43"; None -> "unknown"
     SELLER = "seller"                # seller_username or seller_id; None -> "unknown"
 
 class TitleFilter(BaseModel):        # extra="forbid"
@@ -313,7 +328,8 @@ class AnalysisSpec(BaseModel):       # extra="forbid"
     title_filter: TitleFilter = TitleFilter()
     group_by: GroupBy = GroupBy.NONE
     exclude_outliers: bool = True
-    # validator: every search has page_cursor None; searches are de-duplicated by search_request_hash
+    # validators: every search has page_cursor None; searches are de-duplicated by search_request_hash;
+    # limits.max_age_days requires every search to have sort == RECENT (rejected before any request is made)
 ```
 Result types (frozen dataclasses):
 ```python
@@ -360,8 +376,8 @@ lightly_used ...
 Outliers excluded: 1455… "iPhone 15 Pro, faulty" S$300 (low), …
 Cheapest: S$700  iPhone 15 Pro 256GB black  https://www.carousell.sg/p/…
 ```
-Prices use `filters.payload.format_price`. Also `render_analysis_json(result) -> str` via a pydantic
-`TypeAdapter` or `dataclasses.asdict` with datetimes as ISO text.
+Prices are rounded to cents and formatted with thousands separators (`S$1,050`, `S$980.50`). Also
+`render_analysis_json(result) -> str` via `dataclasses.asdict` with datetimes as ISO text.
 
 ### 3.7 CLI (phase A)
 
@@ -389,8 +405,9 @@ Add `docs/examples/analysis_spec.example.json` with a realistic spec (two search
   two-page scrape can be scripted; test each stop reason, reuse, de-duplication across pages, the error
   path (run finished with `error`, listings kept), and that `max_age_days` without `RECENT` raises.
   Build page 2 from the existing fixture by rewriting listing ids and timestamps in the test
-  (a real second page should be captured later; add it to `fixture_capture.py` as
-  `search_recent_page_1.json` / `search_recent_page_2.json` and prefer it when present).
+  (a real second page should be captured later, from a machine that can reach carousell.sg; add it to
+  `fixture_capture.py` as `search_recent_page_1.json` / `search_recent_page_2.json` and prefer it when
+  present — deferred from phase A, see the ROADMAP status).
 - `tests/test_analysis.py`: `price_stats` against hand-computed values; `iqr_bounds` small-n behaviour;
   title include/exclude; every `GroupBy`; outlier exclusion; empty input; a listing with `price None`.
 - `tests/test_cli.py` additions: `analyze --spec` end to end with `FakeCarousell`, including exit codes.

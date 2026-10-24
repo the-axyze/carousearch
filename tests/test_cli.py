@@ -1,3 +1,4 @@
+import io
 import json
 import sys
 from pathlib import Path
@@ -254,3 +255,35 @@ def test_the_example_spec_in_docs_is_valid() -> None:
     spec = cli.read_analysis_spec(str(example))
     assert len(spec.searches) == 2
     assert spec.limits.max_age_days == 30
+
+
+def test_analyze_exits_with_failure_when_carousell_blocks(tmp_path: Path, capsys) -> None:
+    blocked = httpx.Response(403, headers={"cf-mitigated": "challenge"}, text="<title>Just a moment</title>")
+    spec_path = tmp_path / "spec.json"
+    spec_path.write_text(json.dumps({"question": "q", "searches": [{"query": "iphone 15"}]}))
+
+    exit_code = run_cli(["analyze", "--spec", str(spec_path)], FakeCarousell(page_responses={None: blocked}), tmp_path)
+
+    assert exit_code == 1
+    assert capsys.readouterr().err.startswith("error: CarousellBlockedError")
+
+
+def test_analyze_reads_the_spec_from_stdin(tmp_path: Path, capsys, monkeypatch) -> None:
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"question": "from stdin", "searches": [{"query": "iphone 15"}]})))
+
+    exit_code = run_cli(["analyze", "--spec", "-"], FakeCarousell(), tmp_path)
+
+    assert exit_code == 0
+    assert "from stdin" in capsys.readouterr().out
+
+
+def test_analyze_rejects_an_age_cutoff_without_recent_sort_before_any_request(tmp_path: Path, capsys) -> None:
+    carousell = FakeCarousell()
+    spec_path = tmp_path / "spec.json"
+    spec_path.write_text(json.dumps({"question": "q", "searches": [{"query": "x"}], "limits": {"max_age_days": 7}}))
+
+    exit_code = run_cli(["analyze", "--spec", str(spec_path)], carousell, tmp_path)
+
+    assert exit_code == 2
+    assert "sort=recent" in capsys.readouterr().err
+    assert carousell.requests == []

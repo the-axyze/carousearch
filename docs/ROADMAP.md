@@ -178,3 +178,11 @@ Not done yet:
 ## Next: market analysis and staged screening (2026-10-25)
 
 The next body of work is specified in [ANALYSIS_AND_SCREENING_PLAN.md](ANALYSIS_AND_SCREENING_PLAN.md): phases A to F covering harvest-and-upsert storage, the analysis spec and CLI, the LLM layer (prompt to filters, plan and summarise an analysis), read-only SQL questions, the per-chat screening pipeline (rule, text and vision stages with cached, auditable verdicts) and scheduled surveys. That document supersedes the Level 3 section above; Level 1 task 5 and the "next task" note under phase 2 are its phase B.
+
+### Phase A status (2026-10-25)
+
+Built, on `feature/market-analysis-a`: the `listings` / `listing_changes` / `harvest_runs` / `harvest_run_listings` tables with upsert-by-content-hash, `market/hashing.py`, `market/limits.py`, `market/harvest.py` (multi-page pull, coverage-aware reuse of a recent run, pure `decide_stop` and `run_covers`), `market/analysis.py` and `market/render.py` (spec, price statistics, text/JSON output), and the `carousearch harvest` and `carousearch analyze --spec` commands with `docs/examples/analysis_spec.example.json`. 110 new offline tests (290 total).
+
+Differences from the plan, all written back into it: `HarvestLimits` lives in `market/limits.py` (keeps `analysis.py` free of the I/O module); reuse checks that the earlier run covers the requested limits (`limits_json` on `harvest_runs`, `find_recent_runs` + `run_covers`) rather than matching the request hash alone; the bump timestamp is refreshed on every pull like likes; `AnalysisSpec` rejects `limits.max_age_days` without `sort=recent` before any request; a harvest closes its run as `error` on any exception, not only Carousell errors; week groups are ISO weeks in Singapore time; `decide_stop` takes `pages_fetched` (1-based) rather than a page index.
+
+Deferred: capturing a real two-page `sort=recent` fixture pair (`search_recent_page_1/2.json`) needs a machine that can reach carousell.sg; `test_harvest.py` builds its pages from the existing fixture until then. The acceptance run of the example spec against the live site is also still to be done from the home machine.

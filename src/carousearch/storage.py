@@ -16,6 +16,7 @@ from pathlib import Path
 
 from carousearch.filters.schema import Condition, Listing, ListingDetail, PostedOrBumpedKind, SearchRequest
 from carousearch.market.hashing import listing_content_hash
+from carousearch.market.limits import HarvestLimits
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS seen_listings (
@@ -76,7 +77,8 @@ CREATE TABLE IF NOT EXISTS harvest_runs (
     finished_at   TEXT,
     pages_fetched INTEGER NOT NULL DEFAULT 0,
     listing_count INTEGER NOT NULL DEFAULT 0,
-    stop_reason   TEXT
+    stop_reason   TEXT,
+    limits_json   TEXT NOT NULL DEFAULT '{}'    -- market.limits.HarvestLimits the run was made with
 );
 CREATE INDEX IF NOT EXISTS harvest_runs_lookup ON harvest_runs (request_hash, started_at);
 CREATE TABLE IF NOT EXISTS harvest_run_listings (
@@ -159,6 +161,7 @@ class HarvestRun:
     pages_fetched: int
     listing_count: int
     stop_reason: str | None
+    limits: HarvestLimits
 
 
 @dataclass(frozen=True)
@@ -243,7 +246,7 @@ _LISTING_COLUMNS = (
 def upsert_listings(connection: sqlite3.Connection, listings: Iterable[Listing], seen_at: datetime) -> UpsertSummary:
     """Write a pull's listings, one row per listing id, overwritten in place.
 
-    `like_count` and `last_seen_at` are always written. The rest of the row is rewritten, and a
+    `like_count`, the bump timestamp and `last_seen_at` are always written. The rest of the row is rewritten, and a
     `listing_changes` row appended, only when the content hash (title, price, condition) differs from the
     stored one. A listing id repeated within one call (the same listing on two pages) is processed once,
     from its first occurrence.
@@ -270,8 +273,17 @@ def upsert_listings(connection: sqlite3.Connection, listings: Iterable[Listing],
                 new_ids.append(listing.id)
             elif existing[0] == content_hash:
                 connection.execute(
-                    "UPDATE listings SET like_count = ?, last_seen_at = ? WHERE listing_id = ?",
-                    (listing.like_count, seen_text, listing.id),
+                    """
+                    UPDATE listings SET like_count = ?, posted_or_bumped_at = ?, posted_or_bumped_kind = ?, last_seen_at = ?
+                    WHERE listing_id = ?
+                    """,
+                    (
+                        listing.like_count,
+                        to_text(listing.posted_or_bumped_at) if listing.posted_or_bumped_at else None,
+                        listing.posted_or_bumped_kind.value if listing.posted_or_bumped_kind else None,
+                        seen_text,
+                        listing.id,
+                    ),
                 )
                 unchanged_ids.append(listing.id)
             else:
@@ -396,19 +408,24 @@ def _optional_condition(value: str | None) -> Condition | None:
 # --- harvest_runs ------------------------------------------------------------
 
 _HARVEST_RUN_COLUMNS = (
-    "id, request_hash, request_json, started_at, finished_at, pages_fetched, listing_count, stop_reason"
+    "id, request_hash, request_json, started_at, finished_at, pages_fetched, listing_count, stop_reason, limits_json"
 )
 
 
 def create_harvest_run(
-    connection: sqlite3.Connection, request: SearchRequest, request_hash: str, started_at: datetime
+    connection: sqlite3.Connection,
+    request: SearchRequest,
+    request_hash: str,
+    started_at: datetime,
+    limits: HarvestLimits | None = None,
 ) -> int:
     """Record the start of a harvest and return its run id. The request is stored without its page cursor."""
     request_json = request.model_copy(update={"page_cursor": None}).model_dump_json()
+    limits_json = (limits or HarvestLimits()).model_dump_json()
     with connection:
         cursor = connection.execute(
-            "INSERT INTO harvest_runs (request_hash, request_json, started_at) VALUES (?, ?, ?)",
-            (request_hash, request_json, to_text(started_at)),
+            "INSERT INTO harvest_runs (request_hash, request_json, started_at, limits_json) VALUES (?, ?, ?, ?)",
+            (request_hash, request_json, to_text(started_at), limits_json),
         )
     return cursor.lastrowid
 
@@ -435,6 +452,7 @@ def finish_harvest_run(
     listing_count: int,
     stop_reason: str,
 ) -> None:
+    """Close a run with its final counts and why it stopped (a `market.harvest.StopReason` value)."""
     with connection:
         connection.execute(
             """
@@ -445,12 +463,14 @@ def finish_harvest_run(
         )
 
 
-def find_reusable_run(
+def find_recent_runs(
     connection: sqlite3.Connection, request_hash: str, now: datetime, max_age: timedelta
-) -> HarvestRun | None:
-    """The newest finished, non-error run of this request that finished within `max_age` of `now`, or None.
+) -> list[HarvestRun]:
+    """Finished, non-error runs of this request that finished within `max_age` of `now`, newest first.
 
-    Runs still in progress (`finished_at` NULL) and runs that stopped on an error are never reused.
+    Runs still in progress (`finished_at` NULL) and runs that stopped on an error are never candidates for
+    reuse. Whether a candidate actually covers what a new harvest asks for is decided by the caller
+    (`market.harvest.run_covers`), because that depends on the limits of both.
     """
     rows = connection.execute(
         f"""
@@ -460,10 +480,15 @@ def find_reusable_run(
         """,
         (request_hash,),
     ).fetchall()
-    for row in rows:
-        if now - from_text(row[4]) <= max_age:
-            return _harvest_run_from_tuple(row)
-    return None
+    return [_harvest_run_from_tuple(row) for row in rows if now - from_text(row[4]) <= max_age]
+
+
+def find_reusable_run(
+    connection: sqlite3.Connection, request_hash: str, now: datetime, max_age: timedelta
+) -> HarvestRun | None:
+    """The newest run `find_recent_runs` would return, or None."""
+    runs = find_recent_runs(connection, request_hash, now, max_age)
+    return runs[0] if runs else None
 
 
 def load_run_listing_ids(connection: sqlite3.Connection, run_id: int) -> list[str]:
@@ -484,6 +509,7 @@ def _harvest_run_from_tuple(row: tuple) -> HarvestRun:
         pages_fetched=row[5],
         listing_count=row[6],
         stop_reason=row[7],
+        limits=HarvestLimits.model_validate_json(row[8]),
     )
 
 

@@ -12,7 +12,7 @@ from carousearch import storage
 from carousearch.carousell.errors import CarousellBlockedError
 from carousearch.carousell.parse import parse_search_response
 from carousearch.filters.schema import Listing, SearchRequest, SortOrder
-from carousearch.market.harvest import HarvestOutcome, StopReason, decide_stop, harvest
+from carousearch.market.harvest import HarvestOutcome, StopReason, decide_stop, harvest, run_covers
 from carousearch.market.limits import HarvestLimits
 
 from fake_carousell import FakeCarousell
@@ -36,10 +36,7 @@ def search_page(
     response_json = copy.deepcopy(load_json_fixture("search_price_condition.json"))
     cards = listing_cards(response_json)
     assert len(listing_ids) <= len(cards), "the fixture has fewer cards than requested"
-    for index, card in enumerate(cards):
-        if index >= len(listing_ids):
-            card["id"] = f"999{index}"  # keep the page size; these become fixed extra ids
-            continue
+    for index, card in enumerate(cards[: len(listing_ids)]):
         card["id"] = listing_ids[index]
         card["title"] = f"Listing {listing_ids[index]}"
         if prices is not None:
@@ -210,3 +207,85 @@ def test_reports_progress_per_page(connection):
     outcome = harvest(fake.client(), connection, REQUEST, HarvestLimits(), fixed_clock(), progress=lambda p, n: reported.append((p, n)))
     assert isinstance(outcome, HarvestOutcome)
     assert reported == [(1, 2), (2, 3)]
+
+
+def test_de_duplicates_a_listing_repeated_within_one_page(connection):
+    page = search_page(["1", "2", "1"], None)
+    fake = FakeCarousell(page_responses={None: page})
+    outcome = harvest(fake.client(), connection, REQUEST, HarvestLimits(), fixed_clock())
+
+    assert outcome.listing_ids == ["1", "2"]
+    assert outcome.summary is not None and outcome.summary.new_ids == ["1", "2"]
+    assert connection.execute("SELECT listing_count FROM harvest_runs").fetchone() == (2,)
+    assert storage.load_run_listing_ids(connection, outcome.run_id) == ["1", "2"]
+
+
+def test_stops_on_the_age_cutoff_without_fetching_the_next_page(connection):
+    old = NOW - timedelta(days=10)
+    fake = FakeCarousell(
+        page_responses={None: search_page(["1", "2"], "cursor-2", posted_at=[NOW, old]), "cursor-2": search_page(["3"], None)}
+    )
+    outcome = harvest(fake.client(), connection, REQUEST, HarvestLimits(max_pages=5, max_age_days=7), fixed_clock())
+
+    assert outcome.stop_reason == StopReason.MAX_AGE
+    assert outcome.pages_fetched == 1
+    assert outcome.listing_ids == ["1", "2"]  # the old listing is still recorded; the analysis applies its own cutoff
+    assert len(fake.api_requests) == 1
+
+
+# --- run_covers (pure) and coverage-aware reuse ---------------------------------------
+
+
+def finished_run(stop_reason: StopReason, pages_fetched: int, limits: HarvestLimits) -> storage.HarvestRun:
+    return storage.HarvestRun(
+        id=1, request_hash="h", request=REQUEST, started_at=NOW, finished_at=NOW, pages_fetched=pages_fetched,
+        listing_count=pages_fetched * 48, stop_reason=stop_reason.value, limits=limits,
+    )
+
+
+def test_a_run_that_exhausted_the_pages_covers_any_request():
+    run = finished_run(StopReason.NO_MORE_PAGES, 2, HarvestLimits(max_pages=2))
+    assert run_covers(run, HarvestLimits(max_pages=50, max_age_days=90))
+
+
+def test_a_run_stopped_at_its_page_cap_covers_only_smaller_requests():
+    run = finished_run(StopReason.MAX_PAGES, 3, HarvestLimits(max_pages=3))
+    assert run_covers(run, HarvestLimits(max_pages=3))
+    assert run_covers(run, HarvestLimits(max_pages=2, max_age_days=5))
+    assert not run_covers(run, HarvestLimits(max_pages=4))
+    smaller_pages = finished_run(StopReason.MAX_PAGES, 3, HarvestLimits(max_pages=3, page_size=20))
+    assert run_covers(smaller_pages, HarvestLimits(max_pages=3, page_size=20))
+    assert not run_covers(smaller_pages, HarvestLimits(max_pages=3, page_size=48))
+
+
+def test_a_run_stopped_on_age_covers_the_same_or_a_shorter_cutoff():
+    run = finished_run(StopReason.MAX_AGE, 2, HarvestLimits(max_pages=10, max_age_days=14))
+    assert run_covers(run, HarvestLimits(max_pages=50, max_age_days=14))
+    assert run_covers(run, HarvestLimits(max_pages=50, max_age_days=3))
+    assert not run_covers(run, HarvestLimits(max_pages=50, max_age_days=30))
+    assert not run_covers(run, HarvestLimits(max_pages=1))
+
+
+def test_a_short_run_is_not_reused_for_a_longer_request(connection):
+    fake = FakeCarousell(
+        page_responses={None: search_page(["1"], "cursor-2"), "cursor-2": search_page(["2"], "cursor-3"), "cursor-3": search_page(["3"], None)}
+    )
+    short = harvest(fake.client(), connection, REQUEST, HarvestLimits(max_pages=1), fixed_clock())
+    assert short.stop_reason == StopReason.MAX_PAGES
+
+    longer = harvest(fake.client(), connection, REQUEST, HarvestLimits(max_pages=10), fixed_clock(NOW + timedelta(minutes=5)))
+
+    assert longer.reused is False
+    assert longer.listing_ids == ["1", "2", "3"]
+    again = harvest(fake.client(), connection, REQUEST, HarvestLimits(max_pages=1), fixed_clock(NOW + timedelta(minutes=6)))
+    assert again.reused is True and again.run_id == longer.run_id
+
+
+def test_a_run_that_crashed_outside_carousell_is_closed_as_an_error(connection):
+    fake = FakeCarousell(page_responses={None: search_page(["1"], None)})
+    broken_clock_calls = iter([NOW, datetime(2026, 10, 25, 12, 0), NOW])  # second call is naive: storage rejects it
+
+    with pytest.raises(ValueError, match="timezone-aware"):
+        harvest(fake.client(), connection, REQUEST, HarvestLimits(), lambda: next(broken_clock_calls))
+
+    assert connection.execute("SELECT stop_reason FROM harvest_runs").fetchone() == ("error",)

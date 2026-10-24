@@ -7,6 +7,7 @@ from carousearch import storage
 from carousearch.carousell.parse import parse_search_response
 from carousearch.filters.schema import Condition, PostedOrBumpedKind, SearchRequest
 from carousearch.market.hashing import listing_content_hash, search_request_hash
+from carousearch.market.limits import HarvestLimits
 
 from fixture_files import load_json_fixture
 
@@ -142,13 +143,20 @@ def test_insert_with_missing_optional_fields(connection) -> None:
     assert row.seller_username is None and row.seller_id is None and row.thumbnail_url is None
 
 
-def test_unchanged_listing_moves_only_likes_and_last_seen(connection) -> None:
+def test_unchanged_listing_moves_only_likes_bump_time_and_last_seen(connection) -> None:
     listing = sample_listings()[0]
     storage.upsert_listings(connection, [listing], NOON)
     [before] = storage.load_listing_rows(connection, [listing.id])
-    # Likes and the thumbnail are outside the content hash; the thumbnail must not be rewritten either.
+    # Likes, the bump time and the thumbnail are outside the content hash. Likes and the bump time are
+    # refreshed anyway (demand and freshness move without the listing "changing"); the thumbnail is not rewritten.
+    bumped_at = LATER - timedelta(hours=1)
     seen_again = listing.model_copy(
-        update={"like_count": listing.like_count + 5, "thumbnail_url": "https://example.invalid/new.jpg"}
+        update={
+            "like_count": listing.like_count + 5,
+            "thumbnail_url": "https://example.invalid/new.jpg",
+            "posted_or_bumped_at": bumped_at,
+            "posted_or_bumped_kind": PostedOrBumpedKind.BUMPED,
+        }
     )
 
     summary = storage.upsert_listings(connection, [seen_again], LATER)
@@ -161,7 +169,13 @@ def test_unchanged_listing_moves_only_likes_and_last_seen(connection) -> None:
     assert after.last_changed_at == NOON
     assert after.thumbnail_url == before.thumbnail_url
     assert after == storage.ListingRow(
-        **{**before.__dict__, "like_count": listing.like_count + 5, "last_seen_at": LATER}
+        **{
+            **before.__dict__,
+            "like_count": listing.like_count + 5,
+            "last_seen_at": LATER,
+            "posted_or_bumped_at": bumped_at,
+            "posted_or_bumped_kind": PostedOrBumpedKind.BUMPED,
+        }
     )
     assert storage.load_listing_changes(connection, listing.id) == []
 
@@ -321,6 +335,7 @@ def test_create_and_finish_harvest_run(connection) -> None:
         pages_fetched=3,
         listing_count=120,
         stop_reason="no_more_pages",
+        limits=HarvestLimits(),
     )
 
 
@@ -378,3 +393,13 @@ def test_run_listings_keep_first_position(connection) -> None:
     assert positions == {"a": 0, "b": 1, "c": 2, "d": 3, "e": 5}
     assert storage.load_run_listing_ids(connection, other_run_id) == ["e", "a"]
     assert storage.load_run_listing_ids(connection, 999) == []
+
+
+def test_harvest_run_stores_its_limits(connection) -> None:
+    limits = HarvestLimits(max_pages=3, max_age_days=7, page_size=20)
+    run_id = storage.create_harvest_run(connection, sample_request(), "hash-l", NOON, limits)
+    storage.finish_harvest_run(connection, run_id, NOON + timedelta(minutes=1), 3, 60, "max_pages")
+
+    [run] = storage.find_recent_runs(connection, "hash-l", NOON + timedelta(minutes=2), timedelta(minutes=30))
+    assert run.limits == limits
+    assert storage.find_reusable_run(connection, "hash-l", NOON + timedelta(minutes=2), timedelta(minutes=30)) == run
