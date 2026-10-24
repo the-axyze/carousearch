@@ -37,7 +37,8 @@ def render_analysis_text(result: AnalysisResult) -> str:
 
     labels = [ALL_LABEL, *(group.key for group in result.groups)]
     label_width = max(len(label) for label in labels)
-    count_width = max(len(f"n={result.overall.count}"), *(len(f"n={g.stats.count}") for g in result.groups))
+    counts = [result.overall.count, *(group.stats.count for group in result.groups)]
+    count_width = max(len(f"n={count}") for count in counts)
     head.append(_stats_line(ALL_LABEL, result.overall, label_width, count_width))
     group_lines = [_stats_line(group.key, group.stats, label_width, count_width) for group in result.groups]
 
