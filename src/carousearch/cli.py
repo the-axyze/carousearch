@@ -1,4 +1,4 @@
-"""The `carousearch` command line: search, listing, canary, capture-fixtures, bot and whoami."""
+"""The `carousearch` command line: search, listing, harvest, analyze, canary, capture-fixtures, bot and whoami."""
 
 import argparse
 import asyncio
@@ -6,7 +6,7 @@ import sys
 import time
 from collections.abc import Callable
 from contextlib import closing
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TextIO
 
@@ -38,6 +38,10 @@ from carousearch.config import (
 )
 from carousearch.filters.schema import MAX_PAGE_SIZE, Condition, DealMethod, SearchRequest, SortOrder
 from carousearch.fixture_capture import capture_fixtures
+from carousearch.market.analysis import AnalysisSpec, analyse
+from carousearch.market.harvest import DEFAULT_REUSE_WINDOW, HarvestOutcome, harvest
+from carousearch.market.limits import HarvestLimits
+from carousearch.market.render import render_analysis_json, render_analysis_text
 from carousearch.text_render import render_listing_detail, render_listing_table, render_search_summary
 
 ClientFactory = Callable[[RateLimiter], CarousellClient]
@@ -65,6 +69,15 @@ def main(argv: list[str] | None = None, client_factory: ClientFactory = create_c
         if arguments.command == "listing":
             with client_factory(rate_limiter) as client:
                 return run_listing_command(client, arguments.listing_id, arguments.json, data_dir, sys.stdout)
+        if arguments.command == "harvest":
+            request = search_request_from_arguments(arguments)
+            limits = HarvestLimits(max_pages=arguments.max_pages, max_age_days=arguments.max_age_days)
+            with client_factory(rate_limiter) as client:
+                return run_harvest_command(client, request, limits, _reuse_window(arguments), data_dir, sys.stdout)
+        if arguments.command == "analyze":
+            spec = read_analysis_spec(arguments.spec)
+            with client_factory(rate_limiter) as client:
+                return run_analyze_command(client, spec, arguments.json, _reuse_window(arguments), data_dir, sys.stdout)
         if arguments.command == "canary":
             log_path = arguments.log_file or data_dir / CANARY_LOG_FILE_NAME
             with client_factory(rate_limiter) as client:
@@ -95,17 +108,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
 
     search = commands.add_parser("search", help="run a search and print the listings")
-    search.add_argument("query", nargs="?", help="search keywords")
-    search.add_argument("--category", help="Carousell collection id, e.g. 5707 for Mobile Phones")
-    search.add_argument("--price-min", type=float, help="minimum price in SGD")
-    search.add_argument("--price-max", type=float, help="maximum price in SGD")
-    search.add_argument("--condition", help="comma-separated: " + ", ".join(_condition_choices()))
-    search.add_argument("--deal-method", help="comma-separated: meetup, mailing")
-    search.add_argument("--buyer-protection", action="store_true", help="only Buyer Protection listings")
-    search.add_argument("--free-delivery", action="store_true", help="only listings with free delivery")
-    search.add_argument("--sort", choices=[order.value for order in SortOrder], default=SortOrder.BEST_MATCH.value)
-    search.add_argument("--field", action="append", default=[], metavar="KEY=VALUE",
-                        help="category facet, e.g. mobile_storage=MOBILE_STORAGE_256_GB (repeatable)")
+    _add_search_filter_arguments(search)
     search.add_argument("--limit", type=int, default=20, help=f"listings per page, 1 to {MAX_PAGE_SIZE}")
     search.add_argument("--page-cursor", help="next_page value from a previous --json result")
     search.add_argument("--json", action="store_true", help="print the result as JSON")
@@ -113,6 +116,17 @@ def build_argument_parser() -> argparse.ArgumentParser:
     listing = commands.add_parser("listing", help="show one listing's details")
     listing.add_argument("listing_id")
     listing.add_argument("--json", action="store_true", help="print the full ListingDetail, including raw")
+
+    harvest_parser = commands.add_parser("harvest", help="pull every page of a search into the listings table")
+    _add_search_filter_arguments(harvest_parser)
+    harvest_parser.add_argument("--max-pages", type=int, default=10, help="pages to fetch at most (default %(default)s)")
+    harvest_parser.add_argument("--max-age-days", type=int, help="with --sort recent: stop once listings are older than this")
+    harvest_parser.add_argument("--no-reuse", action="store_true", help="scrape even if the same search ran recently")
+
+    analyze = commands.add_parser("analyze", help="harvest the searches in an analysis spec and print price statistics")
+    analyze.add_argument("--spec", required=True, help="path to an AnalysisSpec JSON file, or - for stdin")
+    analyze.add_argument("--json", action="store_true", help="print the full result as JSON")
+    analyze.add_argument("--no-reuse", action="store_true", help="scrape even if the same searches ran recently")
 
     canary = commands.add_parser("canary", help="health check for cron: exit 0 if Carousell access works")
     canary.add_argument("--min-listings", type=int, default=DEFAULT_MINIMUM_LISTINGS)
@@ -124,6 +138,25 @@ def build_argument_parser() -> argparse.ArgumentParser:
     commands.add_parser("bot", help="run the Telegram bot (needs TELEGRAM_BOT_TOKEN and TELEGRAM_OWNER_ID)")
     commands.add_parser("whoami", help="print the user ids of people who recently messaged the bot")
     return parser
+
+
+def _add_search_filter_arguments(parser: argparse.ArgumentParser) -> None:
+    """The filter options shared by `search` and `harvest` (everything a SearchRequest holds except paging)."""
+    parser.add_argument("query", nargs="?", help="search keywords")
+    parser.add_argument("--category", help="Carousell collection id, e.g. 5707 for Mobile Phones")
+    parser.add_argument("--price-min", type=float, help="minimum price in SGD")
+    parser.add_argument("--price-max", type=float, help="maximum price in SGD")
+    parser.add_argument("--condition", help="comma-separated: " + ", ".join(_condition_choices()))
+    parser.add_argument("--deal-method", help="comma-separated: meetup, mailing")
+    parser.add_argument("--buyer-protection", action="store_true", help="only Buyer Protection listings")
+    parser.add_argument("--free-delivery", action="store_true", help="only listings with free delivery")
+    parser.add_argument("--sort", choices=[order.value for order in SortOrder], default=SortOrder.BEST_MATCH.value)
+    parser.add_argument("--field", action="append", default=[], metavar="KEY=VALUE",
+                        help="category facet, e.g. mobile_storage=MOBILE_STORAGE_256_GB (repeatable)")
+
+
+def _reuse_window(arguments: argparse.Namespace) -> timedelta | None:
+    return None if arguments.no_reuse else DEFAULT_REUSE_WINDOW
 
 
 # --- argument translation (pure) ---------------------------------------------
@@ -141,8 +174,9 @@ def search_request_from_arguments(arguments: argparse.Namespace) -> SearchReques
         free_delivery_only=arguments.free_delivery,
         sort=SortOrder(arguments.sort),
         category_fields=parse_category_fields(arguments.field),
-        page_size=arguments.limit,
-        page_cursor=arguments.page_cursor,
+        # `harvest` has no paging options: it always starts at the first page and sets its own page size.
+        page_size=getattr(arguments, "limit", MAX_PAGE_SIZE),
+        page_cursor=getattr(arguments, "page_cursor", None),
     )
 
 
@@ -222,6 +256,70 @@ def run_listing_command(client: CarousellClient, listing_id: str, as_json: bool,
         storage.cache_listing_detail(connection, detail, datetime.now(UTC))
     print(detail.model_dump_json(indent=2) if as_json else render_listing_detail(detail), file=output)
     return EXIT_OK
+
+
+def read_analysis_spec(spec_argument: str) -> AnalysisSpec:
+    """An AnalysisSpec from a JSON file path, or from stdin when the argument is '-'."""
+    if spec_argument == "-":
+        text = sys.stdin.read()
+    else:
+        try:
+            text = Path(spec_argument).read_text(encoding="utf-8")
+        except OSError as error:
+            raise ValueError(f"could not read the analysis spec: {error}") from error
+    # Malformed JSON also surfaces as a ValidationError, which main() reports as a usage error.
+    return AnalysisSpec.model_validate_json(text)
+
+
+def run_harvest_command(
+    client: CarousellClient,
+    request: SearchRequest,
+    limits: HarvestLimits,
+    reuse_within: timedelta | None,
+    data_dir: Path,
+    output: TextIO,
+) -> int:
+    with closing(storage.open_database(data_dir / DATABASE_FILE_NAME)) as connection:
+        outcome = harvest(client, connection, request, limits, _now, reuse_within)
+    print(describe_harvest_outcome(outcome), file=output)
+    return EXIT_OK
+
+
+def run_analyze_command(
+    client: CarousellClient,
+    spec: AnalysisSpec,
+    as_json: bool,
+    reuse_within: timedelta | None,
+    data_dir: Path,
+    output: TextIO,
+) -> int:
+    with closing(storage.open_database(data_dir / DATABASE_FILE_NAME)) as connection:
+        run_ids: list[int] = []
+        listing_ids: list[str] = []
+        for request in spec.searches:
+            outcome = harvest(client, connection, request, spec.limits, _now, reuse_within)
+            if not as_json:
+                print(describe_harvest_outcome(outcome), file=output)
+            run_ids.append(outcome.run_id)
+            listing_ids.extend(listing_id for listing_id in outcome.listing_ids if listing_id not in listing_ids)
+        rows = storage.load_listing_rows(connection, listing_ids)
+    result = analyse(spec, rows, run_ids, _now())
+    print(render_analysis_json(result) if as_json else render_analysis_text(result), file=output)
+    return EXIT_OK
+
+
+def describe_harvest_outcome(outcome: HarvestOutcome) -> str:
+    """One line, e.g. 'run 12: 212 listings, 5 pages, stopped: max_pages (37 new, 4 changed)'."""
+    pages = f"{outcome.pages_fetched} page{'s' if outcome.pages_fetched != 1 else ''}"
+    head = f"{'reused run' if outcome.reused else 'run'} {outcome.run_id}: {len(outcome.listing_ids)} listings, {pages}"
+    line = f"{head}, stopped: {outcome.stop_reason.value}"
+    if outcome.summary is not None:
+        line += f" ({len(outcome.summary.new_ids)} new, {len(outcome.summary.changed_ids)} changed)"
+    return line
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
 
 
 def run_canary_command(client: CarousellClient, minimum_listings: int, log_path: Path, output: TextIO) -> int:

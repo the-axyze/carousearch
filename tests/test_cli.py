@@ -162,3 +162,95 @@ def test_bot_with_only_the_owner_missing_names_that_setting(tmp_path: Path, caps
 
     assert exit_code == 2
     assert "error: TELEGRAM_OWNER_ID not set" in capsys.readouterr().err
+
+
+# --- harvest and analyze ---------------------------------------------------------
+
+
+def test_harvest_prints_the_run_outcome_and_stores_listings(tmp_path: Path, capsys) -> None:
+    carousell = FakeCarousell()  # the fixture page says hasMore, then repeats itself, which ends the run
+
+    exit_code = run_cli(["harvest", "iphone 15", "--max-pages", "3"], carousell, tmp_path)
+
+    output = capsys.readouterr().out.strip()
+    assert exit_code == 0
+    assert output.startswith("run 1: 5 listings, 2 pages, stopped: no_more_pages (5 new, 0 changed)")
+    assert len(carousell.api_requests) == 2
+    assert json.loads(carousell.api_requests[0].content)["count"] == 48
+
+
+def test_harvest_reuses_a_recent_run_unless_told_not_to(tmp_path: Path, capsys) -> None:
+    carousell = FakeCarousell()
+    run_cli(["harvest", "iphone 15"], carousell, tmp_path)
+    run_cli(["harvest", "iphone 15"], carousell, tmp_path)
+    assert capsys.readouterr().out.splitlines()[1].startswith("reused run 1: 5 listings")
+    requests_before = len(carousell.api_requests)
+
+    run_cli(["harvest", "iphone 15", "--no-reuse"], carousell, tmp_path)
+
+    assert capsys.readouterr().out.startswith("run 2:")
+    assert len(carousell.api_requests) > requests_before
+
+
+def test_harvest_max_age_needs_sort_recent(tmp_path: Path, capsys) -> None:
+    carousell = FakeCarousell()
+    exit_code = run_cli(["harvest", "iphone 15", "--max-age-days", "7"], carousell, tmp_path)
+    assert exit_code == 2
+    assert "sort=recent" in capsys.readouterr().err
+    assert carousell.requests == []
+
+
+def test_analyze_runs_the_spec_and_prints_statistics(tmp_path: Path, capsys) -> None:
+    spec_path = tmp_path / "spec.json"
+    spec_path.write_text(json.dumps({
+        "question": "iPhone 15 prices",
+        "searches": [{"query": "iphone 15", "sort": "recent"}],
+        "limits": {"max_pages": 2},
+        "group_by": "condition",
+    }))
+
+    exit_code = run_cli(["analyze", "--spec", str(spec_path)], FakeCarousell(), tmp_path)
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert output.startswith("run 1:")
+    assert "iPhone 15 prices" in output
+    assert "median" in output.lower()
+
+
+def test_analyze_json_output_round_trips(tmp_path: Path, capsys) -> None:
+    spec_path = tmp_path / "spec.json"
+    spec_path.write_text(json.dumps({"question": "q", "searches": [{"query": "iphone 15"}]}))
+
+    exit_code = run_cli(["analyze", "--spec", str(spec_path), "--json"], FakeCarousell(), tmp_path)
+
+    result = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert result["spec"]["question"] == "q"
+    assert result["fetched_count"] == 5
+    assert result["overall"]["count"] >= 1
+
+
+def test_analyze_rejects_a_bad_spec_without_network(tmp_path: Path, capsys) -> None:
+    carousell = FakeCarousell()
+    spec_path = tmp_path / "spec.json"
+    spec_path.write_text(json.dumps({"question": "q", "searches": [], "unexpected": 1}))
+
+    exit_code = run_cli(["analyze", "--spec", str(spec_path)], carousell, tmp_path)
+
+    assert exit_code == 2
+    assert "searches" in capsys.readouterr().err
+    assert carousell.requests == []
+
+
+def test_analyze_reports_a_missing_spec_file(tmp_path: Path, capsys) -> None:
+    exit_code = run_cli(["analyze", "--spec", str(tmp_path / "missing.json")], FakeCarousell(), tmp_path)
+    assert exit_code == 2
+    assert "could not read the analysis spec" in capsys.readouterr().err
+
+
+def test_the_example_spec_in_docs_is_valid() -> None:
+    example = Path(__file__).parents[1] / "docs" / "examples" / "analysis_spec.example.json"
+    spec = cli.read_analysis_spec(str(example))
+    assert len(spec.searches) == 2
+    assert spec.limits.max_age_days == 30
