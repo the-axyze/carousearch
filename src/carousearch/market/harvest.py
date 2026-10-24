@@ -15,11 +15,10 @@ from enum import StrEnum
 
 from carousearch import storage
 from carousearch.carousell.client import CarousellClient
-from carousearch.carousell.errors import CarousellError
 from carousearch.filters.schema import Listing, SearchRequest, SortOrder
 from carousearch.market.hashing import search_request_hash
 from carousearch.market.limits import HarvestLimits
-from carousearch.storage import UpsertSummary
+from carousearch.storage import HarvestRun, UpsertSummary
 
 logger = logging.getLogger(__name__)
 
@@ -66,10 +65,11 @@ def harvest(
     now = clock()
 
     if reuse_within is not None:
-        reusable = storage.find_reusable_run(connection, request_hash, now, reuse_within)
+        candidates = storage.find_recent_runs(connection, request_hash, now, reuse_within)
+        reusable = next((run for run in candidates if run_covers(run, limits)), None)
         if reusable is not None:
             listing_ids = storage.load_run_listing_ids(connection, reusable.id)
-            logger.info("Reused harvest run %d (%d listings, finished %s)", reusable.id, len(listing_ids), reusable.finished_at)
+            logger.info("reused run %d (%d listings, finished %s)", reusable.id, len(listing_ids), reusable.finished_at)
             return HarvestOutcome(
                 run_id=reusable.id,
                 listing_ids=listing_ids,
@@ -79,7 +79,7 @@ def harvest(
                 summary=None,
             )
 
-    run_id = storage.create_harvest_run(connection, request, request_hash, now)
+    run_id = storage.create_harvest_run(connection, request, request_hash, now, limits)
     logger.info("Harvest run %d started: %s", run_id, request.model_dump(mode="json", exclude_defaults=True))
     listing_ids: list[str] = []
     seen_ids: set[str] = set()
@@ -93,7 +93,11 @@ def harvest(
             result = client.search(request.model_copy(update={"page_cursor": cursor}))
             pages_fetched += 1
             seen_at = clock()
-            page_listings = [listing for listing in result.listings if listing.id not in seen_ids]
+            page_listings: list[Listing] = []
+            for listing in result.listings:  # a listing can repeat across pages and, rarely, within one page
+                if listing.id not in seen_ids:
+                    seen_ids.add(listing.id)
+                    page_listings.append(listing)
             summary = storage.upsert_listings(connection, page_listings, seen_at)
             new_ids.extend(summary.new_ids)
             changed_ids.extend(summary.changed_ids)
@@ -101,7 +105,6 @@ def harvest(
             new_page_ids = [listing.id for listing in page_listings]
             storage.add_run_listings(connection, run_id, new_page_ids, len(listing_ids))
             listing_ids.extend(new_page_ids)
-            seen_ids.update(new_page_ids)
             if progress is not None:
                 progress(pages_fetched, len(listing_ids))
             logger.info("Harvest run %d page %d: %d listings (%d new on this page)", run_id, pages_fetched, len(result.listings), len(new_page_ids))
@@ -109,7 +112,9 @@ def harvest(
             if stop_reason is not None:
                 break
             cursor = result.next_page
-    except CarousellError:
+    except Exception:
+        # Any failure (Carousell, SQLite, a bad clock) closes the run as an error so it never looks "running"
+        # and is never reused; the listings already written stay, they are real data.
         storage.finish_harvest_run(connection, run_id, clock(), pages_fetched, len(listing_ids), StopReason.ERROR)
         logger.warning("Harvest run %d failed after %d pages", run_id, pages_fetched)
         raise
@@ -126,6 +131,27 @@ def harvest(
     )
 
 
+def run_covers(run: HarvestRun, requested: HarvestLimits) -> bool:
+    """Whether an earlier run of the same request holds at least what `requested` would fetch. Pure.
+
+    A run that exhausted the pages covers everything. A run that stopped on its age cutoff covers any request
+    with the same or a shorter cutoff. A run that stopped at its page cap covers a request for no more pages
+    than it fetched, at the same or a smaller page size.
+    """
+    match run.stop_reason:
+        case StopReason.NO_MORE_PAGES:
+            return True
+        case StopReason.MAX_AGE:
+            return (
+                requested.max_age_days is not None
+                and run.limits.max_age_days is not None
+                and requested.max_age_days <= run.limits.max_age_days
+            )
+        case StopReason.MAX_PAGES:
+            return run.pages_fetched >= requested.max_pages and run.limits.page_size >= requested.page_size
+    return False
+
+
 def decide_stop(
     pages_fetched: int,
     page_listings: list[Listing],
@@ -135,6 +161,8 @@ def decide_stop(
     now: datetime,
 ) -> StopReason | None:
     """Why to stop after this page, or None to fetch the next one. Pure.
+
+    `pages_fetched` counts the page just fetched (1 for the first page).
 
     Checked in this order: no further page (or a page that added nothing new, which means Carousell is
     repeating itself), the age cutoff (the last dated listing on the page is older than `max_age_days`),

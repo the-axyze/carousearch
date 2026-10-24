@@ -12,7 +12,6 @@ from datetime import datetime
 from pydantic import BaseModel
 
 from carousearch.bot.messages import MAX_MESSAGE_LENGTH, truncate
-from carousearch.filters.payload import format_price
 from carousearch.market.analysis import AnalysisResult, PriceStats
 from carousearch.text_render import format_date
 
@@ -30,6 +29,11 @@ class _Section:
 
 
 def render_analysis_text(result: AnalysisResult) -> str:
+    """The result as plain text for the terminal or a Telegram message (at most MAX_MESSAGE_LENGTH characters).
+
+    When the full text would not fit, lines are cut from the least important section first: newest listings, then
+    cheapest, then outliers, then the group rows; each cut section ends with "… N more".
+    """
     head = [result.spec.question, _counts_line(result), ""]
     if result.overall is None:
         head.append("No priced listings to analyse.")
@@ -86,6 +90,7 @@ def render_analysis_text(result: AnalysisResult) -> str:
 
 
 def render_analysis_json(result: AnalysisResult) -> str:
+    """The whole result as indented JSON, datetimes as ISO 8601 text, the spec as pydantic would serialise it."""
     payload = asdict(result)
     payload["spec"] = result.spec.model_dump(mode="json")
     return json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default)
@@ -110,8 +115,11 @@ def _stats_line(label: str, stats: PriceStats, label_width: int, count_width: in
 
 
 def _money(price: float | None) -> str:
-    # Quartiles and means can have long fractions; cents are the finest unit that means anything here.
-    return "-" if price is None else f"S${format_price(round(price, 2))}"
+    """S$1,050 for whole amounts, S$980.50 otherwise: quartiles and means can have long fractions, cents are enough."""
+    if price is None:
+        return "-"
+    rounded = round(price, 2)
+    return f"S${rounded:,.0f}" if rounded == int(rounded) else f"S${rounded:,.2f}"
 
 
 def _title(title: str) -> str:

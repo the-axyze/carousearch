@@ -86,11 +86,11 @@ def test_text_has_question_counts_and_overall_line() -> None:
     assert lines[1] == (
         "Fetched 7 listings (2 runs); analysed 5 (1 without a price, 0 filtered out, 1 outliers excluded)"
     )
-    assert lines[3].startswith("All  n=5  median S$1050  p25–p75 S$1000–S$1100  min S$980.5  max S$1150")
+    assert lines[3].startswith("All  n=5  median S$1,050  p25–p75 S$1,000–S$1,100  min S$980.50  max S$1,150")
     assert "Outliers excluded:" in text
     assert '1006  "iPhone 15 Pro, faulty"  S$300 (low' in text
     assert "Cheapest:" in text
-    assert "  S$980.5  " in text
+    assert "  S$980.50  " in text
     assert "https://www.carousell.sg/p/iphone-15-pro-1002" in text
     assert "Newest:" in text
 
@@ -101,7 +101,7 @@ def test_text_has_one_line_per_group() -> None:
     group_lines = [line for line in text.splitlines() if line.startswith(("like_new", "lightly_used"))]
     assert len(group_lines) == 2
     assert group_lines[0].startswith("lightly_used  n=2  median S$990.25")
-    assert group_lines[1].startswith("like_new      n=3  median S$1100")
+    assert group_lines[1].startswith("like_new      n=3  median S$1,100")
     assert "heavily_used" not in text  # the only heavily used listing is an excluded outlier
 
 
@@ -156,7 +156,8 @@ def test_text_cuts_newest_before_cheapest() -> None:
     squeezed = render_analysis_text(analyse(squeezed_spec, synthetic_rows(200), [1], NOW))
 
     assert len(squeezed) <= MAX_MESSAGE_LENGTH
-    assert "Cheapest:" in squeezed
+    cheapest_section = squeezed.split("Cheapest:")[1].split("Newest:")[0]
+    assert "https://" in cheapest_section  # cheapest lines survived; only the newest section was cut
     newest_section = squeezed.split("Newest:")[1]
     assert "more" in newest_section
 

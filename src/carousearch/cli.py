@@ -295,14 +295,14 @@ def run_analyze_command(
 ) -> int:
     with closing(storage.open_database(data_dir / DATABASE_FILE_NAME)) as connection:
         run_ids: list[int] = []
-        listing_ids: list[str] = []
+        listing_ids: dict[str, None] = {}  # insertion-ordered set: the union of the runs, first occurrence wins
         for request in spec.searches:
             outcome = harvest(client, connection, request, spec.limits, _now, reuse_within)
             if not as_json:
                 print(describe_harvest_outcome(outcome), file=output)
             run_ids.append(outcome.run_id)
-            listing_ids.extend(listing_id for listing_id in outcome.listing_ids if listing_id not in listing_ids)
-        rows = storage.load_listing_rows(connection, listing_ids)
+            listing_ids.update(dict.fromkeys(outcome.listing_ids))
+        rows = storage.load_listing_rows(connection, list(listing_ids))
     result = analyse(spec, rows, run_ids, _now())
     print(render_analysis_json(result) if as_json else render_analysis_text(result), file=output)
     return EXIT_OK

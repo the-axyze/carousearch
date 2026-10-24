@@ -18,11 +18,13 @@ from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from carousearch.filters.schema import SearchRequest
+from carousearch.filters.schema import SearchRequest, SortOrder
+from carousearch.market.hashing import search_request_hash
 from carousearch.market.limits import HarvestLimits
 from carousearch.storage import ListingRow
+from carousearch.text_render import SINGAPORE_TIME
 
 MAX_PATTERN_LENGTH = 200
 TOP_LISTING_COUNT = 5
@@ -75,9 +77,6 @@ class AnalysisSpec(BaseModel):
     @classmethod
     def searches_start_at_page_one_and_are_unique(cls, searches: list[SearchRequest]) -> list[SearchRequest]:
         """Reject cursors (a harvest always starts at page one) and drop searches that would harvest the same run."""
-        # Imported here so this module loads even while market.hashing is being written.
-        from carousearch.market.hashing import search_request_hash
-
         unique: list[SearchRequest] = []
         seen_hashes: set[str] = set()
         for search in searches:
@@ -88,6 +87,15 @@ class AnalysisSpec(BaseModel):
                 seen_hashes.add(request_hash)
                 unique.append(search)
         return unique
+
+    @model_validator(mode="after")
+    def age_cutoff_needs_recent_sort(self) -> "AnalysisSpec":
+        """`limits.max_age_days` is only sound when every search returns newest first (checked here, before any request)."""
+        if self.limits.max_age_days is not None:
+            not_recent = [search for search in self.searches if search.sort != SortOrder.RECENT]
+            if not_recent:
+                raise ValueError("limits.max_age_days needs every search to use sort=recent")
+        return self
 
 
 @dataclass(frozen=True)
@@ -215,6 +223,11 @@ def iqr_bounds(prices: Sequence[float]) -> tuple[float, float]:
 
 
 def apply_title_filter(title_filter: TitleFilter, rows: Sequence[ListingRow]) -> list[ListingRow]:
+    """Rows whose title matches every `include` pattern and no `exclude` pattern (case-insensitive, compiled once).
+
+    The 200-character cap on patterns does not prevent catastrophic backtracking; specs are hand-written or built
+    from escaped words (phase B), so that is accepted.
+    """
     includes = [re.compile(pattern, re.IGNORECASE) for pattern in title_filter.include]
     excludes = [re.compile(pattern, re.IGNORECASE) for pattern in title_filter.exclude]
     return [
@@ -226,7 +239,7 @@ def apply_title_filter(title_filter: TitleFilter, rows: Sequence[ListingRow]) ->
 
 
 def group_key(group_by: GroupBy, row: ListingRow) -> str:
-    """The group a row belongs to. Week keys use the timestamp's own timezone (UTC as stored)."""
+    """The group a row belongs to. Week keys are ISO weeks in Singapore time, the timezone the rest of the output uses."""
     if group_by is GroupBy.NONE:
         return ALL_KEY
     if group_by is GroupBy.CONDITION:
@@ -235,7 +248,7 @@ def group_key(group_by: GroupBy, row: ListingRow) -> str:
     if group_by is GroupBy.WEEK_POSTED:
         if row.posted_or_bumped_at is None:
             return UNKNOWN_KEY
-        year, week, _ = row.posted_or_bumped_at.isocalendar()
+        year, week, _ = row.posted_or_bumped_at.astimezone(SINGAPORE_TIME).isocalendar()
         return f"{year}-W{week:02d}"
     if group_by is GroupBy.SELLER:
         return row.seller_username or row.seller_id or UNKNOWN_KEY
