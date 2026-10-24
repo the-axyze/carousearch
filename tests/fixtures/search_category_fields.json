@@ -1,0 +1,677 @@
+{
+  "data": {
+    "appliedContext": {
+      "ccId": "5707",
+      "filters": [
+        {
+          "fieldName": "collections",
+          "idsOrKeywords": {
+            "value": [
+              "5707"
+            ]
+          },
+          "enforce": true
+        },
+        {
+          "fieldName": "mobile_storage",
+          "idsOrKeywords": {
+            "value": [
+              "MOBILE_STORAGE_256_GB"
+            ]
+          },
+          "enforce": true
+        },
+        {
+          "fieldName": "_deal_method",
+          "idsOrKeywords": {
+            "value": [
+              "MEETUP"
+            ]
+          },
+          "enforce": true
+        }
+      ],
+      "query": "iphone 15 pro"
+    },
+    "filterBubbles": [
+      {
+        "label": "Delivery",
+        "fieldName": "_delivery"
+      },
+      {
+        "label": "In",
+        "displayValue": "Mobile Phones",
+        "fieldName": "collection_text"
+      },
+      {
+        "label": "Sort",
+        "displayValue": "Best Match",
+        "fieldName": "sort_by"
+      },
+      {
+        "label": "Deal Method",
+        "displayValue": "Meet-up",
+        "fieldName": "_deal_method"
+      },
+      {
+        "label": "Storage",
+        "displayValue": "256GB",
+        "fieldName": "mobile_storage"
+      },
+      {
+        "label": "Model",
+        "fieldName": "mobile_model"
+      },
+      {
+        "label": "Color",
+        "fieldName": "mobile_color"
+      },
+      {
+        "label": "Free Accessories",
+        "fieldName": "mobile_free_accessories"
+      },
+      {
+        "label": "Local / International Set",
+        "fieldName": "mobile_nationality"
+      },
+      {
+        "label": "Manufacturer Warranty",
+        "fieldName": "mobile_manufacturer_warranty"
+      },
+      {
+        "label": "Condition",
+        "fieldName": "layered_condition"
+      },
+      {
+        "label": "Price",
+        "fieldName": "price_start"
+      }
+    ],
+    "formattedTotal": "925",
+    "hasMore": true,
+    "isSellerSearch": false,
+    "results": [
+      {
+        "listingCard": {
+          "id": "1465462826",
+          "seller": {
+            "id": "51764624",
+            "profilePicture": "https://media.karousell.com/media/photos/profiles/2024/10/10/chokyeun58948_1728567195_2153df08.jpg",
+            "username": "scubabeng"
+          },
+          "photoUrls": [
+            "https://media.karousell.com/media/photos/products/2026/10/2/iphone_15_pro_max_256gb_natura_1790934810_9e7fb979_thumbnail.jpg"
+          ],
+          "aboveFold": [
+            {
+              "component": "active_bump",
+              "timestampContent": {
+                "seconds": {
+                  "low": 1792767753,
+                  "high": 0,
+                  "unsigned": false
+                }
+              }
+            }
+          ],
+          "belowFold": [
+            {
+              "component": "header_1",
+              "stringContent": "iPhone 15 Pro Max 256GB Natural Titanium"
+            },
+            {
+              "component": "header_2",
+              "stringContent": "S$800"
+            },
+            {
+              "component": "paragraph",
+              "stringContent": "Replaced with new OEM battery. Box and cable included."
+            },
+            {
+              "component": "paragraph",
+              "stringContent": "Well used"
+            },
+            {
+              "component": "paragraph",
+              "stringContent": ""
+            }
+          ],
+          "likesCount": 3,
+          "status": "L",
+          "marketPlace": {
+            "id": {
+              "low": 1880252,
+              "high": 0,
+              "unsigned": false
+            },
+            "name": "Singapore",
+            "country": {
+              "code": "SG",
+              "id": {
+                "low": 1880251,
+                "high": 0,
+                "unsigned": false
+              },
+              "name": "Singapore"
+            },
+            "location": {
+              "longitude": 103.85006713867188,
+              "latitude": 1.2896699905395508
+            }
+          },
+          "photos": [
+            {
+              "thumbnailUrl": "https://media.karousell.com/media/photos/products/2026/10/2/iphone_15_pro_max_256gb_natura_1790934810_9e7fb979_thumbnail.jpg",
+              "thumbnailProgressiveUrl": "https://media.karousell.com/media/photos/products/2026/10/2/iphone_15_pro_max_256gb_natura_1790934810_9e7fb979_progressive_thumbnail.jpg",
+              "thumbnailProgressiveLowRange": 3190,
+              "thumbnailProgressiveMediumRange": 6473,
+              "thumbnailHeight": 320,
+              "thumbnailWidth": 320
+            }
+          ],
+          "media": [
+            {
+              "photoItem": {
+                "url": "https://media.karousell.com/media/photos/products/2026/10/2/iphone_15_pro_max_256gb_natura_1790934810_9e7fb979_thumbnail.jpg",
+                "progressiveUrl": "https://media.karousell.com/media/photos/products/2026/10/2/iphone_15_pro_max_256gb_natura_1790934810_9e7fb979_progressive_thumbnail.jpg",
+                "progressiveLowRange": 3190,
+                "progressiveMediumRange": 6473,
+                "height": 320,
+                "width": 320
+              }
+            }
+          ],
+          "price": "S$800",
+          "title": "iPhone 15 Pro Max 256GB Natural Titanium",
+          "overlayContent": {
+            "iconUrl": {
+              "value": "https://sl3-cdn.karousell.com/components/active_bump.png"
+            },
+            "timestampContent": {
+              "seconds": {
+                "low": 1792767753,
+                "high": 0,
+                "unsigned": false
+              }
+            }
+          },
+          "isSellerVisible": true,
+          "countryCollectionId": "6359",
+          "ctaButtons": [
+            "chat"
+          ],
+          "condition": 5
+        }
+      },
+      {
+        "listingCard": {
+          "id": "1457258961",
+          "seller": {
+            "id": "710536",
+            "profilePicture": "https://media.karousell.com/media/photos/profiles/2025/05/21/Hanjiro.plantar_1747814462_73e27f14.jpg",
+            "username": "hanjiro.plantar",
+            "firstName": "Hanjiro",
+            "lastName": "Plantaro"
+          },
+          "photoUrls": [
+            "https://media.karousell.com/media/photos/products/2026/8/23/iphone_15_pro_max_256gb_natura_1787485906_1482375b_thumbnail.jpg"
+          ],
+          "aboveFold": [
+            {
+              "component": "active_bump",
+              "timestampContent": {
+                "seconds": {
+                  "low": 1792766555,
+                  "high": 0,
+                  "unsigned": false
+                }
+              }
+            }
+          ],
+          "belowFold": [
+            {
+              "component": "header_1",
+              "stringContent": "iPhone 15 Pro Max 256GB Natural Titanium"
+            },
+            {
+              "component": "header_2",
+              "stringContent": "S$888"
+            },
+            {
+              "component": "paragraph",
+              "stringContent": "- Apple iPhone 15 Pro Max - Battery Health: 100% - Cycle Count: 78 - Includes 2 phone cases - Bellroy Phone Cases - Black Leather (MagSafe compatible, eco-tanned)  Screen protector and casing on since day 1... comes with 2 high quality casing (worth more than $150). And battery has also just been re"
+            },
+            {
+              "component": "paragraph",
+              "stringContent": "Lightly used"
+            },
+            {
+              "component": "paragraph",
+              "stringContent": ""
+            }
+          ],
+          "likesCount": 9,
+          "status": "L",
+          "marketPlace": {
+            "id": {
+              "low": 1880252,
+              "high": 0,
+              "unsigned": false
+            },
+            "name": "Singapore",
+            "country": {
+              "code": "SG",
+              "id": {
+                "low": 1880251,
+                "high": 0,
+                "unsigned": false
+              },
+              "name": "Singapore"
+            },
+            "location": {
+              "longitude": 103.85006713867188,
+              "latitude": 1.2896699905395508
+            }
+          },
+          "photos": [
+            {
+              "thumbnailUrl": "https://media.karousell.com/media/photos/products/2026/8/23/iphone_15_pro_max_256gb_natura_1787485906_1482375b_thumbnail.jpg",
+              "thumbnailProgressiveUrl": "https://media.karousell.com/media/photos/products/2026/8/23/iphone_15_pro_max_256gb_natura_1787485906_1482375b_progressive_thumbnail.jpg",
+              "thumbnailProgressiveLowRange": 4423,
+              "thumbnailProgressiveMediumRange": 7650,
+              "thumbnailHeight": 240,
+              "thumbnailWidth": 320
+            }
+          ],
+          "media": [
+            {
+              "photoItem": {
+                "url": "https://media.karousell.com/media/photos/products/2026/8/23/iphone_15_pro_max_256gb_natura_1787485906_1482375b_thumbnail.jpg",
+                "progressiveUrl": "https://media.karousell.com/media/photos/products/2026/8/23/iphone_15_pro_max_256gb_natura_1787485906_1482375b_progressive_thumbnail.jpg",
+                "progressiveLowRange": 4423,
+                "progressiveMediumRange": 7650,
+                "height": 240,
+                "width": 320
+              }
+            }
+          ],
+          "originalPrice": {
+            "value": "S$928"
+          },
+          "price": "S$888",
+          "title": "iPhone 15 Pro Max 256GB Natural Titanium",
+          "overlayContent": {
+            "iconUrl": {
+              "value": "https://sl3-cdn.karousell.com/components/active_bump.png"
+            },
+            "timestampContent": {
+              "seconds": {
+                "low": 1792766555,
+                "high": 0,
+                "unsigned": false
+              }
+            }
+          },
+          "isSellerVisible": true,
+          "countryCollectionId": "6359",
+          "ctaButtons": [
+            "chat"
+          ],
+          "condition": 7
+        }
+      },
+      {
+        "listingCard": {
+          "id": "1451856940",
+          "seller": {
+            "id": "10480030",
+            "profilePicture": "https://media.karousell.com/media/photos/profiles/2017/07/21/edward-10_1500647573.jpg",
+            "username": "edward-10"
+          },
+          "photoUrls": [
+            "https://media.karousell.com/media/photos/products/2026/7/25/iphone_15_pro_max_256gb_black__1784989928_33932574_thumbnail.jpg"
+          ],
+          "aboveFold": [
+            {
+              "component": "active_bump",
+              "timestampContent": {
+                "seconds": {
+                  "low": 1792765948,
+                  "high": 0,
+                  "unsigned": false
+                }
+              }
+            }
+          ],
+          "belowFold": [
+            {
+              "component": "header_1",
+              "stringContent": "iPhone 15 Pro Max 256GB Black Titanium"
+            },
+            {
+              "component": "header_2",
+              "stringContent": "S$700"
+            },
+            {
+              "component": "paragraph",
+              "stringContent": "iPhone 15 Pro Max Black 256GB. Screen and battery replaced before, functions working fine. Not for fussy.   Lowball offers will be ignore. "
+            },
+            {
+              "component": "paragraph",
+              "stringContent": "Heavily used"
+            },
+            {
+              "component": "paragraph",
+              "stringContent": ""
+            }
+          ],
+          "likesCount": 62,
+          "status": "L",
+          "marketPlace": {
+            "id": {
+              "low": 1880252,
+              "high": 0,
+              "unsigned": false
+            },
+            "name": "Singapore",
+            "country": {
+              "code": "SG",
+              "id": {
+                "low": 1880251,
+                "high": 0,
+                "unsigned": false
+              },
+              "name": "Singapore"
+            },
+            "location": {
+              "longitude": 103.85006713867188,
+              "latitude": 1.2896699905395508
+            }
+          },
+          "photos": [
+            {
+              "thumbnailUrl": "https://media.karousell.com/media/photos/products/2026/7/25/iphone_15_pro_max_256gb_black__1784989928_33932574_thumbnail.jpg",
+              "thumbnailProgressiveUrl": "https://media.karousell.com/media/photos/products/2026/7/25/iphone_15_pro_max_256gb_black__1784989928_33932574_progressive_thumbnail.jpg",
+              "thumbnailProgressiveLowRange": 3344,
+              "thumbnailProgressiveMediumRange": 5894,
+              "thumbnailHeight": 240,
+              "thumbnailWidth": 320
+            }
+          ],
+          "media": [
+            {
+              "photoItem": {
+                "url": "https://media.karousell.com/media/photos/products/2026/7/25/iphone_15_pro_max_256gb_black__1784989928_33932574_thumbnail.jpg",
+                "progressiveUrl": "https://media.karousell.com/media/photos/products/2026/7/25/iphone_15_pro_max_256gb_black__1784989928_33932574_progressive_thumbnail.jpg",
+                "progressiveLowRange": 3344,
+                "progressiveMediumRange": 5894,
+                "height": 240,
+                "width": 320
+              }
+            }
+          ],
+          "cardType": 13,
+          "price": "S$700",
+          "title": "iPhone 15 Pro Max 256GB Black Titanium",
+          "overlayContent": {
+            "iconUrl": {
+              "value": "https://sl3-cdn.karousell.com/components/active_bump.png"
+            },
+            "timestampContent": {
+              "seconds": {
+                "low": 1792765948,
+                "high": 0,
+                "unsigned": false
+              }
+            }
+          },
+          "isSellerVisible": true,
+          "countryCollectionId": "6359",
+          "ctaButtons": [
+            "chat"
+          ],
+          "labelContent": {
+            "iconUrl": "https://sl3-cdn.karousell.com/components/green_thumps_icon.png",
+            "text": "Good Deal"
+          },
+          "condition": 6
+        }
+      },
+      {
+        "listingCard": {
+          "id": "1469894987",
+          "seller": {
+            "id": "2106674",
+            "profilePicture": "https://media.karousell.com/media/photos/profiles/2022/12/08/shootraw_1670477110_29820c66.jpg",
+            "username": "shootraw",
+            "firstName": "YY",
+            "lastName": "."
+          },
+          "photoUrls": [
+            "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_pro_blue_titanium_25_1792763862_8a4ab946_thumbnail.jpg"
+          ],
+          "aboveFold": [
+            {
+              "component": "time_created",
+              "timestampContent": {
+                "seconds": {
+                  "low": 1792763863,
+                  "high": 0,
+                  "unsigned": false
+                }
+              }
+            }
+          ],
+          "belowFold": [
+            {
+              "component": "header_1",
+              "stringContent": "iPhone 15 Pro Blue Titanium 256GB"
+            },
+            {
+              "component": "header_2",
+              "stringContent": "S$9"
+            },
+            {
+              "component": "paragraph",
+              "stringContent": "Box only, no cable.  Suitable for prank. "
+            },
+            {
+              "component": "paragraph",
+              "stringContent": "Like new"
+            },
+            {
+              "component": "paragraph",
+              "stringContent": ""
+            }
+          ],
+          "status": "L",
+          "marketPlace": {
+            "id": {
+              "low": 1880252,
+              "high": 0,
+              "unsigned": false
+            },
+            "name": "Singapore",
+            "country": {
+              "code": "SG",
+              "id": {
+                "low": 1880251,
+                "high": 0,
+                "unsigned": false
+              },
+              "name": "Singapore"
+            },
+            "location": {
+              "longitude": 103.85006713867188,
+              "latitude": 1.2896699905395508
+            }
+          },
+          "photos": [
+            {
+              "thumbnailUrl": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_pro_blue_titanium_25_1792763862_8a4ab946_thumbnail.jpg",
+              "thumbnailProgressiveUrl": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_pro_blue_titanium_25_1792763862_8a4ab946_progressive_thumbnail.jpg",
+              "thumbnailProgressiveLowRange": 4028,
+              "thumbnailProgressiveMediumRange": 9349,
+              "thumbnailHeight": 180,
+              "thumbnailWidth": 320
+            }
+          ],
+          "media": [
+            {
+              "photoItem": {
+                "url": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_pro_blue_titanium_25_1792763862_8a4ab946_thumbnail.jpg",
+                "progressiveUrl": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_pro_blue_titanium_25_1792763862_8a4ab946_progressive_thumbnail.jpg",
+                "progressiveLowRange": 4028,
+                "progressiveMediumRange": 9349,
+                "height": 180,
+                "width": 320
+              }
+            }
+          ],
+          "price": "S$9",
+          "title": "iPhone 15 Pro Blue Titanium 256GB",
+          "overlayContent": {
+            "timestampContent": {
+              "seconds": {
+                "low": 1792763863,
+                "high": 0,
+                "unsigned": false
+              }
+            }
+          },
+          "isSellerVisible": true,
+          "countryCollectionId": "6359",
+          "ctaButtons": [
+            "chat"
+          ],
+          "condition": 4
+        }
+      },
+      {
+        "listingCard": {
+          "id": "1469895549",
+          "seller": {
+            "id": "869275",
+            "profilePicture": "https://media.karousell.com/media/photos/profiles/2021/10/24/hobbycards_dc_1635057945.jpg",
+            "username": "hobbycards_dc",
+            "firstName": "Darren Chan",
+            "sellerType": "Professional Seller"
+          },
+          "photoUrls": [
+            "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_pro_max_blue_titaniu_1792764073_88237143_thumbnail.jpg"
+          ],
+          "aboveFold": [
+            {
+              "component": "time_created",
+              "timestampContent": {
+                "seconds": {
+                  "low": 1792764074,
+                  "high": 0,
+                  "unsigned": false
+                }
+              }
+            }
+          ],
+          "belowFold": [
+            {
+              "component": "header_1",
+              "stringContent": "iPhone 15 Pro Max Blue Titanium 256GB"
+            },
+            {
+              "component": "header_2",
+              "stringContent": "S$900"
+            },
+            {
+              "component": "paragraph",
+              "stringContent": "Come with box"
+            },
+            {
+              "component": "paragraph",
+              "stringContent": "Like new"
+            },
+            {
+              "component": "paragraph",
+              "stringContent": ""
+            }
+          ],
+          "status": "L",
+          "marketPlace": {
+            "id": {
+              "low": 1880252,
+              "high": 0,
+              "unsigned": false
+            },
+            "name": "Singapore",
+            "country": {
+              "code": "SG",
+              "id": {
+                "low": 1880251,
+                "high": 0,
+                "unsigned": false
+              },
+              "name": "Singapore"
+            },
+            "location": {
+              "longitude": 103.85006713867188,
+              "latitude": 1.2896699905395508
+            }
+          },
+          "photos": [
+            {
+              "thumbnailUrl": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_pro_max_blue_titaniu_1792764073_88237143_thumbnail.jpg",
+              "thumbnailProgressiveUrl": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_pro_max_blue_titaniu_1792764073_88237143_progressive_thumbnail.jpg",
+              "thumbnailProgressiveLowRange": 2411,
+              "thumbnailProgressiveMediumRange": 4439,
+              "thumbnailHeight": 320,
+              "thumbnailWidth": 240
+            }
+          ],
+          "media": [
+            {
+              "photoItem": {
+                "url": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_pro_max_blue_titaniu_1792764073_88237143_thumbnail.jpg",
+                "progressiveUrl": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_pro_max_blue_titaniu_1792764073_88237143_progressive_thumbnail.jpg",
+                "progressiveLowRange": 2411,
+                "progressiveMediumRange": 4439,
+                "height": 320,
+                "width": 240
+              }
+            }
+          ],
+          "price": "S$900",
+          "title": "iPhone 15 Pro Max Blue Titanium 256GB",
+          "overlayContent": {
+            "timestampContent": {
+              "seconds": {
+                "low": 1792764074,
+                "high": 0,
+                "unsigned": false
+              }
+            }
+          },
+          "isSellerVisible": true,
+          "countryCollectionId": "6359",
+          "ctaButtons": [
+            "chat"
+          ],
+          "condition": 4
+        }
+      }
+    ],
+    "session": "eyJhZ2dyZWdhdGVfY291bnQiOjUsImFwcGxpZWRfY2NpZCI6IjU3MDciLCJjb250ZW50Ijp7ImJhbm5lcl9jY2lkIjoiNjM1OSIsImN1cnJlbnRfY291bnQiOjUsInNyY19wYWdpbmdfaW5mbyI6eyJpbnRlcm5hbF9hZHMiOnsicGFnZV9udW1iZXIiOjF9LCJsaXN0aW5nX2NhcmQtYmxvY2siOnsiY2h1bmtfbnVtYmVyIjowLCJjaHVua19zdGFydF9vZmZzZXQiOjAsImNyZWF0ZWRfYXQiOiIyMDI2LTEwLTIzVDE3OjMzOjE4WiIsIm9mZnNldCI6NSwidmVyc2lvbiI6IjM4ODM4NTA4LWYwNDgtNDA2OC04NWQ5LTU0MzYzNzdmMzEyNiJ9fX0sImVuZm9yY2VfY2F0ZWdvcnlfZmlsdGVyIjp0cnVlLCJmaWVsZHNldF9jY2lkIjoiNjM1OSIsInBhZ2Vfc2l6ZSI6NSwicXVzdmNfcmVzcCI6IkluSUtEV2x3YUc5dVpTQXhOU0J3Y204U0RXbHdhRzl1WlNBeE5TQndjbThpQkRVM01EZElBMW9QRWcxcGNHaHZibVVnTVRVZ2NISnZhZzFwY0dodmJtVWdNVFVnY0hKdmlnRU5hWEJvYjI1bElERTFJSEJ5YjVJQkR4SU5hWEJvYjI1bElERTFJSEJ5YjZBQkFjb0JCRFUzTURjeUFnZ0JRaEFLQkRZek5Ua1Zod0Y2UHgwQUFJQS9TZzRLQXpJeE5SSUhUVzlpYVd4bGMxb1FDZ1EyTXpVNUZZY0JlajhkQUFDQVAySVFDZ1EyTXpVNUZRQUFnRDhkQUFDQVAyb1FDZ1EyTXpVNUZRQUFnRDhkQUFDQVB3PT0iLCJyZXFfaGFzX2NoYW5nZWQiOmZhbHNlLCJzZWFyY2hfcGFyYW1zIjoiR2dJSUJTb0VDTHZoY2pJUkNnMXBjR2h2Ym1VZ01UVWdjSEp2ZUFFNkZ3b0xZMjlzYkdWamRHbHZibk40QVJJR0NnUTFOekEzT2lzS0RtMXZZbWxzWlY5emRHOXlZV2RsZUFFU0Z3b1ZUVTlDU1V4RlgxTlVUMUpCUjBWZk1qVTJYMGRDT2hvS0RGOWtaV0ZzWDIxbGRHaHZaSGdCRWdnS0JrMUZSVlJWVUVJRUNBRjRBVW9DR0F0U0JBZ0JFQUZhQmlBQktBRkFBV29DQ0FFPSIsInNlc3Npb25faWQiOiI4YTc4Y2U2ZC02ZTMwLTQ4ZDItOGQ1Ny0xMmUxZWJkNGQzMWUiLCJzdWdnZXN0ZWRfY2F0ZWdvcnlfdHlwZSI6Miwic3VnZ2VzdGVkX2NjaWQiOiIifQ==",
+    "sfContext": {
+      "collectionId": "6359"
+    },
+    "shouldPromptClearCollection": false,
+    "shouldPromptKeywordCorrected": false,
+    "showBpOnboarding": false,
+    "total": {
+      "value": {
+        "low": 925,
+        "high": 0,
+        "unsigned": false
+      }
+    },
+    "searchContext": "0a0208051a0408bbe17222110a0d6970686f6e652031352070726f78012a170a0b636f6c6c656374696f6e7312060a043537303778012a2b0a0e6d6f62696c655f73746f7261676512170a154d4f42494c455f53544f524147455f3235365f474278012a1a0a0c5f6465616c5f6d6574686f6412080a064d454554555078013204080178013a02180b4204080110014a062001280140015a0208016a0473657270"
+  }
+}

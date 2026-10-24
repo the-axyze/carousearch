@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "carousearch"
+version = "0.1.0"
+description = "Search Carousell Singapore with structured filters: client, CLI, canary and a Telegram bot."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.27",
+    "pydantic>=2.7",
+    "python-dotenv>=1.0",
+    "python-telegram-bot>=22,<23",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "ruff>=0.17",
+]
+
+[project.scripts]
+carousearch = "carousearch.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/carousearch"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not live'"
+markers = [
+    "live: hits the real carousell.sg site (deselected by default; run with: pytest -m live)",
+]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint.isort]
+known-first-party = ["carousearch"]
+# Helper modules that pytest imports from the tests/ folder.
+known-local-folder = ["fake_carousell", "fixture_files"]

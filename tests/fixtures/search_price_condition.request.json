@@ -1,0 +1,57 @@
+{
+  "search_request": {
+    "query": "iphone 15",
+    "category": null,
+    "price_min": 300.0,
+    "price_max": 900.0,
+    "conditions": [
+      "like_new",
+      "lightly_used"
+    ],
+    "deal_methods": [],
+    "buyer_protection_only": false,
+    "free_delivery_only": false,
+    "sort": "recent",
+    "category_fields": {},
+    "page_size": 5,
+    "page_cursor": null
+  },
+  "payload": {
+    "bestMatchEnabled": true,
+    "canChangeKeyword": false,
+    "count": 5,
+    "countryCode": "SG",
+    "countryId": "1880251",
+    "filters": [
+      {
+        "fieldName": "price",
+        "rangedFloat": {
+          "start": {
+            "value": "300"
+          },
+          "end": {
+            "value": "900"
+          }
+        },
+        "enforce": true
+      },
+      {
+        "fieldName": "layered_condition",
+        "idsOrKeywords": {
+          "value": [
+            "4",
+            "7"
+          ]
+        },
+        "enforce": true
+      }
+    ],
+    "includeSuggestions": false,
+    "locale": "en",
+    "prefill": {},
+    "query": "iphone 15",
+    "sortParam": {
+      "fieldName": "3"
+    }
+  }
+}

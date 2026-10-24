@@ -1,0 +1,419 @@
+{
+  "data": {
+    "id": "f85717fe-b511-4662-b8d3-2a70483a6e34",
+    "meta": {
+      "base_cdn_url": "https://sl3-cdn.karousell.com/components/"
+    },
+    "screens": [
+      {
+        "id": "screen_0",
+        "groups": [],
+        "meta": {
+          "screen_name": "listing_details_screen",
+          "share_text": "iPhone 15 256GB Blue for S$579 https://www.carousell.sg/p/1469923094",
+          "default_value": {
+            "accepted_legacy_offer_id": "",
+            "cart": {},
+            "collection": {
+              "meta_description": "",
+              "meta_keywords": "Buy and Sell iPhone 15 Series",
+              "slug": "iphone-15-series",
+              "display_name": "iPhone 15 Series",
+              "name": "iPhone 15 Series",
+              "is_special": false,
+              "order": 6,
+              "image_url": "https://media.karousell.com/media/photos/country-collections/2023/09/22/subcat_iphone15.png",
+              "image_urls": {},
+              "id": 6359,
+              "cc_id": 6359,
+              "subcategories": []
+            },
+            "comments_count": 0,
+            "condition": "1",
+            "currency_code": "SGD",
+            "currency_symbol": "S$",
+            "description": "Selling a perfect condition iphone 15. No box and cable. Low ballers will be ignore.",
+            "flattened_description": "Selling a perfect condition iphone 15. No box and cable. Low ballers will be ignore.",
+            "has_smart_description": true,
+            "flags": {
+              "feedback_count": 88,
+              "feedback_score": 4.9545455,
+              "is_price_drop_bump_eligible": false,
+              "listing_tier_ad_free_ldp": false,
+              "listing_tier_name": "",
+              "require_mobile_verification": false,
+              "seller_type": "",
+              "show_listing_tier_highlight": false,
+              "show_listing_tier_highlight_rating": true
+            },
+            "primary_id": "ec93be02-dd04-4ad7-9acf-1f22e2961d87",
+            "id": 1469923094,
+            "is_caroupay_enabled": false,
+            "is_mall": false,
+            "is_p24": false,
+            "is_c2c_enabled": false,
+            "is_free_item": false,
+            "is_popular": false,
+            "last_modified": "2026-10-23T17:08:30Z",
+            "like_status": false,
+            "likes_count": 1,
+            "location": {
+              "latitude": 1.40518513,
+              "longitude": 103.9023487
+            },
+            "location_address": "70 Punggol Central, 828868",
+            "location_name": "Punggol MRT/LRT Interchange (NE17/PTC)",
+            "mailing": false,
+            "mailing_details": "",
+            "marketplace": {
+              "id": 1880252,
+              "name": "Singapore",
+              "location": {
+                "latitude": 1.28967,
+                "longitude": 103.85007
+              },
+              "region": null,
+              "country": {
+                "id": 1880251,
+                "code": "SG",
+                "name": "Singapore",
+                "city_count": 1
+              }
+            },
+            "meetup": true,
+            "meetup_details": "",
+            "meetups": [
+              {
+                "name": "Punggol MRT/LRT Interchange (NE17/PTC)",
+                "address": "70 Punggol Central, 828868",
+                "latitude": 1.40518513,
+                "longitude": 103.9023487,
+                "note": ""
+              },
+              {
+                "name": "Thanggam LRT Station (SW4)",
+                "address": "40 Fernvale Rd (Sengkang West Loop), 797699",
+                "latitude": 1.3980812,
+                "longitude": 103.88080303,
+                "note": ""
+              },
+              {
+                "name": "Sengkang MRT/LRT Interchange (NE16/STC)",
+                "address": "5 Sengkang Sq, 545062",
+                "latitude": 1.39153979,
+                "longitude": 103.89537146,
+                "note": ""
+              }
+            ],
+            "offer": null,
+            "photos": [
+              {
+                "is_primary": true,
+                "image_url": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_e4bc1c52.jpg",
+                "image": "photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_e4bc1c52.jpg",
+                "id": 2694321841,
+                "time_created": "2026-10-23T17:03:23Z",
+                "image_progressive_url": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_e4bc1c52_progressive.jpg",
+                "image_progressive_low_range": 23248,
+                "image_progressive_medium_range": 44698,
+                "entity_type": "photo"
+              },
+              {
+                "is_primary": false,
+                "image_url": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_0da599d6.jpg",
+                "image": "photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_0da599d6.jpg",
+                "id": 2694321842,
+                "time_created": "2026-10-23T17:03:23Z",
+                "image_progressive_url": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_0da599d6_progressive.jpg",
+                "image_progressive_low_range": 10130,
+                "image_progressive_medium_range": 29188,
+                "entity_type": "photo"
+              },
+              {
+                "is_primary": false,
+                "image_url": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_5e911720.jpg",
+                "image": "photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_5e911720.jpg",
+                "id": 2694321843,
+                "time_created": "2026-10-23T17:03:23Z",
+                "image_progressive_url": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_5e911720_progressive.jpg",
+                "image_progressive_low_range": 18445,
+                "image_progressive_medium_range": 31880,
+                "entity_type": "photo"
+              },
+              {
+                "is_primary": false,
+                "image_url": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_5b512d2c.jpg",
+                "image": "photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_5b512d2c.jpg",
+                "id": 2694321844,
+                "time_created": "2026-10-23T17:03:23Z",
+                "image_progressive_url": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_5b512d2c_progressive.jpg",
+                "image_progressive_low_range": 19752,
+                "image_progressive_medium_range": 34614,
+                "entity_type": "photo"
+              },
+              {
+                "is_primary": false,
+                "image_url": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_b8e0f1b3.jpg",
+                "image": "photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_b8e0f1b3.jpg",
+                "id": 2694321845,
+                "time_created": "2026-10-23T17:03:23Z",
+                "image_progressive_url": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_b8e0f1b3_progressive.jpg",
+                "image_progressive_low_range": 18025,
+                "image_progressive_medium_range": 34500,
+                "entity_type": "photo"
+              },
+              {
+                "is_primary": false,
+                "image_url": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_15f0e613.jpg",
+                "image": "photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_15f0e613.jpg",
+                "id": 2694321846,
+                "time_created": "2026-10-23T17:03:23Z",
+                "image_progressive_url": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_15f0e613_progressive.jpg",
+                "image_progressive_low_range": 16513,
+                "image_progressive_medium_range": 30991,
+                "entity_type": "photo"
+              },
+              {
+                "is_primary": false,
+                "image_url": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_fd0ab772.jpg",
+                "image": "photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_fd0ab772.jpg",
+                "id": 2694321847,
+                "time_created": "2026-10-23T17:03:23Z",
+                "image_progressive_url": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_fd0ab772_progressive.jpg",
+                "image_progressive_low_range": 15163,
+                "image_progressive_medium_range": 29319,
+                "entity_type": "photo"
+              }
+            ],
+            "media": [
+              {
+                "is_primary": true,
+                "image_url": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_e4bc1c52.jpg",
+                "image": "photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_e4bc1c52.jpg",
+                "id": 2694321841,
+                "time_created": "2026-10-23T17:03:23Z",
+                "image_progressive_url": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_e4bc1c52_progressive.jpg",
+                "image_progressive_low_range": 23248,
+                "image_progressive_medium_range": 44698,
+                "entity_type": "photo"
+              },
+              {
+                "is_primary": false,
+                "image_url": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_0da599d6.jpg",
+                "image": "photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_0da599d6.jpg",
+                "id": 2694321842,
+                "time_created": "2026-10-23T17:03:23Z",
+                "image_progressive_url": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_0da599d6_progressive.jpg",
+                "image_progressive_low_range": 10130,
+                "image_progressive_medium_range": 29188,
+                "entity_type": "photo"
+              },
+              {
+                "is_primary": false,
+                "image_url": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_5e911720.jpg",
+                "image": "photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_5e911720.jpg",
+                "id": 2694321843,
+                "time_created": "2026-10-23T17:03:23Z",
+                "image_progressive_url": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_5e911720_progressive.jpg",
+                "image_progressive_low_range": 18445,
+                "image_progressive_medium_range": 31880,
+                "entity_type": "photo"
+              },
+              {
+                "is_primary": false,
+                "image_url": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_5b512d2c.jpg",
+                "image": "photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_5b512d2c.jpg",
+                "id": 2694321844,
+                "time_created": "2026-10-23T17:03:23Z",
+                "image_progressive_url": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_5b512d2c_progressive.jpg",
+                "image_progressive_low_range": 19752,
+                "image_progressive_medium_range": 34614,
+                "entity_type": "photo"
+              },
+              {
+                "is_primary": false,
+                "image_url": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_b8e0f1b3.jpg",
+                "image": "photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_b8e0f1b3.jpg",
+                "id": 2694321845,
+                "time_created": "2026-10-23T17:03:23Z",
+                "image_progressive_url": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_b8e0f1b3_progressive.jpg",
+                "image_progressive_low_range": 18025,
+                "image_progressive_medium_range": 34500,
+                "entity_type": "photo"
+              },
+              {
+                "is_primary": false,
+                "image_url": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_15f0e613.jpg",
+                "image": "photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_15f0e613.jpg",
+                "id": 2694321846,
+                "time_created": "2026-10-23T17:03:23Z",
+                "image_progressive_url": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_15f0e613_progressive.jpg",
+                "image_progressive_low_range": 16513,
+                "image_progressive_medium_range": 30991,
+                "entity_type": "photo"
+              },
+              {
+                "is_primary": false,
+                "image_url": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_fd0ab772.jpg",
+                "image": "photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_fd0ab772.jpg",
+                "id": 2694321847,
+                "time_created": "2026-10-23T17:03:23Z",
+                "image_progressive_url": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_fd0ab772_progressive.jpg",
+                "image_progressive_low_range": 15163,
+                "image_progressive_medium_range": 29319,
+                "entity_type": "photo"
+              }
+            ],
+            "title": "iPhone 15 256GB Blue",
+            "price": "579.00",
+            "price_formatted": "579",
+            "seller": {
+              "username": "urameshi1984",
+              "id": 19487814,
+              "profile": {
+                "image_url": "https://media.karousell.com/media/photos/profiles/2024/11/02/urameshi1984_1730516255_2ca80ad1.jpg",
+                "image": "photos/profiles/2024/11/02/urameshi1984_1730516255_2ca80ad1.jpg",
+                "image_progressive_url": "https://media.karousell.com/media/photos/profiles/2024/11/02/urameshi1984_1730516255_2ca80ad1_progressive.jpg",
+                "image_progressive_low_range": 2403,
+                "image_progressive_medium_range": 4828,
+                "verification_type": "VE",
+                "is_email_verified": true,
+                "is_facebook_verified": false,
+                "is_gplus_verified": false,
+                "is_mobile_verified": true,
+                "is_official_partner": false,
+                "marketplace": {
+                  "id": 1880252,
+                  "name": "Singapore",
+                  "location": {
+                    "latitude": 1.28967,
+                    "longitude": 103.85007
+                  },
+                  "region": null,
+                  "country": {
+                    "id": 1880251,
+                    "code": "SG",
+                    "name": "Singapore",
+                    "city_count": 1
+                  }
+                },
+                "is_id_verified": true,
+                "is_affiliate": false
+              },
+              "followers_count": 17,
+              "following_count": 4,
+              "last_name": "Ting",
+              "first_name": "Andy",
+              "blocked": false,
+              "is_suspended": false,
+              "positive_reviews_count": 87,
+              "neutral_reviews_count": 0,
+              "negative_reviews_count": 1,
+              "date_joined": "2019-05-11T01:16:31Z",
+              "response_rate": "H",
+              "feedback_count": 88,
+              "feedback_score": 4.9545455,
+              "has_more_reviews": true
+            },
+            "smart_attributes": {
+              "deal_options": "MEETUP",
+              "fixed_price": "false",
+              "is_advance_promise_enabled": "",
+              "is_bp_enabled": "",
+              "is_recommendation_enabled": "true"
+            },
+            "source": "C",
+            "status": "L",
+            "subscribed": false,
+            "time_created": "2026-10-23T17:03:23Z",
+            "time_indexed": "2026-10-23T17:03:23Z",
+            "layered_condition": 4,
+            "expiry_date": "2027-01-21T17:03:23Z",
+            "enabled_shipping": [],
+            "user_state": 1,
+            "cgproduct_id": "P172820",
+            "cgproduct_variant_id": "PV172827",
+            "listing_url": "carousell://p/1469923094",
+            "listing_attributes": {
+              "category": "In {{{iPhone 15 Series}}}",
+              "condition": "Like new",
+              "mobile_color": "Blue",
+              "mobile_model": "iPhone 15",
+              "mobile_storage": "256GB",
+              "time_created": "moments ago by {{{urameshi1984}}}"
+            }
+          }
+        },
+        "ui_rules": {
+          "offer_cta_rules": {
+            "ask_the_seller_text": "Ask Seller",
+            "boost_text": "No chats yet - Promote",
+            "bump_listing_text": "Bump listing",
+            "buyer_add_to_cart_text": "Add to Cart",
+            "buyer_added_to_cart_text": "In Cart",
+            "buyer_bought_text": "You Bought This",
+            "buyer_chat_text": "Chat",
+            "buyer_make_offer_text": "Make Offer",
+            "buyer_offer_accepted_text": "Buy - {offer_price}",
+            "buyer_offered_text": "View Offer - {offer_price}",
+            "buyer_quick_buy_text": "Buy",
+            "draft_text": "Inactive",
+            "expired_text": "Inactive",
+            "list_similar_text": "List similar",
+            "mark_as_active_text": "Mark as active",
+            "no_chats_text": "No chats yet",
+            "pay_postage_seller_text": "Pay postage",
+            "promote_text": "No chats yet - Promote",
+            "request_item_seller_text": "Request",
+            "reserved_text": "Reserved",
+            "sell_faster_text": "Sell faster",
+            "sell_faster_text_dweb": "No chats yet - Sell faster",
+            "seller_listed_text": "View {num_offers} chat",
+            "seller_listed_text_multi": "View {num_offers} chats",
+            "sold_text": "Sold",
+            "view_chat_text": "View Chat",
+            "view_chats_text": "View Chats"
+          },
+          "server_formatting_rules": {
+            "buyer_share_text": "{title} for {price} {url}",
+            "seller_share_text": "Check out my item! {title} for {price}! {url}"
+          },
+          "actions": {
+            "primary_button": {
+              "action": "view_offer",
+              "button_text": "Chat"
+            },
+            "secondary_button": {
+              "action": "make_offer",
+              "button_text": "Make Offer"
+            }
+          },
+          "snack_bar_rules": null,
+          "feature_flags": {
+            "is_bp_enabled_category": true
+          }
+        }
+      },
+      {
+        "id": "screen_faq_0",
+        "groups": [],
+        "meta": {
+          "screen_name": "faq_screen_0",
+          "share_text": "",
+          "default_value": null
+        },
+        "ui_rules": {
+          "offer_cta_rules": null,
+          "server_formatting_rules": null,
+          "header": "FAQ",
+          "actions": null,
+          "bottom_sheet_height_type": "fixed_short",
+          "close_button": {
+            "visible": true
+          },
+          "snack_bar_rules": null
+        }
+      }
+    ]
+  }
+}

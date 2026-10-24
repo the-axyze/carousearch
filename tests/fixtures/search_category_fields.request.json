@@ -1,0 +1,63 @@
+{
+  "search_request": {
+    "query": "iphone 15 pro",
+    "category": "5707",
+    "price_min": null,
+    "price_max": null,
+    "conditions": [],
+    "deal_methods": [
+      "meetup"
+    ],
+    "buyer_protection_only": false,
+    "free_delivery_only": false,
+    "sort": "best_match",
+    "category_fields": {
+      "mobile_storage": "MOBILE_STORAGE_256_GB"
+    },
+    "page_size": 5,
+    "page_cursor": null
+  },
+  "payload": {
+    "bestMatchEnabled": true,
+    "canChangeKeyword": false,
+    "count": 5,
+    "countryCode": "SG",
+    "countryId": "1880251",
+    "filters": [
+      {
+        "fieldName": "collections",
+        "idsOrKeywords": {
+          "value": [
+            "5707"
+          ]
+        },
+        "enforce": true
+      },
+      {
+        "fieldName": "mobile_storage",
+        "idsOrKeywords": {
+          "value": [
+            "MOBILE_STORAGE_256_GB"
+          ]
+        },
+        "enforce": true
+      },
+      {
+        "fieldName": "_deal_method",
+        "idsOrKeywords": {
+          "value": [
+            "MEETUP"
+          ]
+        },
+        "enforce": true
+      }
+    ],
+    "includeSuggestions": false,
+    "locale": "en",
+    "prefill": {},
+    "query": "iphone 15 pro",
+    "sortParam": {
+      "fieldName": "1"
+    }
+  }
+}

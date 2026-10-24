@@ -1,0 +1,687 @@
+{
+  "data": {
+    "appliedContext": {
+      "filters": [
+        {
+          "fieldName": "price",
+          "rangedFloat": {
+            "start": {
+              "value": 300
+            },
+            "end": {
+              "value": 900
+            }
+          },
+          "enforce": true
+        },
+        {
+          "fieldName": "layered_condition",
+          "idsOrKeywords": {
+            "value": [
+              "4",
+              "7"
+            ]
+          },
+          "enforce": true
+        },
+        {
+          "fieldName": "collections",
+          "idsOrKeywords": {
+            "value": [
+              "0"
+            ]
+          }
+        }
+      ],
+      "query": "iphone 15"
+    },
+    "filterBubbles": [
+      {
+        "label": "Delivery",
+        "fieldName": "_delivery"
+      },
+      {
+        "label": "In",
+        "displayValue": "All",
+        "fieldName": "collection_text"
+      },
+      {
+        "label": "Sort",
+        "displayValue": "Recent",
+        "fieldName": "sort_by"
+      },
+      {
+        "label": "Condition",
+        "displayValue": "Like new, Lightly used",
+        "fieldName": "layered_condition"
+      },
+      {
+        "label": "Price",
+        "displayValue": "S$300 - S$900",
+        "fieldName": "price_start"
+      },
+      {
+        "label": "Deal Method",
+        "fieldName": "_deal_method"
+      },
+      {
+        "label": "Model",
+        "fieldName": "mobile_model"
+      },
+      {
+        "label": "Storage",
+        "fieldName": "mobile_storage"
+      },
+      {
+        "label": "Color",
+        "fieldName": "mobile_color"
+      },
+      {
+        "label": "Free Accessories",
+        "fieldName": "mobile_free_accessories"
+      },
+      {
+        "label": "Local / International Set",
+        "fieldName": "mobile_nationality"
+      },
+      {
+        "label": "Manufacturer Warranty",
+        "fieldName": "mobile_manufacturer_warranty"
+      }
+    ],
+    "formattedTotal": "1,000+",
+    "hasMore": true,
+    "isSellerSearch": false,
+    "results": [
+      {
+        "listingCard": {
+          "id": "1469923094",
+          "seller": {
+            "id": "19487814",
+            "profilePicture": "https://media.karousell.com/media/photos/profiles/2024/11/02/urameshi1984_1730516255_2ca80ad1.jpg",
+            "username": "urameshi1984",
+            "firstName": "Andy",
+            "lastName": "Ting"
+          },
+          "photoUrls": [
+            "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_e4bc1c52_thumbnail.jpg"
+          ],
+          "aboveFold": [
+            {
+              "component": "time_created",
+              "timestampContent": {
+                "seconds": {
+                  "low": 1792775003,
+                  "high": 0,
+                  "unsigned": false
+                }
+              }
+            }
+          ],
+          "belowFold": [
+            {
+              "component": "header_1",
+              "stringContent": "iPhone 15 256GB Blue"
+            },
+            {
+              "component": "header_2",
+              "stringContent": "S$579"
+            },
+            {
+              "component": "paragraph",
+              "stringContent": "Selling a perfect condition iphone 15. No box and cable. Low ballers will be ignore."
+            },
+            {
+              "component": "paragraph",
+              "stringContent": "Like new"
+            },
+            {
+              "component": "paragraph",
+              "stringContent": ""
+            }
+          ],
+          "likesCount": 1,
+          "status": "L",
+          "marketPlace": {
+            "id": {
+              "low": 1880252,
+              "high": 0,
+              "unsigned": false
+            },
+            "name": "Singapore",
+            "country": {
+              "code": "SG",
+              "id": {
+                "low": 1880251,
+                "high": 0,
+                "unsigned": false
+              },
+              "name": "Singapore"
+            },
+            "location": {
+              "longitude": 103.85006713867188,
+              "latitude": 1.2896699905395508
+            }
+          },
+          "photos": [
+            {
+              "thumbnailUrl": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_e4bc1c52_thumbnail.jpg",
+              "thumbnailProgressiveUrl": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_e4bc1c52_progressive_thumbnail.jpg",
+              "thumbnailProgressiveLowRange": 4364,
+              "thumbnailProgressiveMediumRange": 8206,
+              "thumbnailHeight": 320,
+              "thumbnailWidth": 240
+            }
+          ],
+          "media": [
+            {
+              "photoItem": {
+                "url": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_e4bc1c52_thumbnail.jpg",
+                "progressiveUrl": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_256gb_blue_1792775003_e4bc1c52_progressive_thumbnail.jpg",
+                "progressiveLowRange": 4364,
+                "progressiveMediumRange": 8206,
+                "height": 320,
+                "width": 240
+              }
+            }
+          ],
+          "cardType": 13,
+          "price": "S$579",
+          "title": "iPhone 15 256GB Blue",
+          "overlayContent": {
+            "timestampContent": {
+              "seconds": {
+                "low": 1792775003,
+                "high": 0,
+                "unsigned": false
+              }
+            }
+          },
+          "isSellerVisible": true,
+          "countryCollectionId": "6359",
+          "ctaButtons": [
+            "chat"
+          ],
+          "labelContent": {
+            "iconUrl": "https://sl3-cdn.karousell.com/components/green_thumps_icon.png",
+            "text": "Good Deal"
+          },
+          "condition": 4
+        }
+      },
+      {
+        "listingCard": {
+          "id": "1463757293",
+          "seller": {
+            "id": "37448921",
+            "profilePicture": "https://media.karousell.com/media/photos/profiles/2022/08/30/noahlee8550578_1661822024_e887e69e.jpg",
+            "username": "grandstone.022d1e",
+            "firstName": "Noah",
+            "lastName": "Lee"
+          },
+          "photoUrls": [
+            "https://media.karousell.com/media/photos/products/2026/9/24/iphone_15_pro_128gb_natural_ti_1790216103_80c8500c_thumbnail.jpg"
+          ],
+          "aboveFold": [
+            {
+              "component": "active_bump",
+              "timestampContent": {
+                "seconds": {
+                  "low": 1792774455,
+                  "high": 0,
+                  "unsigned": false
+                }
+              }
+            }
+          ],
+          "belowFold": [
+            {
+              "component": "header_1",
+              "stringContent": "iPhone 15 Pro 128GB Natural Titanium"
+            },
+            {
+              "component": "header_2",
+              "stringContent": "S$750"
+            },
+            {
+              "component": "paragraph",
+              "stringContent": "This is my backup phone for my US number. So this phone only takes eSIM which I don’t think is an issue.   Pristine condition, in case since day 1, screen protector since day 1. Low cycle count and 87% battery health.   Comes with ESR case seen in photo. "
+            },
+            {
+              "component": "paragraph",
+              "stringContent": "Lightly used"
+            },
+            {
+              "component": "paragraph",
+              "stringContent": ""
+            }
+          ],
+          "likesCount": 3,
+          "status": "L",
+          "marketPlace": {
+            "id": {
+              "low": 1880252,
+              "high": 0,
+              "unsigned": false
+            },
+            "name": "Singapore",
+            "country": {
+              "code": "SG",
+              "id": {
+                "low": 1880251,
+                "high": 0,
+                "unsigned": false
+              },
+              "name": "Singapore"
+            },
+            "location": {
+              "longitude": 103.85006713867188,
+              "latitude": 1.2896699905395508
+            }
+          },
+          "photos": [
+            {
+              "thumbnailUrl": "https://media.karousell.com/media/photos/products/2026/9/24/iphone_15_pro_128gb_natural_ti_1790216103_80c8500c_thumbnail.jpg",
+              "thumbnailProgressiveUrl": "https://media.karousell.com/media/photos/products/2026/9/24/iphone_15_pro_128gb_natural_ti_1790216103_80c8500c_progressive_thumbnail.jpg",
+              "thumbnailProgressiveLowRange": 4509,
+              "thumbnailProgressiveMediumRange": 10388,
+              "thumbnailHeight": 320,
+              "thumbnailWidth": 240
+            }
+          ],
+          "media": [
+            {
+              "photoItem": {
+                "url": "https://media.karousell.com/media/photos/products/2026/9/24/iphone_15_pro_128gb_natural_ti_1790216103_80c8500c_thumbnail.jpg",
+                "progressiveUrl": "https://media.karousell.com/media/photos/products/2026/9/24/iphone_15_pro_128gb_natural_ti_1790216103_80c8500c_progressive_thumbnail.jpg",
+                "progressiveLowRange": 4509,
+                "progressiveMediumRange": 10388,
+                "height": 320,
+                "width": 240
+              }
+            }
+          ],
+          "price": "S$750",
+          "title": "iPhone 15 Pro 128GB Natural Titanium",
+          "overlayContent": {
+            "iconUrl": {
+              "value": "https://sl3-cdn.karousell.com/components/active_bump.png"
+            },
+            "timestampContent": {
+              "seconds": {
+                "low": 1792774455,
+                "high": 0,
+                "unsigned": false
+              }
+            }
+          },
+          "isSellerVisible": true,
+          "countryCollectionId": "6359",
+          "ctaButtons": [
+            "chat"
+          ],
+          "condition": 7
+        }
+      },
+      {
+        "listingCard": {
+          "id": "1469915662",
+          "seller": {
+            "id": "603660",
+            "profilePicture": "https://media.karousell.com/media/photos/profiles/2015/03/30/zephyr001_1427724794.jpg",
+            "username": "invalidcode"
+          },
+          "photoUrls": [
+            "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_pro_128gb_natural_ti_1792771703_5ba0786a_thumbnail.jpg"
+          ],
+          "aboveFold": [
+            {
+              "component": "time_created",
+              "timestampContent": {
+                "seconds": {
+                  "low": 1792771703,
+                  "high": 0,
+                  "unsigned": false
+                }
+              }
+            }
+          ],
+          "belowFold": [
+            {
+              "component": "header_1",
+              "stringContent": "iPhone 15 Pro 128GB Natural Titanium"
+            },
+            {
+              "component": "header_2",
+              "stringContent": "S$650"
+            },
+            {
+              "component": "paragraph",
+              "stringContent": "**iPhone 15 Pro 128GB – $650 nego**  • Battery health: 83% • No dents or scratches • Full box included • Minor cosmetic discolouration on the back  Phone is in good working condition. Price negotiable for serious buyers. DM if interested!"
+            },
+            {
+              "component": "paragraph",
+              "stringContent": "Like new"
+            },
+            {
+              "component": "paragraph",
+              "stringContent": ""
+            }
+          ],
+          "likesCount": 1,
+          "status": "L",
+          "marketPlace": {
+            "id": {
+              "low": 1880252,
+              "high": 0,
+              "unsigned": false
+            },
+            "name": "Singapore",
+            "country": {
+              "code": "SG",
+              "id": {
+                "low": 1880251,
+                "high": 0,
+                "unsigned": false
+              },
+              "name": "Singapore"
+            },
+            "location": {
+              "longitude": 103.85006713867188,
+              "latitude": 1.2896699905395508
+            }
+          },
+          "photos": [
+            {
+              "thumbnailUrl": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_pro_128gb_natural_ti_1792771703_5ba0786a_thumbnail.jpg",
+              "thumbnailProgressiveUrl": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_pro_128gb_natural_ti_1792771703_5ba0786a_progressive_thumbnail.jpg",
+              "thumbnailProgressiveLowRange": 3372,
+              "thumbnailProgressiveMediumRange": 6149,
+              "thumbnailHeight": 278,
+              "thumbnailWidth": 320
+            }
+          ],
+          "media": [
+            {
+              "photoItem": {
+                "url": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_pro_128gb_natural_ti_1792771703_5ba0786a_thumbnail.jpg",
+                "progressiveUrl": "https://media.karousell.com/media/photos/products/2026/10/23/iphone_15_pro_128gb_natural_ti_1792771703_5ba0786a_progressive_thumbnail.jpg",
+                "progressiveLowRange": 3372,
+                "progressiveMediumRange": 6149,
+                "height": 278,
+                "width": 320
+              }
+            }
+          ],
+          "cardType": 13,
+          "price": "S$650",
+          "title": "iPhone 15 Pro 128GB Natural Titanium",
+          "overlayContent": {
+            "timestampContent": {
+              "seconds": {
+                "low": 1792771703,
+                "high": 0,
+                "unsigned": false
+              }
+            }
+          },
+          "isSellerVisible": true,
+          "countryCollectionId": "6359",
+          "ctaButtons": [
+            "chat"
+          ],
+          "labelContent": {
+            "iconUrl": "https://sl3-cdn.karousell.com/components/green_thumps_icon.png",
+            "text": "Good Deal"
+          },
+          "condition": 4
+        }
+      },
+      {
+        "listingCard": {
+          "id": "1434563482",
+          "seller": {
+            "id": "480878",
+            "profilePicture": "https://media.karousell.com/media/photos/profiles/2025/12/29/royalritz_1767007027_f96e4203.jpg",
+            "username": "royalutz",
+            "firstName": "Royalutz"
+          },
+          "photoUrls": [
+            "https://media.karousell.com/media/photos/products/2026/4/26/iphone_15_128gb_blue_1777219373_c4ff173e_thumbnail.jpg"
+          ],
+          "aboveFold": [
+            {
+              "component": "active_bump",
+              "timestampContent": {
+                "seconds": {
+                  "low": 1792771409,
+                  "high": 0,
+                  "unsigned": false
+                }
+              }
+            }
+          ],
+          "belowFold": [
+            {
+              "component": "header_1",
+              "stringContent": "iPhone 15 128GB Blue"
+            },
+            {
+              "component": "header_2",
+              "stringContent": "S$565"
+            },
+            {
+              "component": "paragraph",
+              "stringContent": "- Apple iPhone 15, 128gb - Colour: blue - Includes original box - Perfect condition, female user - Ready for immediate sale - free 4 phone cases! - Lowballers will be ignored"
+            },
+            {
+              "component": "paragraph",
+              "stringContent": "Like new"
+            },
+            {
+              "component": "paragraph",
+              "stringContent": ""
+            }
+          ],
+          "likesCount": 52,
+          "status": "L",
+          "marketPlace": {
+            "id": {
+              "low": 1880252,
+              "high": 0,
+              "unsigned": false
+            },
+            "name": "Singapore",
+            "country": {
+              "code": "SG",
+              "id": {
+                "low": 1880251,
+                "high": 0,
+                "unsigned": false
+              },
+              "name": "Singapore"
+            },
+            "location": {
+              "longitude": 103.85006713867188,
+              "latitude": 1.2896699905395508
+            }
+          },
+          "photos": [
+            {
+              "thumbnailUrl": "https://media.karousell.com/media/photos/products/2026/4/26/iphone_15_128gb_blue_1777219373_c4ff173e_thumbnail.jpg",
+              "thumbnailProgressiveUrl": "https://media.karousell.com/media/photos/products/2026/4/26/iphone_15_128gb_blue_1777219373_c4ff173e_progressive_thumbnail.jpg",
+              "thumbnailProgressiveLowRange": 3861,
+              "thumbnailProgressiveMediumRange": 7451,
+              "thumbnailHeight": 320,
+              "thumbnailWidth": 240
+            }
+          ],
+          "media": [
+            {
+              "photoItem": {
+                "url": "https://media.karousell.com/media/photos/products/2026/4/26/iphone_15_128gb_blue_1777219373_c4ff173e_thumbnail.jpg",
+                "progressiveUrl": "https://media.karousell.com/media/photos/products/2026/4/26/iphone_15_128gb_blue_1777219373_c4ff173e_progressive_thumbnail.jpg",
+                "progressiveLowRange": 3861,
+                "progressiveMediumRange": 7451,
+                "height": 320,
+                "width": 240
+              }
+            }
+          ],
+          "price": "S$565",
+          "title": "iPhone 15 128GB Blue",
+          "overlayContent": {
+            "iconUrl": {
+              "value": "https://sl3-cdn.karousell.com/components/active_bump.png"
+            },
+            "timestampContent": {
+              "seconds": {
+                "low": 1792771409,
+                "high": 0,
+                "unsigned": false
+              }
+            }
+          },
+          "isSellerVisible": true,
+          "countryCollectionId": "6359",
+          "ctaButtons": [
+            "chat"
+          ],
+          "condition": 4
+        }
+      },
+      {
+        "listingCard": {
+          "id": "1457258961",
+          "seller": {
+            "id": "710536",
+            "profilePicture": "https://media.karousell.com/media/photos/profiles/2025/05/21/Hanjiro.plantar_1747814462_73e27f14.jpg",
+            "username": "hanjiro.plantar",
+            "firstName": "Hanjiro",
+            "lastName": "Plantaro"
+          },
+          "photoUrls": [
+            "https://media.karousell.com/media/photos/products/2026/8/23/iphone_15_pro_max_256gb_natura_1787485906_1482375b_thumbnail.jpg"
+          ],
+          "aboveFold": [
+            {
+              "component": "active_bump",
+              "timestampContent": {
+                "seconds": {
+                  "low": 1792766555,
+                  "high": 0,
+                  "unsigned": false
+                }
+              }
+            }
+          ],
+          "belowFold": [
+            {
+              "component": "header_1",
+              "stringContent": "iPhone 15 Pro Max 256GB Natural Titanium"
+            },
+            {
+              "component": "header_2",
+              "stringContent": "S$888"
+            },
+            {
+              "component": "paragraph",
+              "stringContent": "- Apple iPhone 15 Pro Max - Battery Health: 100% - Cycle Count: 78 - Includes 2 phone cases - Bellroy Phone Cases - Black Leather (MagSafe compatible, eco-tanned)  Screen protector and casing on since day 1... comes with 2 high quality casing (worth more than $150). And battery has also just been re"
+            },
+            {
+              "component": "paragraph",
+              "stringContent": "Lightly used"
+            },
+            {
+              "component": "paragraph",
+              "stringContent": ""
+            }
+          ],
+          "likesCount": 9,
+          "status": "L",
+          "marketPlace": {
+            "id": {
+              "low": 1880252,
+              "high": 0,
+              "unsigned": false
+            },
+            "name": "Singapore",
+            "country": {
+              "code": "SG",
+              "id": {
+                "low": 1880251,
+                "high": 0,
+                "unsigned": false
+              },
+              "name": "Singapore"
+            },
+            "location": {
+              "longitude": 103.85006713867188,
+              "latitude": 1.2896699905395508
+            }
+          },
+          "photos": [
+            {
+              "thumbnailUrl": "https://media.karousell.com/media/photos/products/2026/8/23/iphone_15_pro_max_256gb_natura_1787485906_1482375b_thumbnail.jpg",
+              "thumbnailProgressiveUrl": "https://media.karousell.com/media/photos/products/2026/8/23/iphone_15_pro_max_256gb_natura_1787485906_1482375b_progressive_thumbnail.jpg",
+              "thumbnailProgressiveLowRange": 4423,
+              "thumbnailProgressiveMediumRange": 7650,
+              "thumbnailHeight": 240,
+              "thumbnailWidth": 320
+            }
+          ],
+          "media": [
+            {
+              "photoItem": {
+                "url": "https://media.karousell.com/media/photos/products/2026/8/23/iphone_15_pro_max_256gb_natura_1787485906_1482375b_thumbnail.jpg",
+                "progressiveUrl": "https://media.karousell.com/media/photos/products/2026/8/23/iphone_15_pro_max_256gb_natura_1787485906_1482375b_progressive_thumbnail.jpg",
+                "progressiveLowRange": 4423,
+                "progressiveMediumRange": 7650,
+                "height": 240,
+                "width": 320
+              }
+            }
+          ],
+          "originalPrice": {
+            "value": "S$928"
+          },
+          "price": "S$888",
+          "title": "iPhone 15 Pro Max 256GB Natural Titanium",
+          "overlayContent": {
+            "iconUrl": {
+              "value": "https://sl3-cdn.karousell.com/components/active_bump.png"
+            },
+            "timestampContent": {
+              "seconds": {
+                "low": 1792766555,
+                "high": 0,
+                "unsigned": false
+              }
+            }
+          },
+          "isSellerVisible": true,
+          "countryCollectionId": "6359",
+          "ctaButtons": [
+            "chat"
+          ],
+          "condition": 7
+        }
+      }
+    ],
+    "session": "eyJhZ2dyZWdhdGVfY291bnQiOjUsImFwcGxpZWRfY2NpZCI6IiIsImNvbnRlbnQiOnsiYmFubmVyX2NjaWQiOiI2MzU5IiwiY3VycmVudF9jb3VudCI6NSwic3JjX3BhZ2luZ19pbmZvIjp7ImludGVybmFsX2FkcyI6eyJwYWdlX251bWJlciI6MX0sImxpc3RpbmdfY2FyZC1ibG9jayI6eyJjaHVua19udW1iZXIiOjAsImNodW5rX3N0YXJ0X29mZnNldCI6MCwiY3JlYXRlZF9hdCI6IjIwMjYtMTAtMjNUMTc6MzM6MTdaIiwib2Zmc2V0Ijo1LCJ2ZXJzaW9uIjoiMWUyMzJlYWYtZDRjMi00Y2I3LWFhODQtYWQ0ZDQ0YmUxYjkwIn19fSwiZW5mb3JjZV9jYXRlZ29yeV9maWx0ZXIiOmZhbHNlLCJmaWVsZHNldF9jY2lkIjoiNjM1OSIsInBhZ2Vfc2l6ZSI6NSwicXVzdmNfcmVzcCI6IklrMEtDV2x3YUc5dVpTQXhOUklKYVhCb2IyNWxJREUxU0FKYUN4SUphWEJvYjI1bElERTFhZ2xwY0dodmJtVWdNVFdLQVFscGNHaHZibVVnTVRXU0FRc1NDV2x3YUc5dVpTQXhOYUFCQVRJQ0NBRkNFQW9FTmpNMU9SWG9MbnMvSFFBQWdEOUtEZ29ETWpFMUVnZE5iMkpwYkdWeldoQUtCRFl6TlRrVjZDNTdQeDBBQUlBL1loQUtCRFl6TlRrVkFBQ0FQeDBBQUlBL2FoQUtCRFl6TlRrVkFBQ0FQeDBBQUlBLyIsInJlcV9oYXNfY2hhbmdlZCI6ZmFsc2UsInNlYXJjaF9wYXJhbXMiOiJHZ0lJQlNvRUNMdmhjaklOQ2dscGNHaHZibVVnTVRWNEFUb2hDZ1Z3Y21salpYZ0JJaFlLQ1FrQUFBQUFBTUJ5UUJJSkNRQUFBQUFBSUl4QU9oMEtFV3hoZVdWeVpXUmZZMjl1WkdsMGFXOXVlQUVTQmdvQk5Bb0JOMElFQ0FONEFVb0NHQXRTQkFnQkVBRmFCaUFCS0FGQUFXQUJhZ0lJQVE9PSIsInNlc3Npb25faWQiOiJjYjdlMWVlZi02NmY3LTQzYjctOGM2Ny02N2M0MDkzZGEzZjAiLCJzdWdnZXN0ZWRfY2F0ZWdvcnlfdHlwZSI6Miwic3VnZ2VzdGVkX2NjaWQiOiI2MzU5In0=",
+    "sfContext": {
+      "collectionId": "6359"
+    },
+    "shouldPromptClearCollection": false,
+    "shouldPromptKeywordCorrected": false,
+    "showBpOnboarding": false,
+    "total": {
+      "value": {
+        "low": 1000,
+        "high": 0,
+        "unsigned": false
+      }
+    },
+    "searchContext": "0a0208051a0408bbe172220d0a096970686f6e6520313578012a210a05707269636522160a09090000000000c072401209090000000000208c4078012a1d0a116c6179657265645f636f6e646974696f6e12060a01340a013778013204080378013a02180b4204080110014a0620012801400150015a0208016a0473657270"
+  }
+}
