@@ -1,0 +1,25 @@
+{
+  "question": "What do used iPhone 15 Pro 256GB listings go for, by condition?",
+  "searches": [
+    {
+      "query": "iphone 15 pro 256gb",
+      "category": "5707",
+      "conditions": ["like_new", "lightly_used", "well_used", "heavily_used"],
+      "sort": "recent"
+    },
+    {
+      "query": "iphone 15 pro 256",
+      "category": "5707",
+      "price_max": 1300,
+      "sort": "recent"
+    }
+  ],
+  "limits": {"max_pages": 5, "max_age_days": 30},
+  "max_age_days": 30,
+  "title_filter": {
+    "include": ["15 ?pro"],
+    "exclude": ["pro ?max", "case", "cover", "screen protector", "box only"]
+  },
+  "group_by": "condition",
+  "exclude_outliers": true
+}

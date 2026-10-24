@@ -1,5 +1,7 @@
 """A scripted stand-in for carousell.sg, served through httpx.MockTransport."""
 
+import json
+
 import httpx
 
 from carousearch.carousell.client import CarousellClient
@@ -22,11 +24,18 @@ def bootstrap_page(csrf_token: str) -> str:
 class FakeCarousell:
     """Serves a bootstrap page with a new CSRF token each time, then queued API responses.
 
-    When the queue is empty, the API answers with the saved search or listing-detail fixture.
+    When the queue is empty, a search is answered from `page_responses` by the `session` cursor the
+    client sent (None for a first page), and otherwise with the saved search fixture; a listing detail
+    is answered with the saved listing-detail fixture.
     """
 
-    def __init__(self, api_responses: list[httpx.Response] | None = None) -> None:
+    def __init__(
+        self,
+        api_responses: list[httpx.Response] | None = None,
+        page_responses: dict[str | None, httpx.Response] | None = None,
+    ) -> None:
         self.api_responses = list(api_responses or [])
+        self.page_responses = dict(page_responses or {})
         self.requests: list[httpx.Request] = []
         self.bootstrap_count = 0
 
@@ -46,6 +55,9 @@ class FakeCarousell:
         if self.api_responses:
             return self.api_responses.pop(0)
         if request.url.path == SEARCH_PATH:
+            cursor = json.loads(request.content or b"{}").get("session")
+            if cursor in self.page_responses:
+                return self.page_responses[cursor]
             return httpx.Response(200, json=load_json_fixture("search_price_condition.json"))
         if request.url.path.startswith("/ds/listing-detail/"):
             return httpx.Response(200, json=load_json_fixture("listing_detail.json"))

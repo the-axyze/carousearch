@@ -16,7 +16,13 @@ src/carousearch/
   carousell/client.py    CarousellClient: session bootstrap, CSRF, re-bootstrap, rate limiting (all network I/O)
   carousell/parse.py     pure functions: response JSON / HTML -> models, block detection
   carousell/rate_limit.py, carousell/errors.py
-  storage.py             SQLite: seen_listings, listing_detail_cache, saved_searches
+  storage.py             SQLite: seen_listings, listing_detail_cache, saved_searches, listings (upsert by content hash),
+                         listing_changes, harvest_runs
+  market/hashing.py      content hash of a listing, hash of a search request (pure)
+  market/limits.py       HarvestLimits (pages, age cutoff, page size)
+  market/harvest.py      walks a search's pages into `listings` and records the run; reuses a recent identical run
+  market/analysis.py     AnalysisSpec and the price statistics (pure)
+  market/render.py       analysis result as text / JSON (pure)
   config.py              data folder and the Telegram settings (environment or .env)
   bot/state.py           ChatDraft, button actions and their callback_data encoding (pure)
   bot/keyboard.py        filter panel and other inline keyboards, filter summary text (pure)
@@ -114,6 +120,42 @@ Description:
 ```
 
 `--json` prints the full `ListingDetail`, including the `raw` listing object from Carousell. The detail is also stored in `listing_detail_cache`.
+
+### harvest
+
+Pulls every page of one search (up to `--max-pages`, default 10, 48 listings a page) into the `listings` table, one row per listing, and records the run in `harvest_runs` so an analysis can read exactly what that pull returned. Takes the same filter options as `search`.
+
+```
+$ carousearch harvest "iphone 15 pro" --category 5707 --condition used --sort recent --max-pages 5
+run 12: 212 listings, 5 pages, stopped: max_pages (37 new, 4 changed)
+```
+
+A listing already in the table is overwritten only when its title, price or condition changed (a content hash decides); that change is also appended to `listing_changes` with the old and new price. Likes and `last_seen_at` are refreshed on every pull. An identical search run in the last 30 minutes is reused instead of scraped again (`reused run 11: …`); pass `--no-reuse` to force a fresh pull. `--max-age-days N` stops once listings get older than N days and needs `--sort recent`.
+
+### analyze
+
+Runs the searches in an analysis spec, then prints price statistics for the union of their listings: count, min, p25, median, p75, max and mean, overall and per group, with IQR outliers listed separately and excluded by default. The spec is JSON ([docs/examples/analysis_spec.example.json](docs/examples/analysis_spec.example.json)):
+
+```json
+{
+  "question": "What do used iPhone 15 Pro 256GB listings go for, by condition?",
+  "searches": [{"query": "iphone 15 pro 256gb", "category": "5707", "sort": "recent"}],
+  "limits": {"max_pages": 5, "max_age_days": 30},
+  "title_filter": {"include": ["15 ?pro"], "exclude": ["pro ?max", "case"]},
+  "group_by": "condition"
+}
+```
+
+```
+$ carousearch analyze --spec docs/examples/analysis_spec.example.json
+run 12: 212 listings, 5 pages, stopped: max_pages (37 new, 4 changed)
+What do used iPhone 15 Pro 256GB listings go for, by condition?
+Fetched 212 listings (1 run); analysed 184 (14 without a price, 9 filtered out, 5 outliers excluded)
+All           n=184  median S$1,050  p25–p75 S$980–S$1,150  min S$700  max S$1,400
+...
+```
+
+`group_by` is `none`, `condition`, `week_posted` or `seller`; `title_filter` holds case-insensitive regexes (every `include` must match, no `exclude` may). `--json` prints the full result; `--spec -` reads the spec from stdin. The statistics are asking prices, not sold prices.
 
 ### canary
 
