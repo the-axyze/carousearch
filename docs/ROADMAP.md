@@ -172,3 +172,9 @@ Not done yet:
 - Prev page, an "Open in Carousell" URL button, deleting saved searches, Buyer Protection and free delivery toggles, and facet chips (Level 2).
 - Cards use Carousell's 240 x 320 thumbnail; the full-size photo URL is not derived yet.
 - The always-on service (systemd or Task Scheduler) and the canary alert to Telegram.
+
+---
+
+## Next: market analysis and staged screening (2026-10-25)
+
+The next body of work is specified in [ANALYSIS_AND_SCREENING_PLAN.md](ANALYSIS_AND_SCREENING_PLAN.md): phases A to F covering harvest-and-upsert storage, the analysis spec and CLI, the LLM layer (prompt to filters, plan and summarise an analysis), read-only SQL questions, the per-chat screening pipeline (rule, text and vision stages with cached, auditable verdicts) and scheduled surveys. That document supersedes the Level 3 section above; Level 1 task 5 and the "next task" note under phase 2 are its phase B.
