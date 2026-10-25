@@ -1,0 +1,14 @@
+{#- The results region: an error, nothing found, the first page of cards, or (before any search) a hint. -#}
+{% if error %}
+  {% include "partials/error.html" %}
+{% elif results and results.nothing_found %}
+  <p class="notice">No listings match. Try fewer filters or other words.</p>
+{% elif results %}
+  <p id="results-summary" class="results-summary">{{ results.summary }}</p>
+  <div id="results-grid" class="grid">
+    {%- for card in results.cards %}{% include "partials/card.html" %}{% endfor -%}
+  </div>
+  {% include "partials/load_more.html" %}
+{% else %}
+  <p class="notice">Search Carousell Singapore. Press <kbd>/</kbd> to start typing.</p>
+{% endif %}

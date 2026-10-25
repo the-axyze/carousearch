@@ -392,3 +392,35 @@ def test_negative_detail_budget_is_a_usage_error(tmp_path: Path, capsys) -> None
     assert exit_code == 2
     assert "--max-detail-fetches" in capsys.readouterr().err
     assert carousell.requests == []
+
+
+# --- web ---------------------------------------------------------------------------
+
+
+def test_web_serves_the_app_on_the_given_port_with_services_built_at_startup(tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    from carousearch.config import ScreeningSettings
+    from carousearch.web.app import WebSettings
+
+    carousell = FakeCarousell()
+    served = {}
+
+    def fake_serve(app, host: str, port: int) -> None:
+        served.update(app=app, host=host, port=port)
+
+    settings = WebSettings(data_dir=tmp_path, screening=ScreeningSettings())
+    exit_code = cli.run_web_command(settings, carousell.client, RateLimiter(0, 0), "127.0.0.1", 9000, serve=fake_serve)
+
+    assert exit_code == 0
+    assert (served["host"], served["port"]) == ("127.0.0.1", 9000)
+    assert carousell.requests == []  # nothing is opened until the server starts
+    with TestClient(served["app"]) as client:
+        page = client.get("/results?q=iphone+15").text
+    assert page.count('class="card"') == 5
+    assert (tmp_path / "carousearch.db").exists()
+
+
+def test_web_defaults_to_port_8765_on_this_machine_only() -> None:
+    arguments = cli.build_argument_parser().parse_args(["web"])
+    assert (arguments.host, arguments.port) == ("127.0.0.1", 8765)

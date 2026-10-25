@@ -1,0 +1,12 @@
+{#- A "Load more" answer: cards appended to the grid, and the results line and button replaced out of band. -#}
+{% if error %}
+<div id="load-more" class="load-more" hx-swap-oob="true">
+  {% include "partials/error.html" %}
+  <button type="button" class="load-more-button" hx-get="{{ request.url.path }}?{{ request.url.query }}"
+          hx-target="#results-grid" hx-swap="beforeend" hx-indicator="this">Try again</button>
+</div>
+{% else %}
+{%- for card in results.cards %}{% include "partials/card.html" %}{% endfor %}
+<p id="results-summary" class="results-summary" hx-swap-oob="true">{{ results.summary }}</p>
+{% with out_of_band = true %}{% include "partials/load_more.html" %}{% endwith %}
+{% endif %}

@@ -1,0 +1,47 @@
+<div class="detail-panel">
+  <div class="detail-head">
+    <h2 class="detail-title"><a href="{{ detail.url }}" target="_blank" rel="noopener noreferrer">{{ detail.title }}<span class="external" aria-hidden="true"> ↗</span></a></h2>
+    <button type="button" class="text-button" data-detail-close>Close</button>
+  </div>
+
+  {%- if detail.photo_urls %}
+  <div class="photo-strip">
+    {%- for url in detail.photo_urls %}
+    <a href="{{ url }}" target="_blank" rel="noopener noreferrer"><img src="{{ url }}" alt="Photo {{ loop.index }}" loading="lazy" referrerpolicy="no-referrer"></a>
+    {%- endfor %}
+  </div>
+  {%- endif %}
+
+  <div class="detail-columns">
+    <div>
+      {%- if detail.description %}
+      {%- if detail.description_is_long %}
+      <input class="visually-hidden show-more-toggle" type="checkbox" id="show-more-{{ detail.listing_id }}">
+      {%- endif %}
+      <p class="description">{{ detail.description }}</p>
+      {%- if detail.description_is_long %}
+      <label class="text-button show-more" for="show-more-{{ detail.listing_id }}"><span class="when-clamped">Show more</span><span class="when-expanded">Show less</span></label>
+      {%- endif %}
+      {%- else %}
+      <p class="muted">No description.</p>
+      {%- endif %}
+    </div>
+
+    <div>
+      <dl class="facts">
+        {%- for fact in detail.facts %}
+        <div class="fact"><dt>{{ fact.label }}</dt><dd>{% for line in fact.lines %}<span>{{ line }}</span>{% endfor %}</dd></div>
+        {%- endfor %}
+      </dl>
+      {%- if detail.tags %}
+      <ul class="tags">
+        {%- for tag in detail.tags %}
+        <li class="tag tag-{{ tag.tone }}"><strong>{{ tag.label }}</strong> <span>{{ tag.reason }}</span></li>
+        {%- endfor %}
+      </ul>
+      {%- elif detail.screened %}
+      <p class="tags-none">No screening flags.</p>
+      {%- endif %}
+    </div>
+  </div>
+</div>

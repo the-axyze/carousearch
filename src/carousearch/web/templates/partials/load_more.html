@@ -1,0 +1,6 @@
+<div id="load-more" class="load-more"{% if out_of_band %} hx-swap-oob="true"{% endif %}>
+  {%- if results.load_more_url -%}
+  <button type="button" class="load-more-button" hx-get="{{ results.load_more_url }}" hx-target="#results-grid"
+          hx-swap="beforeend" hx-indicator="this">Load more</button>
+  {%- endif -%}
+</div>

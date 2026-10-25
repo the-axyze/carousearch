@@ -240,3 +240,32 @@ Differences from the brief and from ANALYSIS_AND_SCREENING_PLAN.md:
 - Bare numbers count as prices only in a price context ("selling at 850", "850 nett", "15 Pro - 850"); "selling 1999" style four-digit prices in a "<label> - <number>" line without "$" are read as years and dropped.
 
 Deferred: a live run with an API key (the resolver's prompt and the cost estimate are untested against the real API); capturing a real catalogue-post fixture (search card plus detail) for the tests; the web front end; using `is_multi_item` in ranking or the bot's filters.
+
+---
+
+## Phase 3b status (2026-10-25)
+
+Built: a local web front end, `carousearch web` (http://localhost:8765, this machine only, no login). One page: a search box, one row of optional filters (price range, condition and delivery chips, sort, category, "Hide multi-item posts"), and a card grid of screened results whose price row shows when a catalogue post's listed price may not apply. `README.md`, "Web app", has the controls and the price-row legend. The Telegram bot stays for quick lookups and the alerts planned later.
+
+- Stack: FastAPI + Jinja2 + HTMX 2.0.11 (one vendored file, `web/static/htmx.min.js`), one hand-written `app.css` (light and dark themes from tokens on `:root`), 39 lines of `app.js` (the `/` and Esc keys, the Details toggle, form state for history snapshots). No build step. New core dependencies: `fastapi`, `jinja2`, `uvicorn`.
+- `web/query_params.py` (pure): `search_request_from_params` / `params_from_search_request`, the one URL <-> `SearchRequest` mapping (reusing the `filters/schema.py` enums and the bot's sort choices); malformed values are dropped, a reversed price range is swapped, an unknown sort is best match. `page_url` and `load_more_url`; `ResultsTally` carries the counts from one "Load more" page to the next.
+- `web/view_models.py` (pure): the price row (`listed`, `resolved` with the listed price struck, `not-stated`), the Multi-item and Low price badges with their reasons, the meta line, the results line, the form and the detail panel (dates in Singapore time), and the calm error messages. Templates only print these.
+- `web/services.py`: `WebServices` (Carousell client, `ScreeningServices`, whether price lookup is on, two short memories, and an asyncio lock) and the two blocking calls, `search_and_screen` (search, then `screen_listings`) and `load_listing` (detail from the screening, the 12-hour cache or Carousell). Routes run them in a worker thread one at a time, and skip a call whose browser request was already replaced.
+- `web/app.py`: `create_app(settings, services_factory=None)` builds the services once at startup (lifespan), keeps them in `app.state`, mounts `/static`; `web/routes.py`: `/`, `/results` (HTMX partial; pushes the page URL with `HX-Push-Url`; with `cursor` it returns cards to append plus out-of-band updates of the results line and the Load more button), `/listing/{id}`. Carousell and unexpected errors render a calm message with status 200; the traceback goes to the log only.
+- Tests: 597 offline (90 new: query params 42, view models 26, routes 20 with `TestClient` and fake Carousell, store and resolver, CLI 2).
+
+Live check, 2026-10-25: `curl "localhost:8765/results?q=iphone+15+pro+256gb&price_max=1200"` returned 20 cards in 1.7 s (one search request, one detail from the cache); the Details partial of the first card rendered. Screenshots at 1440 and 390 px wide: `docs/examples/web-desktop.png`, `docs/examples/web-mobile.png`. That search had no catalogue posts, so the amber badge and the resolved price were checked against an offline demo page instead.
+
+Differences from the brief for this phase:
+
+- `search_request_from_params` returns `SearchRequest | None`: None when there are no keywords and no category, because a `SearchRequest` needs one of them. The page then shows a hint.
+- One extra module, `web/services.py`, so the routes stay thin; and two extra templates, `partials/more_results.html` (the Load-more answer) and `partials/load_more.html` (the button, shared by both answers).
+- `storage.open_database` takes `check_same_thread` (default unchanged), because the web app shares one SQLite connection across worker threads; the lock keeps it to one thread at a time.
+- A repeat of the same search within 2 minutes is served from memory (the switch, Back, a debounced keystroke landing after Enter), to spare Carousell requests.
+- The content width is 1,240 px rather than 1,200 px, and the controls use 12.5 px text, so the whole filter row fits on one line at 1,440 px. Below 640 px the grid is two fixed columns and the filters become one sideways-scrolling line with the switch underneath.
+- The results line adds "price lookup off" when there are multi-item posts and no `ANTHROPIC_API_KEY`.
+- The badge's native tooltip shows on hover only (browsers do not show `title` on keyboard focus); focused badges carry the reasons as screen-reader text.
+- The web app does not record `seen_listings`, so it does not change the bot's `[seen]` tags.
+
+Deferred: a live look at a real catalogue post with an API key; Buyer Protection, free delivery and category facets in the web filters; saved searches in the web app; per-search page titles; Carousell's full-size photos on cards (cards use the 240 x 320 thumbnail).
+

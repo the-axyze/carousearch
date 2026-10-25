@@ -1,6 +1,6 @@
 # carousearch
 
-Carousearch is a planned personal Telegram bot for searching [Carousell Singapore](https://www.carousell.sg) in plain English. A cheap LLM turns a prompt like "lightly used Aeron chair under $600, meet-up near Tampines, newest first" into Carousell's own search filters (Level 1). It then fills the search keywords and category-specific fields such as phone model, storage or shoe size (Level 2). Finally it screens the listings it finds: plain rules for seller rating, account age, price outliers and keyword blocklists, plus a vision model for subjective calls like low-effort photos or reseller-template descriptions (Level 3). It ranks results and shows them in Telegram with editable filter buttons. **Phase 1 is built** (2026-10-24): a tested Python client and command line for structured Carousell searches, listing details and a breakage canary. **Phase 2 task 1** adds a single-user Telegram bot that builds a search one question at a time with buttons (see [Running the Telegram bot](#running-the-telegram-bot)). **Phase 3a** adds [screening](#screening) for multi-item "catalogue" posts, with optional Claude Haiku price lookup; prompt-to-filters has no LLM yet.
+Carousearch is a planned personal Telegram bot for searching [Carousell Singapore](https://www.carousell.sg) in plain English. A cheap LLM turns a prompt like "lightly used Aeron chair under $600, meet-up near Tampines, newest first" into Carousell's own search filters (Level 1). It then fills the search keywords and category-specific fields such as phone model, storage or shoe size (Level 2). Finally it screens the listings it finds: plain rules for seller rating, account age, price outliers and keyword blocklists, plus a vision model for subjective calls like low-effort photos or reseller-template descriptions (Level 3). It ranks results and shows them in Telegram with editable filter buttons. **Phase 1 is built** (2026-10-24): a tested Python client and command line for structured Carousell searches, listing details and a breakage canary. **Phase 2 task 1** adds a single-user Telegram bot that builds a search one question at a time with buttons (see [Running the Telegram bot](#running-the-telegram-bot)). **Phase 3a** adds [screening](#screening) for multi-item "catalogue" posts, with optional Claude Haiku price lookup; prompt-to-filters has no LLM yet. **Phase 3b** adds a local [web app](#web-app) for searching with filters and reading screened results in a card grid; the Telegram bot stays for quick lookups and future alerts.
 
 - [docs/FEASIBILITY.md](docs/FEASIBILITY.md): full feasibility study: verdict, recommended stack, costs, risks, architecture
 - [docs/CAROUSELL_ACCESS_NOTES.md](docs/CAROUSELL_ACCESS_NOTES.md): raw technical findings on Carousell's endpoints, filters, response shapes and anti-bot behaviour
@@ -37,6 +37,12 @@ src/carousearch/
   bot/session_store.py   the active session for each chat, with 30-minute idle expiry (in memory)
   bot/handlers.py        python-telegram-bot handlers, BotServices, owner check (Telegram and Carousell I/O)
   bot/app.py             builds the Application, runs polling, and the `whoami` helper
+  web/app.py             create_app(settings): FastAPI app, services built once at startup, static files
+  web/routes.py          the page (/), the results partial (/results) and the detail partial (/listing/{id})
+  web/query_params.py    URL query string <-> SearchRequest, Load-more counts (pure)
+  web/view_models.py     price row, badges, meta line, results line, form and detail views (pure)
+  web/services.py        WebServices; the screened search and listing detail (blocking, run one at a time)
+  web/templates/, web/static/  Jinja2 templates; app.css, app.js, htmx.min.js (2.0.11, vendored)
   canary.py              the health check behind `carousearch canary`
   fixture_capture.py     the dev command behind `carousearch capture-fixtures`
   text_render.py, cli.py terminal output and the `carousearch` command
@@ -254,6 +260,51 @@ WSL2 does not start cron by itself. Either:
   daily. This also works when no WSL session is open.
 
 The canary's own log is `~/carousearch/data/canary.log`; `cron.log` only catches crashes.
+
+## Web app
+
+A one-page web app for searching Carousell with filters and spotting catalogue posts whose shown price may not be the price of what you searched for. It runs on this machine only, without a login.
+
+```bash
+.venv/bin/carousearch web              # then open http://localhost:8765
+.venv/bin/carousearch web --port 9000  # another port; --host 127.0.0.1 is the default
+```
+
+On WSL2, open http://localhost:8765 in the Windows browser (WSL forwards localhost). Ctrl+C stops the server. It can run next to the Telegram bot: both use `~/carousearch/data/carousearch.db`, and each has its own Carousell session and rate limiter. The bot stays the tool for quick lookups from your phone and for the alerts planned later.
+
+![Desktop](docs/examples/web-desktop.png)
+
+The controls (all optional; after the first search, changing any of them searches again):
+
+| Control | What it does |
+|---|---|
+| Search box | Keywords. Enter or **Search** runs the search; after that, a pause in typing (0.6 s) re-runs it. |
+| S$ Min, S$ Max | Price range in SGD. `1,200` and `S$1,200` work; anything else is ignored, and a reversed range is swapped. |
+| Condition chips | Brand new, Like new, Lightly used, Well used, Heavily used. Select any number; none means any condition. |
+| Delivery chips | Meet-up, Mailing. None means either. |
+| Sort | Best match, Recent, Price ↑ (low to high), Price ↓ (high to low). |
+| Category | Any, or one of the common categories (Mobile Phones, Laptops, Tablets, Furniture, Video Gaming, Audio). A URL with any other collection id, e.g. `category=5755`, also works. |
+| Hide multi-item posts | Leaves out listings that screening flags as multi-item; the results line says how many were hidden. |
+
+The address bar follows the search (`/?q=iphone+15+pro&price_max=1200&condition=like_new`), so a search can be bookmarked and Back and Forward step through earlier searches.
+
+Each card shows the photo, the title, the price row, then condition · likes · seller. The whole card opens the listing on Carousell in a new tab. **Details** opens a panel under the card's row with the full description, all photos, the seller's rating, reviews, joined date and response rate, the meet-up points, and every screening tag with its reason; click **Details** again or **Close** to fold it.
+
+The price row:
+
+| You see | Meaning |
+|---|---|
+| S$720 | The listed price. Nothing suggests it is wrong. |
+| **S$850** ~~S$579~~ *from description* | A catalogue post: the description gives S$850 for the item you searched for, while the card shows S$579 (usually the cheapest variant). Needs `ANTHROPIC_API_KEY` ([Screening](#screening)). |
+| S$579 *price for your item not stated* | The description was read and has no price for the item you searched for, so the listed price probably belongs to another variant. |
+
+Badges on the photo: **Multi-item** (amber) means a screening rule thinks the price does not apply to your item; hover over it for the reasons. **Low price** (grey) means the price is under 60% of the median of the other results on the page (often a placeholder such as S$1 or S$8.88).
+
+The line above the grid reads like `20 of 10,000+ results · 3 multi-item hidden · screened 6 descriptions`. "Screened" counts listings whose description was checked; "price lookup off" appears when there are multi-item posts but no `ANTHROPIC_API_KEY`, so their listed price is kept. **Load more** at the bottom appends the next page.
+
+Keyboard: `/` puts the cursor in the search box from anywhere on the page; Esc leaves a field.
+
+Requests: a search costs one Carousell search plus, for flagged listings, up to 10 detail requests (cached for 12 hours, shared with the CLI and the bot), all through one rate limiter and one call at a time. The same search again within 2 minutes (toggling the switch, going Back) is answered from memory, and a search the browser has already replaced is skipped. If Carousell blocks the client the page says "Carousell is rate-limiting us, try again in a minute"; if its response changed shape it says to run `carousearch canary` (see [When Carousell changes](#when-carousell-changes)). Details of any error go to the terminal running `carousearch web`, never to the page.
 
 ## Running the Telegram bot
 

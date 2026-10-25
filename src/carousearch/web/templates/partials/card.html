@@ -1,0 +1,29 @@
+<article class="card">
+  <div class="thumb">
+    {%- if card.thumbnail_url %}
+    <img src="{{ card.thumbnail_url }}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">
+    {%- endif %}
+    {%- if card.badges %}
+    <div class="badges">
+      {%- for badge in card.badges %}
+      <span class="badge badge-{{ badge.tone }}" tabindex="0" title="{{ badge.reasons }}">{{ badge.label }}<span class="visually-hidden">: {{ badge.reasons }}</span></span>
+      {%- endfor %}
+    </div>
+    {%- endif %}
+  </div>
+  <div class="listing-text">
+    <h2 class="listing-title"><a class="listing-link" href="{{ card.url }}" target="_blank" rel="noopener noreferrer">{{ card.title }}</a></h2>
+    <p class="price-row price-{{ card.price.kind }}">
+      <span class="price">{{ card.price.price }}</span>
+      {%- if card.price.struck_price %} <s class="price-struck">{{ card.price.struck_price }}</s>{% endif %}
+      {%- if card.price.caption %} <span class="price-caption">{{ card.price.caption }}</span>{% endif %}
+    </p>
+    <div class="listing-footer">
+      <span class="meta">{{ card.meta }}</span>
+      <button type="button" class="details-toggle" data-detail-toggle hx-get="/listing/{{ card.listing_id }}"
+              hx-target="#detail-{{ card.listing_id }}" aria-controls="detail-{{ card.listing_id }}"
+              aria-expanded="false">Details</button>
+    </div>
+  </div>
+</article>
+<section id="detail-{{ card.listing_id }}" class="detail" aria-label="Details of {{ card.title }}"></section>

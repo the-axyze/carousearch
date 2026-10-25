@@ -1,8 +1,9 @@
-"""The `carousearch` command line: search, listing, harvest, analyze, canary, capture-fixtures, bot and whoami."""
+"""The `carousearch` command line: search, listing, harvest, analyze, canary, capture-fixtures, bot, whoami and web."""
 
 import argparse
 import asyncio
 import json
+import logging
 import sys
 import time
 from collections.abc import Callable
@@ -13,6 +14,7 @@ from pathlib import Path
 from typing import TextIO
 
 import httpx
+import uvicorn
 from pydantic import ValidationError
 from telegram.error import TelegramError
 
@@ -55,9 +57,11 @@ from carousearch.text_render import (
     render_screened_table,
     render_search_summary,
 )
+from carousearch.web.app import DEFAULT_WEB_HOST, DEFAULT_WEB_PORT, WebSettings, build_web_services, create_app
 
 ClientFactory = Callable[[RateLimiter], CarousellClient]
 PriceResolverFactory = Callable[[], PriceResolver]
+WebServer = Callable[..., None]  # uvicorn.run's shape: (app, host=..., port=...)
 
 # Shorthands accepted by --condition in addition to the exact condition names.
 CONDITION_GROUPS: dict[str, list[Condition]] = {
@@ -120,6 +124,9 @@ def main(
             return run_bot_command(load_telegram_settings(), client_factory, rate_limiter, data_dir, sys.stderr)
         if arguments.command == "whoami":
             return run_whoami_command(load_telegram_settings(), sys.stdout, sys.stderr)
+        if arguments.command == "web":
+            settings = WebSettings(data_dir=data_dir, screening=load_screening_settings())
+            return run_web_command(settings, client_factory, rate_limiter, arguments.host, arguments.port)
     except (ValidationError, ValueError) as error:
         print(f"error: {_describe_input_error(error)}", file=sys.stderr)
         return EXIT_USAGE_ERROR
@@ -173,6 +180,10 @@ def build_argument_parser() -> argparse.ArgumentParser:
 
     commands.add_parser("bot", help="run the Telegram bot (needs TELEGRAM_BOT_TOKEN and TELEGRAM_OWNER_ID)")
     commands.add_parser("whoami", help="print the user ids of people who recently messaged the bot")
+
+    web = commands.add_parser("web", help="run the local web app (http://localhost:8765 by default)")
+    web.add_argument("--port", type=int, default=DEFAULT_WEB_PORT, help="default %(default)s")
+    web.add_argument("--host", default=DEFAULT_WEB_HOST, help="default %(default)s (this machine only)")
     return parser
 
 
@@ -481,6 +492,21 @@ def describe_missing_bot_settings(missing_variables: list[str]) -> str:
             "To find your user id: message @userinfobot in Telegram, or send /start to your bot and run `carousearch whoami`."
         )
     return "\n".join(lines)
+
+
+def run_web_command(
+    settings: WebSettings,
+    client_factory: ClientFactory,
+    rate_limiter: RateLimiter,
+    host: str,
+    port: int,
+    serve: WebServer = uvicorn.run,
+) -> int:
+    """Serve the web app until Ctrl+C. Its Carousell client and database open when the server starts."""
+    logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.INFO)
+    app = create_app(settings, services_factory=lambda: build_web_services(settings, client_factory(rate_limiter)))
+    serve(app, host=host, port=port)
+    return EXIT_OK
 
 
 def run_whoami_command(settings: TelegramSettings, output: TextIO, errors: TextIO) -> int:

@@ -183,10 +183,14 @@ class UpsertSummary:
     unchanged_ids: list[str]
 
 
-def open_database(database_path: Path) -> sqlite3.Connection:
-    """Open (and create on first use) the database file and its tables."""
+def open_database(database_path: Path, check_same_thread: bool = True) -> sqlite3.Connection:
+    """Open (and create on first use) the database file and its tables.
+
+    `check_same_thread=False` lets worker threads share the connection; the caller must then make sure only one
+    thread uses it at a time (the web app runs every blocking call under one lock).
+    """
     database_path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(database_path)
+    connection = sqlite3.connect(database_path, check_same_thread=check_same_thread)
     connection.executescript(SCHEMA)
     return connection
 

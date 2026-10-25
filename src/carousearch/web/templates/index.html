@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="page">
+  <header class="site-header"><h1 class="brand"><a href="/">Carousearch</a></h1></header>
+
+  <form id="search-form" class="search" action="/" method="get" role="search"
+        hx-get="/results" hx-target="#results" hx-indicator="#loading-bar, #results" hx-sync="this:replace"
+        hx-trigger="submit, change from:.js-instant, input changed delay:600ms from:.js-debounced">
+    <div class="search-bar">
+      <input id="query" class="search-input js-debounced" type="search" name="q" value="{{ form.query }}"
+             placeholder="What are you looking for?" aria-label="Search Carousell" autocomplete="off"
+             {%- if not form.query %} autofocus{% endif %}>
+      <button class="search-button" type="submit">Search</button>
+    </div>
+    <div id="loading-bar" class="loading-bar" aria-hidden="true"></div>
+
+    <div class="controls">
+      <div class="filters">
+        <div class="price-range" role="group" aria-label="Price in Singapore dollars">
+          <label class="price-field"><span>S$</span><input class="js-debounced" type="text" inputmode="decimal"
+                 name="price_min" value="{{ form.price_min }}" placeholder="Min" aria-label="Minimum price"></label>
+          <span class="price-dash" aria-hidden="true">–</span>
+          <label class="price-field"><span>S$</span><input class="js-debounced" type="text" inputmode="decimal"
+                 name="price_max" value="{{ form.price_max }}" placeholder="Max" aria-label="Maximum price"></label>
+        </div>
+
+        <fieldset class="chips">
+          <legend class="visually-hidden">Condition</legend>
+          {%- for choice in form.conditions %}
+          <label class="chip"><input class="js-instant" type="checkbox" name="condition" value="{{ choice.value }}"
+                 {%- if choice.selected %} checked{% endif %}>{{ choice.label }}</label>
+          {%- endfor %}
+        </fieldset>
+
+        <fieldset class="chips">
+          <legend class="visually-hidden">Delivery</legend>
+          {%- for choice in form.deliveries %}
+          <label class="chip"><input class="js-instant" type="checkbox" name="delivery" value="{{ choice.value }}"
+                 {%- if choice.selected %} checked{% endif %}>{{ choice.label }}</label>
+          {%- endfor %}
+        </fieldset>
+
+        <select class="select js-instant" name="sort" aria-label="Sort">
+          {%- for choice in form.sorts %}
+          <option value="{{ choice.value }}"{% if choice.selected %} selected{% endif %}>{{ choice.label }}</option>
+          {%- endfor %}
+        </select>
+
+        <select class="select js-instant" name="category" aria-label="Category">
+          {%- for choice in form.categories %}
+          <option value="{{ choice.value }}"{% if choice.selected %} selected{% endif %}>{{ choice.label }}</option>
+          {%- endfor %}
+        </select>
+      </div>
+
+      <label class="switch"><input class="js-instant" type="checkbox" role="switch" name="hide_multi_item" value="1"
+             {%- if form.hide_multi_item %} checked{% endif %}>Hide multi-item posts</label>
+    </div>
+  </form>
+
+  <main id="results" class="results" aria-live="polite">
+    {% include "partials/results.html" %}
+  </main>
+</div>
+{% endblock %}
