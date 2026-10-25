@@ -1,1 +1,1 @@
-"""Telegram bot: build a Carousell search with inline-keyboard filter toggles and page through results."""
+"""Telegram bot: build a Carousell search one question at a time with inline buttons, then page through results."""

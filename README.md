@@ -1,6 +1,6 @@
 # carousearch
 
-Carousearch is a planned personal Telegram bot for searching [Carousell Singapore](https://www.carousell.sg) in plain English. A cheap LLM turns a prompt like "lightly used Aeron chair under $600, meet-up near Tampines, newest first" into Carousell's own search filters (Level 1). It then fills the search keywords and category-specific fields such as phone model, storage or shoe size (Level 2). Finally it screens the listings it finds: plain rules for seller rating, account age, price outliers and keyword blocklists, plus a vision model for subjective calls like low-effort photos or reseller-template descriptions (Level 3). It ranks results and shows them in Telegram with editable filter buttons. **Phase 1 is built** (2026-10-24): a tested Python client and command line for structured Carousell searches, listing details and a breakage canary. **Phase 2 task 1** adds a single-user Telegram bot with manual filter buttons (see [Running the Telegram bot](#running-the-telegram-bot)). There is no LLM yet.
+Carousearch is a planned personal Telegram bot for searching [Carousell Singapore](https://www.carousell.sg) in plain English. A cheap LLM turns a prompt like "lightly used Aeron chair under $600, meet-up near Tampines, newest first" into Carousell's own search filters (Level 1). It then fills the search keywords and category-specific fields such as phone model, storage or shoe size (Level 2). Finally it screens the listings it finds: plain rules for seller rating, account age, price outliers and keyword blocklists, plus a vision model for subjective calls like low-effort photos or reseller-template descriptions (Level 3). It ranks results and shows them in Telegram with editable filter buttons. **Phase 1 is built** (2026-10-24): a tested Python client and command line for structured Carousell searches, listing details and a breakage canary. **Phase 2 task 1** adds a single-user Telegram bot that builds a search one question at a time with buttons (see [Running the Telegram bot](#running-the-telegram-bot)). There is no LLM yet.
 
 - [docs/FEASIBILITY.md](docs/FEASIBILITY.md): full feasibility study: verdict, recommended stack, costs, risks, architecture
 - [docs/CAROUSELL_ACCESS_NOTES.md](docs/CAROUSELL_ACCESS_NOTES.md): raw technical findings on Carousell's endpoints, filters, response shapes and anti-bot behaviour
@@ -24,10 +24,12 @@ src/carousearch/
   market/analysis.py     AnalysisSpec and the price statistics (pure)
   market/render.py       analysis result as text / JSON (pure)
   config.py              data folder and the Telegram settings (environment or .env)
-  bot/state.py           ChatDraft, button actions and their callback_data encoding (pure)
-  bot/keyboard.py        filter panel and other inline keyboards, filter summary text (pure)
-  bot/messages.py        listing captions, help, prompt and error texts (pure)
-  bot/draft_store.py     the active draft for each chat (in memory)
+  bot/state.py           SearchSession, the wizard stages and their transitions, button actions and
+                         their callback_data encoding (pure)
+  bot/price_input.py     typed price ranges ("150-400", "<250", ">1000") to and from text (pure)
+  bot/keyboard.py        each stage's inline keyboard, the "Step n/6" header and recap (pure)
+  bot/messages.py        help, step questions, request summary, lock reminder, captions, error texts (pure)
+  bot/session_store.py   the active session for each chat, with 30-minute idle expiry (in memory)
   bot/handlers.py        python-telegram-bot handlers, BotServices, owner check (Telegram and Carousell I/O)
   bot/app.py             builds the Application, runs polling, and the `whoami` helper
   canary.py              the health check behind `carousearch canary`
@@ -209,7 +211,7 @@ The canary's own log is `~/carousearch/data/canary.log`; `cron.log` only catches
 
 ## Running the Telegram bot
 
-The bot answers one Telegram user (you). Send it keywords, set filters with the buttons, tap **Search**, and it replies with listing cards (photo, price, condition, likes, title, seller, link), 5 at a time.
+The bot answers one Telegram user (you). Send it keywords and it asks for the filters one at a time with buttons, shows a summary, and on **Search** replies with listing cards (photo, price, condition, likes, title, seller, link), 5 at a time.
 
 ### 1. Create the bot in BotFather
 
@@ -218,7 +220,9 @@ In Telegram, open a chat with [@BotFather](https://t.me/BotFather) and send `/ne
 Optional: send BotFather `/setcommands`, pick the bot, and paste:
 
 ```
-search - search Carousell for keywords
+search - start a search (optionally with keywords)
+status - where the current search is
+end - finish the current search
 saved - list saved searches
 save - save the current search under a name
 help - how to use the bot
@@ -256,9 +260,12 @@ It logs to the console: start-up, every Carousell search and detail call, refuse
 
 In Telegram:
 
-- send keywords (or `/search <keywords>`): a filter panel appears. Tap price, condition, delivery, sort and category; the panel updates in place. "Custom…" and "Other id…" ask you to type a price range (`100-500`, `<300`, `800+`) or a Carousell collection id (`5707`).
-- **Search** sends 5 cards and a message with **Next 5** and **Back to filters**. Listings already shown in this chat get a `[seen]` tag. **Details** on a card shows the seller, rating, description and photo links (cached for 12 hours).
-- `/save <name>` saves the current filters; `/saved` lists them with buttons to load one.
+- send keywords (or `/search <keywords>`) to start a search. `/search` on its own first asks "What are you looking for?".
+- the bot then asks one thing per step, editing the same message as you tap: **Step 2/6 Price** (`< 100`, `100–300`, `300–800`, `800+`, Any, or **Type a range** such as `150-400`, `<250`, `>1000`), **3/6 Condition** and **4/6 Delivery** (tick any number, then Next), **5/6 Sort**, **6/6 Category** (common ones, Any, or **Other id…** to type a collection id such as `5707`). The header recaps what you have picked so far. Every step has **Back** and **Cancel**.
+- the **Summary** lists every filter, with **Search** and an **Edit** button per step; an edited step returns straight to the summary.
+- **Search** sends 5 cards, then a message with **Next 5**, **Refine** (back to the summary with the same filters) and **End**. Listings you have been shown before (in the bot or by `carousearch search`) get a `[seen]` tag. **Details** on a card shows the seller, rating, description and photo links (cached for 12 hours).
+- one search at a time: while one is in progress, `/search` and new keywords get a reminder to `/end` it (or use Back / Refine). `/status` shows where it is; a search idle for 30 minutes expires and the next one starts fresh. Only the buttons on the newest message of the search work.
+- `/save <name>` saves the current filters; `/saved` lists them with buttons to load one (at the summary step, when no search is in progress).
 
 Only one copy of the bot can run at a time (Telegram answers a second poller with "Conflict").
 

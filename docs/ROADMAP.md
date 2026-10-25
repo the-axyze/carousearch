@@ -175,6 +175,32 @@ Not done yet:
 
 ---
 
+## Phase 2 task 1b status (2026-10-25)
+
+Built: the single filter panel is replaced by a step-by-step wizard, and each chat runs one search at a time. This follows the owner's first live use ("the options are all over the place", "I can keep typing /search"). `README.md`, "Running the Telegram bot", describes the flow.
+
+- `bot/state.py` (pure): `SearchSession` replaces `ChatDraft`. It holds the request, a `Stage` (KEYWORDS, PRICE, CONDITION, DELIVERY, SORT, CATEGORY, SUMMARY, RESULTS), `return_to_summary` for Edit buttons, any typed input being waited for, the page cursors, `last_activity_at`, and the id of the session's current message. Transitions are pure functions: `start_session`, `start_session_at_summary`, `apply_action` (None when Cancel or End ends the session), `apply_text_input` (returns the problem to show for bad input), `next_stage` / `previous_stage`, `is_expired`. A button that belongs to another stage raises ValueError.
+- `bot/price_input.py`: `parse_price_range` returns None for bad input, and now also reads `>1000` and en dashes.
+- `bot/keyboard.py`: one keyboard function per stage behind `build_keyboard_for_stage`; `render_stage_header` ("Step 3/6: Condition" plus a "So far: …" recap) and `describe_stage_position`.
+- `bot/messages.py`: labels, the request summary, step questions, and the lock reminder, status, expiry and validation texts.
+- `bot/session_store.py` (was `draft_store.py`): `SessionStore` with an injected clock. A session idle for 30 minutes is hidden by `get` and dropped by `remove_if_expired`.
+- `bot/handlers.py`: `show_current_stage` draws any stage, editing the tapped message or sending a new one. `/end` and `/status` are new. `/start`, `/search`, new keywords and loading a saved search are refused with the lock reminder while a session is active. `show_filter_panel_for_request` stays the LLM entry point and now starts a session at the summary, so a plain-English prompt skips the wizard.
+- Tests: 367 offline (bot tests went from 75 to 152: state 102, keyboard 16, handlers 34).
+
+Differences from the brief for this task:
+
+- `[seen]` tags come from `seen_listings` (what `record_seen_listings` returns) instead of a per-session set, because ending a session would otherwise forget them. They now survive `/end` and restarts, and also count listings shown by `carousearch search`.
+- One `EDIT` action carries the step as its value, instead of an `EDIT_<step>` kind per step. The summary's Edit buttons are generated from `WIZARD_STEPS`, so a new step gets one automatically; that adds **Edit keywords**, which the brief did not list.
+- `SearchSession.request` is None while a session started by a bare `/search` waits for its first keywords, because a `SearchRequest` needs a query or a category.
+- The session records its current message, and buttons on any other message are rejected (and their keyboard removed). This covers double taps and old messages from ended sessions.
+- After typed text the next step goes in a new message, because the typed reply sits below the old one; the old step's buttons are removed. Taps edit in place.
+- Back while typing a price or id returns to that step's buttons. Back on a step opened from the summary returns to the summary. The summary also has Back (to Category).
+- A typed collection id ("Other id…") is consumed like typed keywords and prices.
+
+Not done: no run against the live bot yet; sessions are still in memory, so a restart forgets them.
+
+---
+
 ## Next: market analysis and staged screening (2026-10-25)
 
 The next body of work is specified in [ANALYSIS_AND_SCREENING_PLAN.md](ANALYSIS_AND_SCREENING_PLAN.md): phases A to F covering harvest-and-upsert storage, the analysis spec and CLI, the LLM layer (prompt to filters, plan and summarise an analysis), read-only SQL questions, the per-chat screening pipeline (rule, text and vision stages with cached, auditable verdicts) and scheduled surveys. That document supersedes the Level 3 section above; Level 1 task 5 and the "next task" note under phase 2 are its phase B.

@@ -1,6 +1,10 @@
 """python-telegram-bot handlers. Thin: read the update, call the pure state/keyboard/messages
 functions, call Carousell, send messages.
 
+A chat has at most one SearchSession at a time. While one is active, /search and new keywords are
+refused with a reminder to /end it, and plain text is read only when the current step asks for it.
+Only the buttons on the session's current message (`SearchSession.stage_message_id`) are live.
+
 Everything a handler needs comes from the `BotServices` in `Application.bot_data`, and every
 outgoing Telegram call goes through `context.bot`, so tests can pass a fake bot and a fake client.
 """
@@ -11,7 +15,7 @@ import logging
 import sqlite3
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions, Update
@@ -20,29 +24,30 @@ from telegram.ext import ContextTypes
 
 from carousearch import storage
 from carousearch.bot import messages
-from carousearch.bot.draft_store import DraftStore
 from carousearch.bot.keyboard import (
     KeyboardLayout,
-    build_filter_keyboard,
+    build_keyboard_for_stage,
     build_listing_card_keyboard,
-    build_results_keyboard,
     build_saved_searches_keyboard,
-    render_filter_summary,
+    describe_stage_position,
+    render_stage_text,
 )
+from carousearch.bot.session_store import SessionStore
 from carousearch.bot.state import (
-    FILTER_ACTION_KINDS,
     RESULTS_PER_PAGE,
     Action,
     ActionKind,
-    AwaitingInput,
-    ChatDraft,
+    SearchSession,
+    Stage,
     apply_action,
     apply_text_input,
     decode_action,
+    expects_text_input,
     first_page_request,
     next_page_request,
     record_page_shown,
-    start_draft,
+    start_session,
+    start_session_at_summary,
 )
 from carousearch.carousell.client import CarousellClient
 from carousearch.carousell.errors import CarousellError
@@ -67,7 +72,7 @@ class BotServices:
 
     carousell_client: CarousellClient
     database: sqlite3.Connection
-    draft_store: DraftStore
+    session_store: SessionStore
     owner_user_id: int
     clock: Callable[[], datetime] = field(default=utc_now)
 
@@ -116,6 +121,18 @@ def owner_only(handler: Handler) -> Handler:
 
 @report_errors_to_user
 @owner_only
+async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/start: the help text, or the lock reminder when a search is in progress."""
+    chat_id = update.effective_chat.id
+    session = get_services(context).session_store.get(chat_id)
+    if session is not None:
+        await send_lock_reminder(context.bot, chat_id, session)
+        return
+    await context.bot.send_message(chat_id=chat_id, text=messages.HELP_TEXT)
+
+
+@report_errors_to_user
+@owner_only
 async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await context.bot.send_message(chat_id=update.effective_chat.id, text=messages.HELP_TEXT)
 
@@ -124,21 +141,51 @@ async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 @owner_only
 async def handle_search_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     keywords = " ".join(context.args or [])
-    await start_search_from_keywords(context.bot, get_services(context), update.effective_chat.id, keywords)
+    await start_session_from_keywords(context.bot, get_services(context), update.effective_chat.id, keywords)
 
 
 @report_errors_to_user
 @owner_only
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Typed price or category when the panel asked for one; otherwise keywords for a new search."""
+    """Keywords for a new search when none is active; the answer to the current step if it asked
+    for text; otherwise the lock reminder."""
     services = get_services(context)
     chat_id = update.effective_chat.id
     text = update.message.text or ""
-    draft = services.draft_store.get(chat_id)
-    if draft is not None and draft.awaiting_input is not None:
-        await apply_typed_filter(context.bot, services, chat_id, draft, text)
+    session = services.session_store.get(chat_id)
+    if session is None:
+        await start_session_from_keywords(context.bot, services, chat_id, text)
+    elif expects_text_input(session):
+        await apply_typed_input(context.bot, services, chat_id, session, text)
     else:
-        await start_search_from_keywords(context.bot, services, chat_id, text)
+        await send_lock_reminder(context.bot, chat_id, session)
+
+
+@report_errors_to_user
+@owner_only
+async def handle_end_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    services = get_services(context)
+    chat_id = update.effective_chat.id
+    session = services.session_store.get(chat_id)
+    services.session_store.clear(chat_id)
+    if session is None:
+        await context.bot.send_message(chat_id=chat_id, text=messages.NO_SESSION_TEXT)
+        return
+    if session.stage_message_id is not None:
+        await remove_buttons(context.bot, chat_id, session.stage_message_id)
+    await context.bot.send_message(chat_id=chat_id, text=messages.SESSION_ENDED_TEXT)
+
+
+@report_errors_to_user
+@owner_only
+async def handle_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    session = get_services(context).session_store.get(chat_id)
+    if session is None:
+        await context.bot.send_message(chat_id=chat_id, text=messages.NO_SESSION_TEXT)
+        return
+    status = messages.render_session_status(describe_stage_position(session), session.request)
+    await context.bot.send_message(chat_id=chat_id, text=status)
 
 
 @report_errors_to_user
@@ -147,15 +194,15 @@ async def handle_save_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     services = get_services(context)
     chat_id = update.effective_chat.id
     name = " ".join(context.args or []).strip()
-    draft = services.draft_store.get(chat_id)
+    session = services.session_store.get(chat_id)
     if not name:
         await context.bot.send_message(chat_id=chat_id, text=messages.SAVE_USAGE_TEXT)
         return
-    if draft is None:
-        await context.bot.send_message(chat_id=chat_id, text=messages.NO_DRAFT_TEXT)
+    if session is None or session.request is None:
+        await context.bot.send_message(chat_id=chat_id, text=messages.NOTHING_TO_SAVE_TEXT)
         return
     try:
-        storage.save_search(services.database, name, draft.request, services.clock())
+        storage.save_search(services.database, name, session.request, services.clock())
     except sqlite3.IntegrityError:
         await context.bot.send_message(chat_id=chat_id, text=f'A saved search called "{name}" already exists.')
         return
@@ -201,20 +248,23 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await load_saved_search(bot, services, chat_id, action.value)
         return
 
-    draft = services.draft_store.get(chat_id)
-    if draft is None:
-        await bot.answer_callback_query(query.id, text=messages.NO_DRAFT_TEXT)
+    session = services.session_store.get(chat_id)
+    if session is None:
+        expired = services.session_store.remove_if_expired(chat_id)
+        await bot.answer_callback_query(
+            query.id, text=messages.SESSION_EXPIRED_BUTTON_TEXT if expired else messages.NO_SESSION_TEXT
+        )
         return
-    if action.kind in FILTER_ACTION_KINDS:
-        await apply_filter_button(bot, services, chat_id, message_id, query.id, draft, action)
-    elif action.kind == ActionKind.RUN_SEARCH:
-        await bot.answer_callback_query(query.id, text="Searching…")
-        await send_results_page(bot, services, chat_id, draft, first_page_request(draft))
+    if message_id != session.stage_message_id:
+        await bot.answer_callback_query(query.id, text=messages.INVALID_BUTTON_TEXT)
+        await remove_buttons(bot, chat_id, message_id)
+        return
+    if action.kind == ActionKind.RUN_SEARCH:
+        await run_search(bot, services, chat_id, message_id, query.id, session)
     elif action.kind == ActionKind.NEXT_PAGE:
-        await show_next_page(bot, services, chat_id, message_id, query.id, draft)
-    elif action.kind == ActionKind.BACK_TO_FILTERS:
-        await bot.answer_callback_query(query.id)
-        await edit_filter_panel(bot, chat_id, message_id, draft.request)
+        await show_next_page(bot, services, chat_id, message_id, query.id, session)
+    else:
+        await apply_session_button(bot, services, chat_id, message_id, query.id, session, action)
 
 
 async def log_unhandled_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -222,111 +272,151 @@ async def log_unhandled_error(update: object, context: ContextTypes.DEFAULT_TYPE
     logger.error("Unhandled error while processing an update", exc_info=context.error)
 
 
-# --- the filter panel ---------------------------------------------------------------------
+# --- starting sessions and the lock -------------------------------------------------------
+
+
+async def start_session_from_keywords(bot: Bot, services: BotServices, chat_id: int, keywords: str) -> None:
+    """Start a session for `keywords` (asking for them when blank), unless one is already active."""
+    if await refuse_when_session_active(bot, services, chat_id):
+        return
+    await show_current_stage(bot, services, chat_id, start_session(keywords, services.clock()))
 
 
 async def show_filter_panel_for_request(bot: Bot, services: BotServices, chat_id: int, request: SearchRequest) -> None:
-    """Make `request` this chat's active draft and send its filter panel.
+    """Start a session at the summary for a ready-made request, unless one is already active.
 
-    The single entry point for anything that produces a SearchRequest: typed keywords, a saved
-    search, and (next) the LLM prompt parser.
+    The entry point for anything that produces a whole SearchRequest at once: a saved search now,
+    and next the LLM prompt parser, which is how a plain-English prompt skips the wizard.
     """
-    draft = start_draft(request, services.draft_store.get(chat_id))
-    services.draft_store.set(chat_id, draft)
-    await send_filter_panel(bot, chat_id, draft.request)
-
-
-async def start_search_from_keywords(bot: Bot, services: BotServices, chat_id: int, keywords: str) -> None:
-    if not keywords.strip():
-        await bot.send_message(chat_id=chat_id, text=messages.SEARCH_USAGE_TEXT)
+    if await refuse_when_session_active(bot, services, chat_id):
         return
-    await show_filter_panel_for_request(bot, services, chat_id, SearchRequest(query=keywords))
+    await show_current_stage(bot, services, chat_id, start_session_at_summary(request, services.clock()))
 
 
-async def send_filter_panel(bot: Bot, chat_id: int, request: SearchRequest) -> None:
-    await bot.send_message(
-        chat_id=chat_id,
-        text=render_filter_summary(request),
-        reply_markup=to_inline_keyboard(build_filter_keyboard(request)),
-    )
+async def refuse_when_session_active(bot: Bot, services: BotServices, chat_id: int) -> bool:
+    """Send the lock reminder and return True if the chat already has an active session.
+
+    An expired session is dropped with a notice instead, which leaves the chat free for a new one.
+    """
+    session = services.session_store.get(chat_id)
+    if session is not None:
+        await send_lock_reminder(bot, chat_id, session)
+        return True
+    if services.session_store.remove_if_expired(chat_id):
+        await bot.send_message(chat_id=chat_id, text=messages.SESSION_EXPIRED_TEXT)
+    return False
 
 
-async def edit_filter_panel(bot: Bot, chat_id: int, message_id: int, request: SearchRequest) -> None:
-    """Redraw an existing message as the filter panel for `request`."""
-    try:
-        await bot.edit_message_text(
-            text=render_filter_summary(request),
-            chat_id=chat_id,
-            message_id=message_id,
-            reply_markup=to_inline_keyboard(build_filter_keyboard(request)),
-        )
-    except BadRequest as error:
-        # Telegram refuses an edit that changes nothing, e.g. tapping the price already selected.
-        if "not modified" not in str(error).lower():
-            raise
+async def send_lock_reminder(bot: Bot, chat_id: int, session: SearchSession) -> None:
+    reminder = messages.render_lock_reminder(session.query, describe_stage_position(session))
+    await bot.send_message(chat_id=chat_id, text=reminder)
 
 
-async def apply_filter_button(
-    bot: Bot, services: BotServices, chat_id: int, message_id: int, query_id: str, draft: ChatDraft, action: Action
+# --- showing and changing the current stage ------------------------------------------------
+
+
+async def show_current_stage(
+    bot: Bot, services: BotServices, chat_id: int, session: SearchSession, message_id: int | None = None
 ) -> None:
+    """Show the session's stage and store the session as the chat's active one.
+
+    Edits message `message_id` when given (a button on it was tapped); otherwise sends a new message.
+    """
+    text = render_stage_text(session)
+    reply_markup = to_inline_keyboard(build_keyboard_for_stage(session))
+    if message_id is None:
+        sent_message = await bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
+        message_id = sent_message.message_id
+    else:
+        await edit_message(bot, chat_id, message_id, text, reply_markup)
+    services.session_store.set(chat_id, replace(session, stage_message_id=message_id))
+
+
+async def apply_session_button(
+    bot: Bot,
+    services: BotServices,
+    chat_id: int,
+    message_id: int,
+    query_id: str,
+    session: SearchSession,
+    action: Action,
+) -> None:
+    """A wizard, summary or results button: apply it, then redraw the same message (or end the session)."""
     try:
-        updated_draft = apply_action(draft, action)
+        updated_session = apply_action(session, action, services.clock())
     except ValueError as error:
-        logger.info("Filter action %s rejected: %s", action, error)
-        await bot.answer_callback_query(query_id, text=messages.CHANGE_NOT_APPLIED_TEXT)
+        logger.info("Button %s rejected at stage %s: %s", action, session.stage, error)
+        await bot.answer_callback_query(query_id, text=messages.INVALID_BUTTON_TEXT)
         return
-    services.draft_store.set(chat_id, updated_draft)
     await bot.answer_callback_query(query_id)
-    await edit_filter_panel(bot, chat_id, message_id, updated_draft.request)
-    if updated_draft.awaiting_input == AwaitingInput.PRICE_RANGE:
-        await bot.send_message(chat_id=chat_id, text=messages.PRICE_PROMPT_TEXT)
-    elif updated_draft.awaiting_input == AwaitingInput.CATEGORY_ID:
-        await bot.send_message(chat_id=chat_id, text=messages.CATEGORY_PROMPT_TEXT)
-
-
-async def apply_typed_filter(bot: Bot, services: BotServices, chat_id: int, draft: ChatDraft, text: str) -> None:
-    try:
-        updated_draft = apply_text_input(draft, text)
-    except ValueError as error:
-        await bot.send_message(chat_id=chat_id, text=messages.render_input_problem(error))
+    if updated_session is None:
+        services.session_store.clear(chat_id)
+        await edit_message(bot, chat_id, message_id, messages.SESSION_ENDED_TEXT, reply_markup=None)
         return
-    services.draft_store.set(chat_id, updated_draft)
-    await send_filter_panel(bot, chat_id, updated_draft.request)
+    await show_current_stage(bot, services, chat_id, updated_session, message_id)
+
+
+async def apply_typed_input(bot: Bot, services: BotServices, chat_id: int, session: SearchSession, text: str) -> None:
+    """Typed keywords, price range or collection id: re-ask on a problem, otherwise show the next stage."""
+    updated_session, problem = apply_text_input(session, text, services.clock())
+    if problem is not None:
+        services.session_store.set(chat_id, updated_session)
+        await bot.send_message(chat_id=chat_id, text=problem)
+        return
+    # The typed answer sits below the step's message, so the next stage goes in a new message under it.
+    if session.stage_message_id is not None:
+        await remove_buttons(bot, chat_id, session.stage_message_id)
+    await show_current_stage(bot, services, chat_id, updated_session)
 
 
 # --- results ----------------------------------------------------------------------------
 
 
-async def send_results_page(
-    bot: Bot, services: BotServices, chat_id: int, draft: ChatDraft, request: SearchRequest
+async def run_search(
+    bot: Bot, services: BotServices, chat_id: int, summary_message_id: int, query_id: str, session: SearchSession
 ) -> None:
-    """Run one page of the search, then send up to RESULTS_PER_PAGE cards and a paging message."""
-    result = await search_carousell(services.carousell_client, request)
-    listings = result.listings[:RESULTS_PER_PAGE]
-    storage.record_seen_listings(services.database, listings, services.clock())
-    updated_draft = record_page_shown(
-        draft, request.page_cursor, [listing.id for listing in listings], result.next_page
-    )
-    services.draft_store.set(chat_id, updated_draft)
-    for listing in listings:
-        await send_listing_card(bot, chat_id, listing, already_seen=listing.id in draft.shown_listing_ids)
-    await bot.send_message(
-        chat_id=chat_id,
-        text=messages.render_results_footer(result, len(updated_draft.page_cursors), len(listings)),
-        reply_markup=to_inline_keyboard(build_results_keyboard(has_next_page=result.next_page is not None)),
-    )
+    if session.stage != Stage.SUMMARY:
+        await bot.answer_callback_query(query_id, text=messages.INVALID_BUTTON_TEXT)
+        return
+    await bot.answer_callback_query(query_id, text="Searching…")
+    await send_results_page(bot, services, chat_id, session, first_page_request(session))
+    # Only once the search worked: if it fails, the summary keeps its Search button for a retry.
+    await remove_buttons(bot, chat_id, summary_message_id)
 
 
 async def show_next_page(
-    bot: Bot, services: BotServices, chat_id: int, footer_message_id: int, query_id: str, draft: ChatDraft
+    bot: Bot, services: BotServices, chat_id: int, controls_message_id: int, query_id: str, session: SearchSession
 ) -> None:
-    request = next_page_request(draft)
+    if session.stage != Stage.RESULTS:
+        await bot.answer_callback_query(query_id, text=messages.INVALID_BUTTON_TEXT)
+        return
+    request = next_page_request(session)
     if request is None:
         await bot.answer_callback_query(query_id, text=messages.NO_MORE_RESULTS_TEXT)
         return
     await bot.answer_callback_query(query_id, text="Loading…")
-    await remove_buttons(bot, chat_id, footer_message_id)
-    await send_results_page(bot, services, chat_id, draft, request)
+    await send_results_page(bot, services, chat_id, session, request)
+    # The new page has its own controls; only the newest offer Next.
+    await remove_buttons(bot, chat_id, controls_message_id)
+
+
+async def send_results_page(
+    bot: Bot, services: BotServices, chat_id: int, session: SearchSession, request: SearchRequest
+) -> None:
+    """Run one page of the search, send up to RESULTS_PER_PAGE cards and then the results controls."""
+    result = await search_carousell(services.carousell_client, request)
+    listings = result.listings[:RESULTS_PER_PAGE]
+    now = services.clock()
+    first_time_listing_ids = set(storage.record_seen_listings(services.database, listings, now))
+    for listing in listings:
+        await send_listing_card(bot, chat_id, listing, already_seen=listing.id not in first_time_listing_ids)
+    updated_session = record_page_shown(session, request.page_cursor, result.next_page, now)
+    controls = await bot.send_message(
+        chat_id=chat_id,
+        text=messages.render_results_footer(result, len(updated_session.page_cursors), len(listings)),
+        reply_markup=to_inline_keyboard(build_keyboard_for_stage(updated_session)),
+    )
+    services.session_store.set(chat_id, replace(updated_session, stage_message_id=controls.message_id))
 
 
 async def send_listing_card(bot: Bot, chat_id: int, listing: Listing, already_seen: bool) -> None:
@@ -339,14 +429,6 @@ async def send_listing_card(bot: Bot, chat_id: int, listing: Listing, already_se
         except BadRequest as error:
             logger.warning("Telegram could not send photo %s: %s", listing.thumbnail_url, error)
     await bot.send_message(chat_id=chat_id, text=caption, reply_markup=reply_markup, link_preview_options=NO_LINK_PREVIEW)
-
-
-async def remove_buttons(bot: Bot, chat_id: int, message_id: int) -> None:
-    """Drop the old paging buttons so only the newest page offers "Next"."""
-    try:
-        await bot.edit_message_reply_markup(chat_id=chat_id, message_id=message_id, reply_markup=None)
-    except BadRequest as error:
-        logger.info("Could not remove buttons from message %s: %s", message_id, error)
 
 
 async def send_listing_details(bot: Bot, services: BotServices, chat_id: int, listing_id: str) -> None:
@@ -363,6 +445,29 @@ async def load_saved_search(bot: Bot, services: BotServices, chat_id: int, saved
         await bot.send_message(chat_id=chat_id, text=messages.SAVED_SEARCH_MISSING_TEXT)
         return
     await show_filter_panel_for_request(bot, services, chat_id, saved.request)
+
+
+# --- editing messages ---------------------------------------------------------------------
+
+
+async def edit_message(
+    bot: Bot, chat_id: int, message_id: int, text: str, reply_markup: InlineKeyboardMarkup | None
+) -> None:
+    """Redraw a message (with no buttons when `reply_markup` is None)."""
+    try:
+        await bot.edit_message_text(text=text, chat_id=chat_id, message_id=message_id, reply_markup=reply_markup)
+    except BadRequest as error:
+        # Telegram refuses an edit that changes nothing, e.g. tapping "Any" when it is already selected.
+        if "not modified" not in str(error).lower():
+            raise
+
+
+async def remove_buttons(bot: Bot, chat_id: int, message_id: int) -> None:
+    """Drop a message's buttons once they are no longer live, keeping its text."""
+    try:
+        await bot.edit_message_reply_markup(chat_id=chat_id, message_id=message_id, reply_markup=None)
+    except BadRequest as error:
+        logger.info("Could not remove buttons from message %s: %s", message_id, error)
 
 
 # --- Carousell calls (the client is synchronous, so it runs in a worker thread) ------------

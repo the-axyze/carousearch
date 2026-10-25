@@ -1,55 +1,92 @@
-from datetime import UTC, datetime
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from carousearch.bot.keyboard import (
-    build_filter_keyboard,
+    build_keyboard_for_stage,
     build_listing_card_keyboard,
-    build_results_keyboard,
     build_saved_searches_keyboard,
 )
+from carousearch.bot.price_input import format_price_range, parse_price_range
+from carousearch.bot.session_store import SessionStore
 from carousearch.bot.state import (
-    FILTER_ACTION_KINDS,
     MAX_CALLBACK_DATA_BYTES,
     RESULTS_PER_PAGE,
+    SESSION_IDLE_TIMEOUT,
+    WIZARD_STEPS,
     Action,
     ActionKind,
     AwaitingInput,
-    ChatDraft,
+    SearchSession,
+    Stage,
     apply_action,
     apply_text_input,
+    can_go_back,
     decode_action,
     encode_action,
+    expects_text_input,
     first_page_request,
-    format_price_range,
+    is_expired,
     next_page_request,
-    next_sort,
-    parse_price_range,
+    next_stage,
+    previous_stage,
     record_page_shown,
-    start_draft,
+    start_session,
+    start_session_at_summary,
+    step_number,
 )
 from carousearch.filters.schema import Condition, DealMethod, SearchRequest, SortOrder
 from carousearch.storage import SavedSearch
 
+NOW = datetime(2026, 10, 25, 9, 0, tzinfo=UTC)
+LATER = NOW + timedelta(minutes=5)
 
-def draft_for(**request_fields: object) -> ChatDraft:
-    return start_draft(SearchRequest(query="office chair", **request_fields))
+
+class FakeClock:
+    def __init__(self, now: datetime) -> None:
+        self.now = now
+
+    def __call__(self) -> datetime:
+        return self.now
+
+
+def session_at(stage: Stage, **request_fields: object) -> SearchSession:
+    return SearchSession(request=SearchRequest(query="office chair", **request_fields), stage=stage, last_activity_at=NOW)
+
+
+def press(session: SearchSession, kind: ActionKind, value: str = "") -> SearchSession:
+    updated = apply_action(session, Action(kind, value), LATER)
+    assert updated is not None
+    return updated
+
+
+def type_text(session: SearchSession, text: str) -> SearchSession:
+    updated, problem = apply_text_input(session, text, LATER)
+    assert problem is None
+    return updated
 
 
 def every_action() -> list[Action]:
     """One realistic action of each kind, with the longest values the bot produces."""
     return [
+        Action(ActionKind.NEXT),
+        Action(ActionKind.BACK),
+        Action(ActionKind.CANCEL),
+        Action(ActionKind.EDIT, Stage.CONDITION),
         Action(ActionKind.SET_PRICE, "100000-999999.5"),
-        Action(ActionKind.ASK_PRICE),
+        Action(ActionKind.TYPE_PRICE),
         Action(ActionKind.TOGGLE_CONDITION, Condition.HEAVILY_USED),
+        Action(ActionKind.CLEAR_CONDITIONS),
         Action(ActionKind.TOGGLE_DEAL_METHOD, DealMethod.MAILING),
-        Action(ActionKind.NEXT_SORT),
+        Action(ActionKind.CLEAR_DEAL_METHODS),
+        Action(ActionKind.SET_SORT, SortOrder.PRICE_HIGH_TO_LOW),
         Action(ActionKind.SET_CATEGORY, "123456789"),
-        Action(ActionKind.ASK_CATEGORY),
-        Action(ActionKind.RESET),
+        Action(ActionKind.TYPE_CATEGORY),
         Action(ActionKind.RUN_SEARCH),
         Action(ActionKind.NEXT_PAGE),
-        Action(ActionKind.BACK_TO_FILTERS),
+        Action(ActionKind.REFINE),
+        Action(ActionKind.END),
         Action(ActionKind.SHOW_DETAILS, "14699230941469923094"),
         Action(ActionKind.LOAD_SAVED_SEARCH, "999999"),
     ]
@@ -71,15 +108,17 @@ def test_every_encoded_action_fits_in_64_bytes() -> None:
 
 
 def test_every_keyboard_button_fits_in_64_bytes() -> None:
-    requests = [
-        SearchRequest(query="a"),
-        SearchRequest(query="a", price_min=123456.75, price_max=999999.25, category="999999999",
-                      conditions=list(Condition), deal_methods=list(DealMethod), sort=SortOrder.PRICE_HIGH_TO_LOW),
-    ]
-    layouts = [build_filter_keyboard(request) for request in requests]
+    full_request = SearchRequest(
+        query="x" * 500, price_min=123456.75, price_max=999999.25, category="999999999",
+        conditions=list(Condition), deal_methods=list(DealMethod), sort=SortOrder.PRICE_HIGH_TO_LOW,
+    )
+    sessions = [SearchSession(request=None, stage=Stage.KEYWORDS, last_activity_at=NOW)]
+    for request in [SearchRequest(query="a"), full_request]:
+        for stage in Stage:
+            sessions.append(SearchSession(request=request, stage=stage, last_activity_at=NOW, next_page_cursor="c" * 500))
+    layouts = [build_keyboard_for_stage(session) for session in sessions]
     layouts.append(build_listing_card_keyboard("1469923094"))
-    layouts.append(build_results_keyboard(has_next_page=True))
-    saved = SavedSearch(id=123456, name="x" * 200, request=requests[0], created_at=datetime.now(UTC))
+    saved = SavedSearch(id=123456, name="x" * 200, request=full_request, created_at=NOW)
     layouts.append(build_saved_searches_keyboard([saved]))
     for layout in layouts:
         for row in layout:
@@ -98,163 +137,318 @@ def test_decoding_rejects_bad_callback_data(callback_data: str) -> None:
         decode_action(callback_data)
 
 
-# --- filter actions ------------------------------------------------------------------
+# --- starting a session and the order of stages --------------------------------------------
 
 
-def test_set_price_preset_and_clear() -> None:
-    draft = apply_action(draft_for(), Action(ActionKind.SET_PRICE, "100-300"))
-    assert (draft.request.price_min, draft.request.price_max) == (100, 300)
+def test_keywords_given_up_front_skip_the_keywords_step() -> None:
+    session = start_session("office chair", NOW)
 
-    draft = apply_action(draft, Action(ActionKind.SET_PRICE, "-100"))
-    assert (draft.request.price_min, draft.request.price_max) == (None, 100)
-
-    draft = apply_action(draft, Action(ActionKind.SET_PRICE, "800-"))
-    assert (draft.request.price_min, draft.request.price_max) == (800, None)
-
-    draft = apply_action(draft, Action(ActionKind.SET_PRICE, ""))
-    assert (draft.request.price_min, draft.request.price_max) == (None, None)
+    assert session.stage == Stage.PRICE
+    assert session.request == SearchRequest(query="office chair")
+    assert session.last_activity_at == NOW
 
 
-def test_toggle_condition_on_and_off_in_canonical_order() -> None:
-    draft = apply_action(draft_for(), Action(ActionKind.TOGGLE_CONDITION, "well_used"))
-    draft = apply_action(draft, Action(ActionKind.TOGGLE_CONDITION, "like_new"))
-    assert draft.request.conditions == [Condition.LIKE_NEW, Condition.WELL_USED]
+@pytest.mark.parametrize("query", [None, "", "   "])
+def test_no_keywords_starts_at_the_keywords_step(query: str | None) -> None:
+    session = start_session(query, NOW)
 
-    draft = apply_action(draft, Action(ActionKind.TOGGLE_CONDITION, "well_used"))
-    assert draft.request.conditions == [Condition.LIKE_NEW]
-
-
-def test_toggle_deal_method() -> None:
-    draft = apply_action(draft_for(), Action(ActionKind.TOGGLE_DEAL_METHOD, "mailing"))
-    draft = apply_action(draft, Action(ActionKind.TOGGLE_DEAL_METHOD, "meetup"))
-    assert draft.request.deal_methods == [DealMethod.MEETUP, DealMethod.MAILING]
-
-    draft = apply_action(draft, Action(ActionKind.TOGGLE_DEAL_METHOD, "meetup"))
-    assert draft.request.deal_methods == [DealMethod.MAILING]
+    assert (session.stage, session.request) == (Stage.KEYWORDS, None)
+    assert expects_text_input(session)
 
 
-def test_next_sort_cycles_and_wraps() -> None:
-    draft = draft_for()
-    seen_sorts = []
-    for _ in range(5):
-        draft = apply_action(draft, Action(ActionKind.NEXT_SORT))
-        seen_sorts.append(draft.request.sort)
-    assert seen_sorts == [
-        SortOrder.RECENT, SortOrder.PRICE_LOW_TO_HIGH, SortOrder.PRICE_HIGH_TO_LOW, SortOrder.BEST_MATCH, SortOrder.RECENT
-    ]
-    assert next_sort(SortOrder.NEARBY) == SortOrder.BEST_MATCH
+def test_a_ready_made_request_starts_at_the_summary() -> None:
+    session = start_session_at_summary(SearchRequest(query="sofa", price_max=300, page_cursor="stale"), NOW)
+
+    assert session.stage == Stage.SUMMARY
+    assert session.request == SearchRequest(query="sofa", price_max=300)
 
 
-def test_set_and_clear_category() -> None:
-    draft = apply_action(draft_for(), Action(ActionKind.SET_CATEGORY, "5755"))
-    assert draft.request.category == "5755"
-
-    draft = apply_action(draft, Action(ActionKind.SET_CATEGORY, ""))
-    assert draft.request.category is None
-
-
-def test_ask_actions_wait_for_text_without_changing_filters() -> None:
-    draft = draft_for(price_max=50)
-
-    asking_price = apply_action(draft, Action(ActionKind.ASK_PRICE))
-    asking_category = apply_action(draft, Action(ActionKind.ASK_CATEGORY))
-
-    assert asking_price.awaiting_input == AwaitingInput.PRICE_RANGE
-    assert asking_category.awaiting_input == AwaitingInput.CATEGORY_ID
-    assert asking_price.request == draft.request == asking_category.request
+def test_six_numbered_steps_then_summary_and_results() -> None:
+    assert WIZARD_STEPS == (Stage.KEYWORDS, Stage.PRICE, Stage.CONDITION, Stage.DELIVERY, Stage.SORT, Stage.CATEGORY)
+    assert [step_number(stage) for stage in Stage] == [1, 2, 3, 4, 5, 6, None, None]
+    assert next_stage(Stage.CATEGORY) == Stage.SUMMARY
+    assert previous_stage(Stage.PRICE) == Stage.KEYWORDS
+    with pytest.raises(ValueError):
+        next_stage(Stage.RESULTS)
+    with pytest.raises(ValueError):
+        previous_stage(Stage.KEYWORDS)
 
 
-def test_reset_returns_a_clean_draft_keeping_the_query() -> None:
-    draft = draft_for(price_min=10, price_max=20, conditions=[Condition.BRAND_NEW], deal_methods=[DealMethod.MEETUP],
-                      sort=SortOrder.RECENT, category="5755", buyer_protection_only=True)
-
-    reset = apply_action(draft, Action(ActionKind.RESET))
-
-    assert reset.request == SearchRequest(query="office chair")
+# --- the happy path -------------------------------------------------------------------------
 
 
-def test_reset_keeps_the_category_when_there_is_no_query() -> None:
-    draft = start_draft(SearchRequest(category="5707", price_max=100))
+def test_full_happy_path_through_every_stage() -> None:
+    session = start_session(None, NOW)
 
-    assert apply_action(draft, Action(ActionKind.RESET)).request == SearchRequest(category="5707")
+    session = type_text(session, "  office chair ")
+    assert session.stage == Stage.PRICE
+    session = press(session, ActionKind.SET_PRICE, "100-300")
+    assert session.stage == Stage.CONDITION
+    session = press(session, ActionKind.TOGGLE_CONDITION, "well_used")
+    session = press(session, ActionKind.TOGGLE_CONDITION, "like_new")
+    assert session.stage == Stage.CONDITION  # toggles stay on the step
+    session = press(session, ActionKind.NEXT)
+    assert session.stage == Stage.DELIVERY
+    session = press(session, ActionKind.TOGGLE_DEAL_METHOD, "meetup")
+    session = press(session, ActionKind.NEXT)
+    assert session.stage == Stage.SORT
+    session = press(session, ActionKind.SET_SORT, "recent")
+    assert session.stage == Stage.CATEGORY
+    session = press(session, ActionKind.SET_CATEGORY, "13")
+
+    assert session.stage == Stage.SUMMARY
+    assert session.request == SearchRequest(
+        query="office chair",
+        price_min=100,
+        price_max=300,
+        conditions=[Condition.LIKE_NEW, Condition.WELL_USED],
+        deal_methods=[DealMethod.MEETUP],
+        sort=SortOrder.RECENT,
+        category="13",
+    )
+    assert session.last_activity_at == LATER
+
+    session = record_page_shown(session, None, "cursor-2", LATER)
+    assert session.stage == Stage.RESULTS
+    session = press(session, ActionKind.REFINE)
+    assert session.stage == Stage.SUMMARY
+    assert session.request.category == "13"
 
 
-def test_filter_change_restarts_paging_and_cancels_typed_input() -> None:
-    draft = record_page_shown(draft_for(), None, ["1"], "cursor-2")
-    draft = apply_action(draft, Action(ActionKind.ASK_PRICE))
+def test_any_clears_toggles_and_any_price_or_category_clears_the_filter() -> None:
+    conditions = press(session_at(Stage.CONDITION, conditions=[Condition.BRAND_NEW]), ActionKind.CLEAR_CONDITIONS)
+    deal_methods = press(session_at(Stage.DELIVERY, deal_methods=[DealMethod.MAILING]), ActionKind.CLEAR_DEAL_METHODS)
+    price = press(session_at(Stage.PRICE, price_max=100), ActionKind.SET_PRICE, "")
+    category = press(session_at(Stage.CATEGORY, category="13"), ActionKind.SET_CATEGORY, "")
 
-    changed = apply_action(draft, Action(ActionKind.NEXT_SORT))
+    assert conditions.request.conditions == [] and conditions.stage == Stage.CONDITION
+    assert deal_methods.request.deal_methods == [] and deal_methods.stage == Stage.DELIVERY
+    assert (price.request.price_min, price.request.price_max) == (None, None) and price.stage == Stage.CONDITION
+    assert category.request.category is None and category.stage == Stage.SUMMARY
 
-    assert changed.page_cursors == () and changed.next_page_cursor is None
-    assert changed.awaiting_input is None
-    assert changed.shown_listing_ids == {"1"}
+
+def test_next_on_the_keywords_step_keeps_the_keywords_once_there_are_some() -> None:
+    assert press(session_at(Stage.KEYWORDS), ActionKind.NEXT).stage == Stage.PRICE
+    with pytest.raises(ValueError):
+        apply_action(start_session(None, NOW), Action(ActionKind.NEXT), LATER)
+
+
+# --- Back -------------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
-    "action",
+    ("stage", "expected"),
     [
-        Action(ActionKind.TOGGLE_CONDITION, "mint"),
-        Action(ActionKind.TOGGLE_DEAL_METHOD, "courier"),
-        Action(ActionKind.SET_PRICE, "cheap"),
-        Action(ActionKind.SET_CATEGORY, "chairs"),
+        (Stage.PRICE, Stage.KEYWORDS),
+        (Stage.CONDITION, Stage.PRICE),
+        (Stage.DELIVERY, Stage.CONDITION),
+        (Stage.SORT, Stage.DELIVERY),
+        (Stage.CATEGORY, Stage.SORT),
+        (Stage.SUMMARY, Stage.CATEGORY),
     ],
 )
-def test_bad_filter_values_raise(action: Action) -> None:
+def test_back_goes_to_the_previous_stage(stage: Stage, expected: Stage) -> None:
+    session = session_at(stage, price_max=50)
+
+    went_back = press(session, ActionKind.BACK)
+
+    assert went_back.stage == expected
+    assert went_back.request == session.request
+
+
+def test_there_is_no_back_from_the_first_step() -> None:
+    session = session_at(Stage.KEYWORDS)
+
+    assert not can_go_back(session)
     with pytest.raises(ValueError):
-        apply_action(draft_for(), action)
+        apply_action(session, Action(ActionKind.BACK), LATER)
 
 
-def test_non_filter_actions_are_not_applied_to_filters() -> None:
-    for kind in set(ActionKind) - FILTER_ACTION_KINDS:
-        with pytest.raises(ValueError, match="not a filter action"):
-            apply_action(draft_for(), Action(kind))
+def test_back_while_typing_a_value_returns_to_the_step_buttons() -> None:
+    typing_price = press(session_at(Stage.PRICE), ActionKind.TYPE_PRICE)
+    typing_category = press(session_at(Stage.CATEGORY), ActionKind.TYPE_CATEGORY)
+
+    assert typing_price.awaiting_input == AwaitingInput.PRICE_RANGE
+    assert typing_category.awaiting_input == AwaitingInput.CATEGORY_ID
+    assert press(typing_price, ActionKind.BACK) == replace(typing_price, awaiting_input=None, last_activity_at=LATER)
+    assert press(typing_category, ActionKind.BACK).stage == Stage.CATEGORY
 
 
-# --- typed input ------------------------------------------------------------------------
+# --- Edit from the summary ---------------------------------------------------------------------
 
 
-def test_typed_price_and_category() -> None:
-    draft = apply_action(draft_for(), Action(ActionKind.ASK_PRICE))
-    draft = apply_text_input(draft, " S$1,000 - 2,500 ")
-    assert (draft.request.price_min, draft.request.price_max) == (1000, 2500)
-    assert draft.awaiting_input is None
-
-    draft = apply_action(draft, Action(ActionKind.ASK_CATEGORY))
-    draft = apply_text_input(draft, " 1793 ")
-    assert draft.request.category == "1793"
+ANSWER_FOR_STEP: dict[Stage, list[Action]] = {
+    Stage.PRICE: [Action(ActionKind.SET_PRICE, "-100")],
+    Stage.CONDITION: [Action(ActionKind.TOGGLE_CONDITION, "brand_new"), Action(ActionKind.NEXT)],
+    Stage.DELIVERY: [Action(ActionKind.TOGGLE_DEAL_METHOD, "mailing"), Action(ActionKind.NEXT)],
+    Stage.SORT: [Action(ActionKind.SET_SORT, "price_low_to_high")],
+    Stage.CATEGORY: [Action(ActionKind.SET_CATEGORY, "1793")],
+}
 
 
-def test_bad_typed_input_raises_and_keeps_waiting() -> None:
-    draft = apply_action(draft_for(), Action(ActionKind.ASK_PRICE))
-    with pytest.raises(ValueError, match="price range"):
-        apply_text_input(draft, "cheap please")
-    assert draft.awaiting_input == AwaitingInput.PRICE_RANGE
+@pytest.mark.parametrize("step", list(ANSWER_FOR_STEP))
+def test_edit_from_the_summary_returns_to_the_summary(step: Stage) -> None:
+    editing = press(session_at(Stage.SUMMARY), ActionKind.EDIT, step.value)
+    assert (editing.stage, editing.return_to_summary) == (step, True)
 
+    for action in ANSWER_FOR_STEP[step]:
+        editing = press(editing, action.kind, action.value)
+
+    assert (editing.stage, editing.return_to_summary) == (Stage.SUMMARY, False)
+    assert editing.request != session_at(Stage.SUMMARY).request
+
+
+def test_edit_keywords_from_the_summary_returns_to_the_summary() -> None:
+    editing = press(session_at(Stage.SUMMARY, price_max=99), ActionKind.EDIT, Stage.KEYWORDS.value)
+    assert can_go_back(editing)
+
+    edited = type_text(editing, "gaming chair")
+
+    assert edited.stage == Stage.SUMMARY
+    assert (edited.request.query, edited.request.price_max) == ("gaming chair", 99)
+
+
+def test_back_while_editing_returns_to_the_summary() -> None:
+    editing = press(session_at(Stage.SUMMARY), ActionKind.EDIT, Stage.DELIVERY.value)
+
+    assert press(editing, ActionKind.BACK).stage == Stage.SUMMARY
+
+
+@pytest.mark.parametrize("value", ["summary", "results", "colour"])
+def test_edit_only_opens_wizard_steps(value: str) -> None:
+    with pytest.raises(ValueError):
+        apply_action(session_at(Stage.SUMMARY), Action(ActionKind.EDIT, value), LATER)
+
+
+# --- Cancel, End, and buttons from the wrong stage -------------------------------------------------
+
+
+@pytest.mark.parametrize("stage", list(Stage))
+def test_cancel_and_end_finish_the_session(stage: Stage) -> None:
+    assert apply_action(session_at(stage), Action(ActionKind.CANCEL), LATER) is None
+    assert apply_action(session_at(stage), Action(ActionKind.END), LATER) is None
+
+
+@pytest.mark.parametrize(
+    ("stage", "action"),
+    [
+        (Stage.CONDITION, Action(ActionKind.SET_PRICE, "100-300")),
+        (Stage.PRICE, Action(ActionKind.TOGGLE_CONDITION, "like_new")),
+        (Stage.SORT, Action(ActionKind.NEXT)),
+        (Stage.CATEGORY, Action(ActionKind.SET_SORT, "recent")),
+        (Stage.PRICE, Action(ActionKind.EDIT, "category")),
+        (Stage.SUMMARY, Action(ActionKind.REFINE)),
+        (Stage.RESULTS, Action(ActionKind.SET_CATEGORY, "13")),
+    ],
+)
+def test_a_button_from_another_stage_is_rejected(stage: Stage, action: Action) -> None:
+    with pytest.raises(ValueError, match="belongs to"):
+        apply_action(session_at(stage), action, LATER)
+
+
+@pytest.mark.parametrize(
+    ("stage", "action"),
+    [
+        (Stage.CONDITION, Action(ActionKind.TOGGLE_CONDITION, "mint")),
+        (Stage.DELIVERY, Action(ActionKind.TOGGLE_DEAL_METHOD, "courier")),
+        (Stage.PRICE, Action(ActionKind.SET_PRICE, "cheap")),
+        (Stage.SORT, Action(ActionKind.SET_SORT, "random")),
+        (Stage.CATEGORY, Action(ActionKind.SET_CATEGORY, "chairs")),
+    ],
+)
+def test_bad_button_values_raise(stage: Stage, action: Action) -> None:
+    with pytest.raises(ValueError):
+        apply_action(session_at(stage), action, LATER)
+
+
+@pytest.mark.parametrize("kind", [ActionKind.RUN_SEARCH, ActionKind.NEXT_PAGE, ActionKind.SHOW_DETAILS])
+def test_actions_that_need_io_are_not_applied_here(kind: ActionKind) -> None:
+    with pytest.raises(ValueError, match="not a session action"):
+        apply_action(session_at(Stage.SUMMARY), Action(kind), LATER)
+
+
+# --- typed text ------------------------------------------------------------------------------------
+
+
+def test_typed_price_range_and_collection_id() -> None:
+    session = press(session_at(Stage.PRICE), ActionKind.TYPE_PRICE)
+    assert expects_text_input(session)
+
+    session = type_text(session, " S$1,000 – 2,500 ")
+    assert (session.request.price_min, session.request.price_max) == (1000, 2500)
+    assert (session.stage, session.awaiting_input) == (Stage.CONDITION, None)
+
+    session = press(session_at(Stage.CATEGORY), ActionKind.TYPE_CATEGORY)
+    session = type_text(session, " 5755 ")
+    assert (session.request.category, session.stage) == ("5755", Stage.SUMMARY)
+
+
+def test_bad_typed_price_is_reported_and_the_step_keeps_waiting() -> None:
+    session = press(session_at(Stage.PRICE), ActionKind.TYPE_PRICE)
+
+    updated, problem = apply_text_input(session, "cheap please", LATER + timedelta(minutes=1))
+
+    assert problem is not None and '"cheap please"' in problem and "150-400" in problem
+    assert (updated.stage, updated.awaiting_input, updated.request) == (Stage.PRICE, AwaitingInput.PRICE_RANGE, session.request)
+    assert updated.last_activity_at == LATER + timedelta(minutes=1)
+
+
+def test_bad_typed_collection_id_and_blank_keywords_are_reported() -> None:
+    typing_category = press(session_at(Stage.CATEGORY), ActionKind.TYPE_CATEGORY)
+    _, category_problem = apply_text_input(typing_category, "chairs", LATER)
+    _, keywords_problem = apply_text_input(start_session(None, NOW), "   ", LATER)
+
+    assert category_problem is not None and "number" in category_problem
+    assert keywords_problem is not None and "keywords" in keywords_problem
+
+
+@pytest.mark.parametrize("stage", [Stage.PRICE, Stage.CONDITION, Stage.DELIVERY, Stage.SORT, Stage.SUMMARY, Stage.RESULTS])
+def test_only_keywords_and_typed_values_take_text(stage: Stage) -> None:
+    session = session_at(stage)
+
+    assert not expects_text_input(session)
     with pytest.raises(ValueError, match="not waiting"):
-        apply_text_input(draft_for(), "100-200")
+        apply_text_input(session, "100-200", LATER)
+
+
+# --- price ranges --------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
-        ("100-500", (100, 500)),
-        ("<300", (None, 300)),
+        ("150-400", (150, 400)),
+        ("<250", (None, 250)),
+        ("< 250", (None, 250)),
+        (">1000", (1000, None)),
         ("800+", (800, None)),
         ("-50", (None, 50)),
         ("50-", (50, None)),
         ("$99.5-$120", (99.5, 120)),
+        ("S$1,000 – 2,000", (1000, 2000)),
+        ("100—300", (100, 300)),
+        ("0-0", (0, 0)),
         ("any", (None, None)),
+        ("ANY", (None, None)),
         ("", (None, None)),
+        # Invalid input:
+        ("500", None),
+        ("-", None),
+        ("<", None),
+        (">", None),
+        ("+", None),
+        ("500-100", None),
+        ("1-2-3", None),
+        ("abc", None),
+        ("cheap please", None),
+        ("inf-", None),
+        ("nan-5", None),
+        ("<-5", None),
+        (">abc", None),
     ],
 )
-def test_parse_price_range(text: str, expected: tuple[float | None, float | None]) -> None:
+def test_parse_price_range(text: str, expected: tuple[float | None, float | None] | None) -> None:
     assert parse_price_range(text) == expected
-
-
-@pytest.mark.parametrize("text", ["500", "-", "500-100", "1-2-3", "abc", "inf-", "<"])
-def test_parse_price_range_rejects(text: str) -> None:
-    with pytest.raises(ValueError):
-        parse_price_range(text)
 
 
 def test_format_price_range_round_trips() -> None:
@@ -262,44 +456,77 @@ def test_format_price_range_round_trips() -> None:
         assert parse_price_range(format_price_range(*price_range)) == price_range
 
 
-# --- paging -------------------------------------------------------------------------------
+# --- expiry -----------------------------------------------------------------------------------------
+
+
+def test_a_session_expires_after_30_idle_minutes() -> None:
+    session = start_session("sofa", NOW)
+
+    assert not is_expired(session, NOW + SESSION_IDLE_TIMEOUT, SESSION_IDLE_TIMEOUT)
+    assert is_expired(session, NOW + SESSION_IDLE_TIMEOUT + timedelta(seconds=1), SESSION_IDLE_TIMEOUT)
+    assert SESSION_IDLE_TIMEOUT == timedelta(minutes=30)
+
+
+def test_activity_pushes_expiry_back() -> None:
+    session = press(start_session("sofa", NOW), ActionKind.SET_PRICE, "")
+
+    assert not is_expired(session, LATER + timedelta(minutes=29), SESSION_IDLE_TIMEOUT)
+
+
+def test_session_store_hides_and_then_removes_an_expired_session() -> None:
+    clock = FakeClock(NOW)
+    store = SessionStore(clock)
+    session = start_session("sofa", NOW)
+    store.set(5, session)
+
+    clock.now = NOW + timedelta(minutes=30)
+    assert store.get(5) == session
+    assert not store.remove_if_expired(5)
+
+    clock.now = NOW + timedelta(minutes=31)
+    assert store.get(5) is None
+    assert store.remove_if_expired(5)
+    assert not store.remove_if_expired(5)
+
+
+def test_session_store_keeps_one_session_per_chat() -> None:
+    store = SessionStore(FakeClock(NOW))
+    store.set(5, start_session("sofa", NOW))
+    store.set(6, start_session("lamp", NOW))
+    store.set(5, start_session("table", NOW))
+
+    store.clear(6)
+
+    assert store.get(5).request.query == "table"
+    assert store.get(6) is None
+
+
+# --- result pages ------------------------------------------------------------------------------------
 
 
 def test_first_page_request_uses_five_results_and_no_cursor() -> None:
-    draft = draft_for(page_size=40, price_max=100)
-
-    request = first_page_request(draft)
+    request = first_page_request(session_at(Stage.SUMMARY, page_size=40, price_max=100))
 
     assert request.page_size == RESULTS_PER_PAGE
     assert request.page_cursor is None
     assert request.price_max == 100
 
 
-def test_pages_push_cursors_and_collect_shown_listings() -> None:
-    draft = record_page_shown(draft_for(), None, ["1", "2"], "cursor-2")
-    assert next_page_request(draft).page_cursor == "cursor-2"
+def test_pages_push_cursors_and_move_to_results() -> None:
+    session = record_page_shown(session_at(Stage.SUMMARY), None, "cursor-2", LATER)
+    assert (session.stage, session.last_activity_at) == (Stage.RESULTS, LATER)
+    assert next_page_request(session).page_cursor == "cursor-2"
 
-    draft = record_page_shown(draft, "cursor-2", ["3"], None)
+    session = record_page_shown(session, "cursor-2", None, LATER)
 
-    assert draft.page_cursors == (None, "cursor-2")
-    assert draft.shown_listing_ids == {"1", "2", "3"}
-    assert next_page_request(draft) is None
+    assert session.page_cursors == (None, "cursor-2")
+    assert next_page_request(session) is None
 
 
 def test_new_first_page_restarts_the_cursor_stack() -> None:
-    draft = record_page_shown(draft_for(), None, ["1"], "cursor-2")
-    draft = record_page_shown(draft, "cursor-2", ["2"], "cursor-3")
+    session = record_page_shown(session_at(Stage.SUMMARY), None, "cursor-2", LATER)
+    session = record_page_shown(session, "cursor-2", "cursor-3", LATER)
 
-    draft = record_page_shown(draft, None, ["1"], "cursor-2")
+    session = record_page_shown(session, None, "cursor-2", LATER)
 
-    assert draft.page_cursors == (None,)
-
-
-def test_new_draft_remembers_listings_already_shown_in_the_chat() -> None:
-    previous = record_page_shown(draft_for(), None, ["1", "2"], "cursor-2")
-
-    draft = start_draft(SearchRequest(query="sofa", page_cursor="stale"), previous)
-
-    assert draft.shown_listing_ids == {"1", "2"}
-    assert draft.request.page_cursor is None
-    assert draft.page_cursors == () and draft.next_page_cursor is None
+    assert session.page_cursors == (None,)

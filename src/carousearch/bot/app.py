@@ -8,8 +8,8 @@ from telegram import Bot, Update
 from telegram.ext import Application, ApplicationBuilder, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
 from carousearch.bot import handlers
-from carousearch.bot.draft_store import DraftStore
-from carousearch.bot.handlers import SERVICES_KEY, BotServices
+from carousearch.bot.handlers import SERVICES_KEY, BotServices, utc_now
+from carousearch.bot.session_store import SessionStore
 from carousearch.carousell.client import CarousellClient
 from carousearch.config import TelegramSettings
 
@@ -20,7 +20,11 @@ def create_bot_services(
     carousell_client: CarousellClient, database: sqlite3.Connection, owner_user_id: int
 ) -> BotServices:
     return BotServices(
-        carousell_client=carousell_client, database=database, draft_store=DraftStore(), owner_user_id=owner_user_id
+        carousell_client=carousell_client,
+        database=database,
+        session_store=SessionStore(clock=utc_now),
+        owner_user_id=owner_user_id,
+        clock=utc_now,
     )
 
 
@@ -29,12 +33,15 @@ def build_application(settings: TelegramSettings, services: BotServices) -> Appl
         raise ValueError("a Telegram bot token is required to build the application")
     application = ApplicationBuilder().token(settings.bot_token).build()
     application.bot_data[SERVICES_KEY] = services
-    application.add_handler(CommandHandler(["start", "help"], handlers.handle_help))
+    application.add_handler(CommandHandler("start", handlers.handle_start))
+    application.add_handler(CommandHandler("help", handlers.handle_help))
     application.add_handler(CommandHandler("search", handlers.handle_search_command))
+    application.add_handler(CommandHandler("end", handlers.handle_end_command))
+    application.add_handler(CommandHandler("status", handlers.handle_status_command))
     application.add_handler(CommandHandler("save", handlers.handle_save_command))
     application.add_handler(CommandHandler("saved", handlers.handle_saved_command))
     application.add_handler(CallbackQueryHandler(handlers.handle_button))
-    # New text messages only: an edited message should not start another search.
+    # New text messages only: editing an earlier message should not count as an answer or a new search.
     new_text_messages = filters.UpdateType.MESSAGE & filters.TEXT & ~filters.COMMAND
     application.add_handler(MessageHandler(new_text_messages, handlers.handle_text_message))
     application.add_error_handler(handlers.log_unhandled_error)
