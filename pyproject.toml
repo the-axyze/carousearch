@@ -20,6 +20,10 @@ dev = [
     "pytest>=8",
     "ruff>=0.17",
 ]
+# Screening's price resolver (Claude). Without it, and without ANTHROPIC_API_KEY, screening keeps listed prices.
+llm = [
+    "anthropic>=2.3",
+]
 
 [project.scripts]
 carousearch = "carousearch.cli:main"

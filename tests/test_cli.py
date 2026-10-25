@@ -1,3 +1,4 @@
+import copy
 import io
 import json
 import sys
@@ -10,8 +11,11 @@ from carousearch import cli
 from carousearch.carousell.rate_limit import RateLimiter
 from carousearch.config import TelegramSettings
 from carousearch.filters.schema import Condition, DealMethod, SortOrder
+from carousearch.screening.models import PriceSource, ResolvedPrice
+from carousearch.screening.price_resolver import NoopPriceResolver, PriceResolver
 
 from fake_carousell import FakeCarousell
+from fixture_files import load_json_fixture
 
 NO_WAIT = ["--min-interval", "0", "--jitter", "0"]
 
@@ -286,4 +290,105 @@ def test_analyze_rejects_an_age_cutoff_without_recent_sort_before_any_request(tm
 
     assert exit_code == 2
     assert "sort=recent" in capsys.readouterr().err
+    assert carousell.requests == []
+
+
+# --- search --screen -----------------------------------------------------------------------
+
+CATALOGUE_TITLE = "iPhone 15 / 15 Pro / 15 Pro Max all storage"
+
+
+def carousell_with_one_catalogue_post() -> FakeCarousell:
+    """The saved search, with the second listing (1463757293, S$750) retitled as a catalogue post."""
+    response_json = copy.deepcopy(load_json_fixture("search_price_condition.json"))
+    cards = [item["listingCard"] for item in response_json["data"]["results"] if "listingCard" in item]
+    cards[1]["title"] = CATALOGUE_TITLE
+    return FakeCarousell(api_responses=[httpx.Response(200, json=response_json)])
+
+
+class FixedPriceResolver:
+    def resolve(self, query: str, title: str, description: str, listed_price: float | None) -> ResolvedPrice:
+        return ResolvedPrice(amount=850, source=PriceSource.DESCRIPTION, note="15 Pro 256GB - $850")
+
+
+def run_screening_cli(
+    arguments: list[str], carousell: FakeCarousell, data_dir: Path, resolver: PriceResolver | None = None
+) -> int:
+    return cli.main(
+        [*NO_WAIT, "--data-dir", str(data_dir), *arguments],
+        client_factory=carousell.client,
+        price_resolver_factory=lambda: resolver or NoopPriceResolver(),
+    )
+
+
+def detail_requests(carousell: FakeCarousell) -> list:
+    return [request for request in carousell.api_requests if request.url.path.startswith("/ds/listing-detail/")]
+
+
+def test_screen_adds_your_price_and_flags_columns(tmp_path: Path, capsys) -> None:
+    carousell = carousell_with_one_catalogue_post()
+
+    exit_code = run_screening_cli(["search", "iphone 15 pro 256gb", "--limit", "5", "--screen"], carousell, tmp_path)
+
+    lines = capsys.readouterr().out.splitlines()
+    assert exit_code == 0
+    assert lines[0].split()[:6] == ["ID", "PRICE", "YOUR", "PRICE", "FLAGS", "CONDITION"]
+    catalogue_row = next(line for line in lines if line.startswith("1463757293"))
+    assert "Multi-item title" in catalogue_row
+    assert len(detail_requests(carousell)) == 1
+    assert lines[-1] == (
+        "Screening: 1 of 5 multi-item; 1 description checked (detail budget 10); "
+        "price resolution off (ANTHROPIC_API_KEY not set), so YOUR PRICE is the listed price."
+    )
+
+
+def test_screen_shows_the_resolved_price(tmp_path: Path, capsys) -> None:
+    run_screening_cli(
+        ["search", "iphone 15 pro 256gb", "--limit", "5", "--screen"],
+        carousell_with_one_catalogue_post(),
+        tmp_path,
+        resolver=FixedPriceResolver(),
+    )
+
+    output = capsys.readouterr().out
+    catalogue_row = next(line for line in output.splitlines() if line.startswith("1463757293"))
+    assert "S$850 (desc)" in catalogue_row
+    assert "read from the description by Claude" in output
+
+
+def test_screen_json_has_the_screened_listing_fields(tmp_path: Path, capsys) -> None:
+    arguments = ["search", "iphone 15 pro", "--limit", "5", "--screen", "--json"]
+    run_screening_cli(arguments, carousell_with_one_catalogue_post(), tmp_path)
+
+    result = json.loads(capsys.readouterr().out)
+    screened = {item["listing"]["id"]: item for item in result["screened_listings"]}
+    catalogue = screened["1463757293"]
+    assert set(catalogue) == {"listing", "detail", "tags", "resolved_price", "is_multi_item"}
+    assert catalogue["is_multi_item"] is True
+    assert catalogue["tags"][0]["code"] == "MULTI_ITEM_TITLE"
+    assert catalogue["resolved_price"]["source"] == "listed"
+    assert "raw" not in catalogue["listing"] and "raw" not in catalogue["detail"]
+    assert screened["1469923094"]["detail"] is None and screened["1469923094"]["tags"] == []
+    assert result["next_page"]
+
+
+def test_hide_multi_item_implies_screening(tmp_path: Path, capsys) -> None:
+    exit_code = run_screening_cli(
+        ["search", "iphone 15 pro", "--limit", "5", "--hide-multi-item"], carousell_with_one_catalogue_post(), tmp_path
+    )
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "1463757293" not in output
+    assert "Showing 4 of" in output
+    assert "1 of 5 multi-item (1 hidden)" in output
+
+
+def test_negative_detail_budget_is_a_usage_error(tmp_path: Path, capsys) -> None:
+    carousell = FakeCarousell()
+
+    exit_code = run_screening_cli(["search", "iphone", "--screen", "--max-detail-fetches", "-1"], carousell, tmp_path)
+
+    assert exit_code == 2
+    assert "--max-detail-fetches" in capsys.readouterr().err
     assert carousell.requests == []

@@ -52,6 +52,7 @@ from carousearch.bot.state import (
 from carousearch.carousell.client import CarousellClient
 from carousearch.carousell.errors import CarousellError
 from carousearch.filters.schema import Listing, ListingDetail, SearchRequest, SearchResult
+from carousearch.screening.pipeline import screen_without_details
 
 logger = logging.getLogger(__name__)
 
@@ -408,8 +409,11 @@ async def send_results_page(
     listings = result.listings[:RESULTS_PER_PAGE]
     now = services.clock()
     first_time_listing_ids = set(storage.record_seen_listings(services.database, listings, now))
-    for listing in listings:
-        await send_listing_card(bot, chat_id, listing, already_seen=listing.id not in first_time_listing_ids)
+    # Card-level screening only (pure, no requests): flags multi-item posts by their titles.
+    for screened in screen_without_details(listings, request.query):
+        listing = screened.listing
+        note = screened.summary_line() if screened.is_multi_item else None
+        await send_listing_card(bot, chat_id, listing, listing.id not in first_time_listing_ids, note)
     updated_session = record_page_shown(session, request.page_cursor, result.next_page, now)
     controls = await bot.send_message(
         chat_id=chat_id,
@@ -419,8 +423,10 @@ async def send_results_page(
     services.session_store.set(chat_id, replace(updated_session, stage_message_id=controls.message_id))
 
 
-async def send_listing_card(bot: Bot, chat_id: int, listing: Listing, already_seen: bool) -> None:
-    caption = messages.render_listing_caption(listing, already_seen)
+async def send_listing_card(
+    bot: Bot, chat_id: int, listing: Listing, already_seen: bool, screening_note: str | None = None
+) -> None:
+    caption = messages.render_listing_caption(listing, already_seen, screening_note)
     reply_markup = to_inline_keyboard(build_listing_card_keyboard(listing.id))
     if listing.thumbnail_url:
         try:

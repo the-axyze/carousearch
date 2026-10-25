@@ -212,3 +212,31 @@ Built, on `feature/market-analysis-a`: the `listings` / `listing_changes` / `har
 Differences from the plan, all written back into it: `HarvestLimits` lives in `market/limits.py` (keeps `analysis.py` free of the I/O module); reuse checks that the earlier run covers the requested limits (`limits_json` on `harvest_runs`, `find_recent_runs` + `run_covers`) rather than matching the request hash alone; the bump timestamp is refreshed on every pull like likes; `AnalysisSpec` rejects `limits.max_age_days` without `sort=recent` before any request; a harvest closes its run as `error` on any exception, not only Carousell errors; week groups are ISO weeks in Singapore time; `decide_stop` takes `pages_fetched` (1-based) rather than a page index.
 
 Deferred: capturing a real two-page `sort=recent` fixture pair (`search_recent_page_1/2.json`) needs a machine that can reach carousell.sg; `test_harvest.py` builds its pages from the existing fixture until then. The acceptance run of the example spec against the live site is also still to be done from the home machine.
+
+---
+
+## Phase 3a status (2026-10-25)
+
+Built: screening for multi-item "catalogue" posts, whose card price is usually the cheapest variant's, plus an optional Claude lookup of the searched variant's real price. `README.md`, "Screening", has the tags, the cost estimate and the detail budget.
+
+- `screening/models.py`: `Tag` (`code`, `label`, `reason`, `severity`), `ResolvedPrice` (`amount`, `source` listed / description / not_stated, `note`) and `ScreenedListing` (`listing`, `detail`, `tags`, `resolved_price`, computed `is_multi_item`, `summary_line()`). Labels and severities per code live in two tables next to the enum. This is the contract the web front end will consume.
+- `screening/rules.py` (pure): `title_lists_multiple_variants`, `description_has_price_list`, `listed_price_is_floor`, `price_below_market`, `price_not_for_your_item`, and `extract_prices` / `find_price_mentions`. Thresholds are one constants block at the top.
+- `screening/price_resolver.py`: `PriceResolver` protocol, `ClaudePriceResolver` (`claude-haiku-5-5`, `output_config.format` JSON schema, thinking off, effort low, `max_tokens` 256, description cut to 1,500 characters), `NoopPriceResolver`, `build_price_resolver(settings)`. API failures raise `PriceResolutionError`; unusable answers become `not_stated` with a note.
+- `screening/store.py`: `ScreeningStore` protocol and `SqliteScreeningStore` (12-hour `listing_detail_cache`, new `price_resolution_cache` keyed by listing id and normalised keywords).
+- `screening/pipeline.py`: `screen_listings(listings, request, services, fetch_details=True)` with `ScreeningServices(client, store, resolver, clock, max_detail_fetches=10)`; `screen_without_details` is the request-free first step.
+- CLI: `search --screen` (YOUR PRICE and FLAGS columns, a one-line screening summary), `--hide-multi-item`, `--max-detail-fetches`; `--json` prints `screened_listings`. Bot: multi-item cards get `summary_line()` as the caption's last line (title rule only, no extra requests; 10 added lines in `handlers.py`, 4 in `messages.py`).
+- `config.py`: `ScreeningSettings` / `load_screening_settings` (optional `ANTHROPIC_API_KEY` from the environment or `.env`). `pyproject.toml`: new optional extra `llm = ["anthropic>=2.3"]`, imported lazily.
+- Tests: 507 offline (367 before; 140 new: rules 95, resolver 19, pipeline 14, models 4, storage 2, CLI 5, bot 1).
+
+Live check, 2026-10-25, `carousearch search "iphone 15 pro 256gb" --price-max 1200 --limit 20 --screen`: all 20 titles were single-variant and none was tagged multi-item; the one S$8.88 placeholder ("dm for info") was tagged below market, its description fetched (1 detail request) and correctly left un-flagged. No API key was configured, so resolution ran as Noop. The title rule was checked against real catalogue titles from the bot's searches ("Nintendo Switch OLED / Switch 2 / Switch Console", the motorbike dealers' "| ADV150 | R15 | MT15 |" keyword lists), which it tags.
+
+Differences from the brief and from ANALYSIS_AND_SCREENING_PLAN.md:
+
+- This is a narrower first slice than the plan's phase D (stage pipeline with thresholds, text judge, verdict cache): fixed rules plus one LLM lookup, no user-defined stages. `screening/pipeline.py` here orchestrates injected I/O instead of being pure; the plan's `runner.py` / `pipeline.py` split can come with phase D.
+- `listed_price_is_floor(listed_price, description)` takes the description text, not pre-extracted amounts, because the "from $X" wording is part of its evidence.
+- `PriceResolver.resolve` takes `listed_price: float | None`, since a card price can be non-numeric.
+- `fetch_details=False` runs step 1 only (no detail lookups, no resolver), which is what the bot uses.
+- Resolver answers are cached only when they come from the description (`description` or `not_stated`); a Noop `listed` result or a failed call is not, so adding a key later still resolves those listings.
+- Bare numbers count as prices only in a price context ("selling at 850", "850 nett", "15 Pro - 850"); "selling 1999" style four-digit prices in a "<label> - <number>" line without "$" are read as years and dropped.
+
+Deferred: a live run with an API key (the resolver's prompt and the cost estimate are untested against the real API); capturing a real catalogue-post fixture (search card plus detail) for the tests; the web front end; using `is_multi_item` in ranking or the bot's filters.

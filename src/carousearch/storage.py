@@ -1,4 +1,5 @@
-"""SQLite persistence: listings already seen, cached listing details, saved searches, and the market tables.
+"""SQLite persistence: listings already seen, cached listing details, saved searches, the market tables, and
+the screening price cache.
 
 I/O module: every function takes an open connection, so tests can use a temporary database.
 Timestamps are stored as ISO 8601 strings in UTC, written and read only through `to_text` / `from_text`.
@@ -6,6 +7,9 @@ Timestamps are stored as ISO 8601 strings in UTC, written and read only through 
 The market tables (`listings`, `listing_changes`, `harvest_runs`, `harvest_run_listings`) hold one row
 per Carousell listing, overwritten in place, plus a log of content changes and of each harvest run
 (docs/ANALYSIS_AND_SCREENING_PLAN.md section 3.1).
+
+`price_resolution_cache` holds the price the screening resolver found for a listing and a search, so a listing
+is never resolved twice for the same search.
 """
 
 import sqlite3
@@ -17,6 +21,7 @@ from pathlib import Path
 from carousearch.filters.schema import Condition, Listing, ListingDetail, PostedOrBumpedKind, SearchRequest
 from carousearch.market.hashing import listing_content_hash
 from carousearch.market.limits import HarvestLimits
+from carousearch.screening.models import ResolvedPrice
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS seen_listings (
@@ -86,6 +91,13 @@ CREATE TABLE IF NOT EXISTS harvest_run_listings (
     listing_id TEXT NOT NULL,
     position   INTEGER NOT NULL,
     PRIMARY KEY (run_id, listing_id)
+);
+CREATE TABLE IF NOT EXISTS price_resolution_cache (
+    listing_id    TEXT NOT NULL,
+    query         TEXT NOT NULL,              -- normalised search keywords (screening.pipeline.normalise_query)
+    resolved_json TEXT NOT NULL,              -- screening.models.ResolvedPrice
+    resolved_at   TEXT NOT NULL,
+    PRIMARY KEY (listing_id, query)
 );
 """
 
@@ -232,6 +244,30 @@ def load_cached_listing_detail(
     if row is None or now - from_text(row[0]) > max_age:
         return None
     return ListingDetail.model_validate_json(row[1])
+
+
+# --- price_resolution_cache ------------------------------------------------
+
+
+def save_price_resolution(
+    connection: sqlite3.Connection, listing_id: str, query: str, resolved: ResolvedPrice, resolved_at: datetime
+) -> None:
+    """Store (or replace) the resolved price of one listing for one search."""
+    with connection:
+        connection.execute(
+            """
+            INSERT OR REPLACE INTO price_resolution_cache (listing_id, query, resolved_json, resolved_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (listing_id, query, resolved.model_dump_json(), to_text(resolved_at)),
+        )
+
+
+def load_price_resolution(connection: sqlite3.Connection, listing_id: str, query: str) -> ResolvedPrice | None:
+    row = connection.execute(
+        "SELECT resolved_json FROM price_resolution_cache WHERE listing_id = ? AND query = ?", (listing_id, query)
+    ).fetchone()
+    return ResolvedPrice.model_validate_json(row[0]) if row is not None else None
 
 
 # --- listings --------------------------------------------------------------

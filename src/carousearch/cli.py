@@ -2,10 +2,12 @@
 
 import argparse
 import asyncio
+import json
 import sys
 import time
 from collections.abc import Callable
 from contextlib import closing
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TextIO
@@ -34,17 +36,28 @@ from carousearch.config import (
     TELEGRAM_OWNER_ID_VARIABLE,
     TelegramSettings,
     default_data_dir,
+    load_screening_settings,
     load_telegram_settings,
 )
-from carousearch.filters.schema import MAX_PAGE_SIZE, Condition, DealMethod, SearchRequest, SortOrder
+from carousearch.filters.schema import MAX_PAGE_SIZE, Condition, DealMethod, SearchRequest, SearchResult, SortOrder
 from carousearch.fixture_capture import capture_fixtures
 from carousearch.market.analysis import AnalysisSpec, analyse
 from carousearch.market.harvest import DEFAULT_REUSE_WINDOW, HarvestOutcome, harvest
 from carousearch.market.limits import HarvestLimits
 from carousearch.market.render import render_analysis_json, render_analysis_text
-from carousearch.text_render import render_listing_detail, render_listing_table, render_search_summary
+from carousearch.screening.models import ScreenedListing
+from carousearch.screening.pipeline import DEFAULT_MAX_DETAIL_FETCHES, ScreeningServices, screen_listings
+from carousearch.screening.price_resolver import NoopPriceResolver, PriceResolver, build_price_resolver
+from carousearch.screening.store import SqliteScreeningStore
+from carousearch.text_render import (
+    render_listing_detail,
+    render_listing_table,
+    render_screened_table,
+    render_search_summary,
+)
 
 ClientFactory = Callable[[RateLimiter], CarousellClient]
+PriceResolverFactory = Callable[[], PriceResolver]
 
 # Shorthands accepted by --condition in addition to the exact condition names.
 CONDITION_GROUPS: dict[str, list[Condition]] = {
@@ -57,13 +70,31 @@ EXIT_FAILURE = 1
 EXIT_USAGE_ERROR = 2
 
 
-def main(argv: list[str] | None = None, client_factory: ClientFactory = create_carousell_client) -> int:
+@dataclass(frozen=True)
+class ScreeningOptions:
+    hide_multi_item: bool = False
+    max_detail_fetches: int = DEFAULT_MAX_DETAIL_FETCHES
+
+
+def main(
+    argv: list[str] | None = None,
+    client_factory: ClientFactory = create_carousell_client,
+    price_resolver_factory: PriceResolverFactory | None = None,
+) -> int:
+    """`price_resolver_factory` defaults to the resolver ANTHROPIC_API_KEY selects (build_price_resolver)."""
     arguments = build_argument_parser().parse_args(argv)
     data_dir: Path = arguments.data_dir or default_data_dir()
     rate_limiter = RateLimiter(arguments.min_interval, arguments.jitter)
     try:
         if arguments.command == "search":
             request = search_request_from_arguments(arguments)
+            if arguments.screen or arguments.hide_multi_item:
+                options = screening_options_from_arguments(arguments)
+                resolver = (price_resolver_factory or default_price_resolver)()
+                with client_factory(rate_limiter) as client:
+                    return run_screened_search_command(
+                        client, request, resolver, options, arguments.json, data_dir, sys.stdout
+                    )
             with client_factory(rate_limiter) as client:
                 return run_search_command(client, request, arguments.json, data_dir, sys.stdout)
         if arguments.command == "listing":
@@ -112,6 +143,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
     search.add_argument("--limit", type=int, default=20, help=f"listings per page, 1 to {MAX_PAGE_SIZE}")
     search.add_argument("--page-cursor", help="next_page value from a previous --json result")
     search.add_argument("--json", action="store_true", help="print the result as JSON")
+    search.add_argument("--screen", action="store_true",
+                        help="flag multi-item posts and look for your variant's price in their descriptions")
+    search.add_argument("--hide-multi-item", action="store_true", help="leave out multi-item posts (implies --screen)")
+    search.add_argument("--max-detail-fetches", type=int, default=DEFAULT_MAX_DETAIL_FETCHES,
+                        help="with --screen: Carousell detail requests to make at most (default %(default)s)")
 
     listing = commands.add_parser("listing", help="show one listing's details")
     listing.add_argument("listing_id")
@@ -178,6 +214,12 @@ def search_request_from_arguments(arguments: argparse.Namespace) -> SearchReques
         page_size=getattr(arguments, "limit", MAX_PAGE_SIZE),
         page_cursor=getattr(arguments, "page_cursor", None),
     )
+
+
+def screening_options_from_arguments(arguments: argparse.Namespace) -> ScreeningOptions:
+    if arguments.max_detail_fetches < 0:
+        raise ValueError("--max-detail-fetches must be 0 or more")
+    return ScreeningOptions(hide_multi_item=arguments.hide_multi_item, max_detail_fetches=arguments.max_detail_fetches)
 
 
 def parse_condition_names(text: str) -> list[Condition]:
@@ -248,6 +290,74 @@ def run_search_command(
         print(render_listing_table(listings), file=output)
         print(render_search_summary(result, len(listings)), file=output)
     return EXIT_OK
+
+
+def run_screened_search_command(
+    client: CarousellClient,
+    request: SearchRequest,
+    resolver: PriceResolver,
+    options: ScreeningOptions,
+    as_json: bool,
+    data_dir: Path,
+    output: TextIO,
+) -> int:
+    result = client.search(request)
+    listings = result.listings[: request.page_size]
+    with closing(storage.open_database(data_dir / DATABASE_FILE_NAME)) as connection:
+        services = ScreeningServices(
+            client=client,
+            store=SqliteScreeningStore(connection),
+            resolver=resolver,
+            clock=_now,
+            max_detail_fetches=options.max_detail_fetches,
+        )
+        screened = screen_listings(listings, request, services)
+        shown = [item for item in screened if not (options.hide_multi_item and item.is_multi_item)]
+        storage.record_seen_listings(connection, [item.listing for item in shown], _now())
+    if as_json:
+        print(render_screened_json(result, shown), file=output)
+    else:
+        print(render_screened_table(shown), file=output)
+        print(render_search_summary(result, len(shown)), file=output)
+        resolution_on = not isinstance(resolver, NoopPriceResolver)
+        print(describe_screening(screened, len(screened) - len(shown), resolution_on, options), file=output)
+    return EXIT_OK
+
+
+def render_screened_json(result: SearchResult, screened: list[ScreenedListing]) -> str:
+    """Like `search --json`, with each listing as a ScreenedListing (raw Carousell objects left out)."""
+    payload = {
+        "screened_listings": [
+            item.model_dump(mode="json", exclude={"listing": {"raw"}, "detail": {"raw"}}) for item in screened
+        ],
+        "total": result.total,
+        "total_display": result.total_display,
+        "next_page": result.next_page,
+    }
+    return json.dumps(payload, indent=2, ensure_ascii=False)
+
+
+def describe_screening(
+    screened: list[ScreenedListing], hidden_count: int, resolution_on: bool, options: ScreeningOptions
+) -> str:
+    """One line, e.g. 'Screening: 6 of 20 multi-item (6 hidden); 8 descriptions checked (detail budget 10); ...'."""
+    multi_item_count = sum(item.is_multi_item for item in screened)
+    checked_count = sum(item.detail is not None for item in screened)
+    hidden = f" ({hidden_count} hidden)" if hidden_count else ""
+    descriptions = "description" if checked_count == 1 else "descriptions"
+    resolution = (
+        "your variant's price read from the description by Claude"
+        if resolution_on
+        else "price resolution off (ANTHROPIC_API_KEY not set), so YOUR PRICE is the listed price"
+    )
+    return (
+        f"Screening: {multi_item_count} of {len(screened)} multi-item{hidden}; {checked_count} {descriptions} checked "
+        f"(detail budget {options.max_detail_fetches}); {resolution}."
+    )
+
+
+def default_price_resolver() -> PriceResolver:
+    return build_price_resolver(load_screening_settings())
 
 
 def run_listing_command(client: CarousellClient, listing_id: str, as_json: bool, data_dir: Path, output: TextIO) -> int:

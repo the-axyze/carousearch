@@ -175,7 +175,8 @@ def render_session_status(position: str, request: SearchRequest | None) -> str:
 # --- results, details and saved searches ------------------------------------------------
 
 
-def render_listing_caption(listing: Listing, already_seen: bool) -> str:
+def render_listing_caption(listing: Listing, already_seen: bool, screening_note: str | None = None) -> str:
+    """`screening_note` (a ScreenedListing.summary_line) goes on the last line, for multi-item posts."""
     likes = "1 like" if listing.like_count == 1 else f"{listing.like_count} likes"
     headline = f"{listing.price_display} · {listing.condition_label or 'condition unknown'} · {likes}"
     lines = [
@@ -184,6 +185,8 @@ def render_listing_caption(listing: Listing, already_seen: bool) -> str:
         f"Seller: {listing.seller_username or 'unknown'}",
         listing.listing_url,
     ]
+    if screening_note:
+        lines.append(screening_note)
     return truncate("\n".join(lines), MAX_CAPTION_LENGTH)
 
 

@@ -3,11 +3,16 @@
 from datetime import datetime, timedelta, timezone
 
 from carousearch.filters.schema import Listing, ListingDetail, SearchResult, SellerVerification
+from carousearch.screening.models import PriceSource, ResolvedPrice, ScreenedListing, format_sgd
 
 SINGAPORE_TIME = timezone(timedelta(hours=8), "SGT")
 
 # (header, width) for each table column; width 0 means "no limit" (the URL is never cut).
 _TABLE_COLUMNS = [("ID", 10), ("PRICE", 9), ("CONDITION", 12), ("LIKES", 5), ("TITLE", 44), ("SELLER", 18), ("URL", 0)]
+_SCREENED_TABLE_COLUMNS = [
+    ("ID", 10), ("PRICE", 9), ("YOUR PRICE", 12), ("FLAGS", 34), ("CONDITION", 12), ("LIKES", 5), ("TITLE", 40),
+    ("SELLER", 18), ("URL", 0),
+]
 
 
 def render_listing_table(listings: list[Listing]) -> str:
@@ -24,7 +29,37 @@ def render_listing_table(listings: list[Listing]) -> str:
                 listing.listing_url,
             ]
         )
-    return "\n".join(_format_row(row) for row in rows)
+    return "\n".join(_format_row(row, _TABLE_COLUMNS) for row in rows)
+
+
+def render_screened_table(screened: list[ScreenedListing]) -> str:
+    """The search table with the screening columns: YOUR PRICE and FLAGS (tag labels)."""
+    rows = [[header for header, _ in _SCREENED_TABLE_COLUMNS]]
+    for item in screened:
+        listing = item.listing
+        rows.append(
+            [
+                listing.id,
+                listing.price_display,
+                describe_resolved_price(item.resolved_price, listing.price_display),
+                ", ".join(tag.label for tag in item.tags) or "-",
+                listing.condition_label or "-",
+                str(listing.like_count),
+                listing.title,
+                listing.seller_username or "-",
+                listing.listing_url,
+            ]
+        )
+    return "\n".join(_format_row(row, _SCREENED_TABLE_COLUMNS) for row in rows)
+
+
+def describe_resolved_price(resolved: ResolvedPrice, price_display: str) -> str:
+    """The YOUR PRICE cell: the listed price, a description price ("S$850 (desc)"), or "not stated"."""
+    if resolved.source == PriceSource.DESCRIPTION and resolved.amount is not None:
+        return f"{format_sgd(resolved.amount)} (desc)"
+    if resolved.source == PriceSource.NOT_STATED:
+        return "not stated"
+    return price_display
 
 
 def render_search_summary(result: SearchResult, shown_count: int) -> str:
@@ -67,9 +102,9 @@ def format_date(moment: datetime | None) -> str:
     return moment.astimezone(SINGAPORE_TIME).strftime("%Y-%m-%d") if moment else "-"
 
 
-def _format_row(cells: list[str]) -> str:
+def _format_row(cells: list[str], columns: list[tuple[str, int]]) -> str:
     formatted = []
-    for cell, (_, width) in zip(cells, _TABLE_COLUMNS, strict=True):
+    for cell, (_, width) in zip(cells, columns, strict=True):
         formatted.append(_fit(cell, width) if width else cell)
     return "  ".join(formatted)
 

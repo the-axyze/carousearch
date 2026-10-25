@@ -1,6 +1,6 @@
 # carousearch
 
-Carousearch is a planned personal Telegram bot for searching [Carousell Singapore](https://www.carousell.sg) in plain English. A cheap LLM turns a prompt like "lightly used Aeron chair under $600, meet-up near Tampines, newest first" into Carousell's own search filters (Level 1). It then fills the search keywords and category-specific fields such as phone model, storage or shoe size (Level 2). Finally it screens the listings it finds: plain rules for seller rating, account age, price outliers and keyword blocklists, plus a vision model for subjective calls like low-effort photos or reseller-template descriptions (Level 3). It ranks results and shows them in Telegram with editable filter buttons. **Phase 1 is built** (2026-10-24): a tested Python client and command line for structured Carousell searches, listing details and a breakage canary. **Phase 2 task 1** adds a single-user Telegram bot that builds a search one question at a time with buttons (see [Running the Telegram bot](#running-the-telegram-bot)). There is no LLM yet.
+Carousearch is a planned personal Telegram bot for searching [Carousell Singapore](https://www.carousell.sg) in plain English. A cheap LLM turns a prompt like "lightly used Aeron chair under $600, meet-up near Tampines, newest first" into Carousell's own search filters (Level 1). It then fills the search keywords and category-specific fields such as phone model, storage or shoe size (Level 2). Finally it screens the listings it finds: plain rules for seller rating, account age, price outliers and keyword blocklists, plus a vision model for subjective calls like low-effort photos or reseller-template descriptions (Level 3). It ranks results and shows them in Telegram with editable filter buttons. **Phase 1 is built** (2026-10-24): a tested Python client and command line for structured Carousell searches, listing details and a breakage canary. **Phase 2 task 1** adds a single-user Telegram bot that builds a search one question at a time with buttons (see [Running the Telegram bot](#running-the-telegram-bot)). **Phase 3a** adds [screening](#screening) for multi-item "catalogue" posts, with optional Claude Haiku price lookup; prompt-to-filters has no LLM yet.
 
 - [docs/FEASIBILITY.md](docs/FEASIBILITY.md): full feasibility study: verdict, recommended stack, costs, risks, architecture
 - [docs/CAROUSELL_ACCESS_NOTES.md](docs/CAROUSELL_ACCESS_NOTES.md): raw technical findings on Carousell's endpoints, filters, response shapes and anti-bot behaviour
@@ -23,7 +23,12 @@ src/carousearch/
   market/harvest.py      walks a search's pages into `listings` and records the run; reuses a recent identical run
   market/analysis.py     AnalysisSpec and the price statistics (pure)
   market/render.py       analysis result as text / JSON (pure)
-  config.py              data folder and the Telegram settings (environment or .env)
+  screening/models.py    Tag, ResolvedPrice, ScreenedListing (the contract for --json and the web front end)
+  screening/rules.py     title, description and price rules, and dollar-amount extraction (pure)
+  screening/price_resolver.py  PriceResolver: Claude (Anthropic API) or Noop; prompt and parsing are pure
+  screening/store.py     detail and resolved-price caches behind a small interface (SQLite)
+  screening/pipeline.py  screen_listings: rules, budgeted detail fetches, price resolution (I/O injected)
+  config.py              data folder, the Telegram settings and the optional ANTHROPIC_API_KEY (environment or .env)
   bot/state.py           SearchSession, the wizard stages and their transitions, button actions and
                          their callback_data encoding (pure)
   bot/price_input.py     typed price ranges ("150-400", "<250", ">1000") to and from text (pure)
@@ -46,13 +51,14 @@ Python 3.12 or newer.
 cd ~/carousearch
 python3 -m venv .venv            # Debian/Ubuntu needs the python3.X-venv apt package for this
 .venv/bin/pip install -e ".[dev]"
+.venv/bin/pip install -e ".[llm]"   # optional: the anthropic SDK, for screening's price lookup
 ```
 
 If `python3 -m venv` fails with "ensurepip is not available" (the case on this machine), create the venv with [uv](https://docs.astral.sh/uv/) instead:
 
 ```bash
 uv venv --python 3.14 .venv
-uv pip install --python .venv/bin/python pip -e ".[dev]"
+uv pip install --python .venv/bin/python pip -e ".[dev,llm]"   # llm is optional
 ```
 
 Runtime data goes to `~/carousearch/data/` (`carousearch.db`, `canary.log`). Override with `--data-dir` or the `CAROUSEARCH_DATA_DIR` environment variable.
@@ -87,6 +93,9 @@ Options:
 | `--limit` | page size, 1 to 48 (default 20) |
 | `--json` | print `{listings, total, total_display, next_page}` as JSON |
 | `--page-cursor` | the `next_page` value from a previous `--json` run, to fetch the next page |
+| `--screen` | tag multi-item posts and add the YOUR PRICE and FLAGS columns ([Screening](#screening)) |
+| `--hide-multi-item` | leave multi-item posts out (implies `--screen`) |
+| `--max-detail-fetches` | with `--screen`: Carousell detail requests to make at most (default 10) |
 
 Example with a category facet:
 
@@ -95,6 +104,43 @@ carousearch search "iphone 15 pro" --category 5707 --field mobile_storage=MOBILE
 ```
 
 Listings shown are recorded in the `seen_listings` table.
+
+## Screening
+
+Carousell "catalogue" posts advertise many variants in one listing ("iPhone 15 / 15 Pro / 15 Pro Max all storage") and show one price, usually the cheapest variant's. `carousearch search ... --screen` tags such posts and, where the description has a price list, looks up the price of the variant you searched for.
+
+```
+$ carousearch search "iphone 15 pro 256gb" --price-max 1200 --limit 20 --screen
+ID          PRICE      YOUR PRICE    FLAGS                               CONDITION     LIKES  TITLE ...
+1470223613  S$610      S$610         -                                   Lightly used  6      iPhone 15 Pro Blue Titanium 256GB
+1470142763  S$8.88     S$8.88        Below market                        Lightly used  1      iPhone 15 Pro 256GB Black Titanium
+...
+Screening: 0 of 20 multi-item; 1 description checked (detail budget 10); price resolution off (ANTHROPIC_API_KEY not set), so YOUR PRICE is the listed price.
+```
+
+Tags (`code`, label, severity). Each tag also carries a one-sentence `reason` with the evidence, e.g. "title names 3 variants: iPhone 15, 15 Pro, 15 Pro Max; says 'all storage'":
+
+| Code | Label | Severity | When |
+|---|---|---|---|
+| `MULTI_ITEM_TITLE` | Multi-item title | warn | the title names 2+ distinct models ("15 / 15 Pro"), 2+ storage sizes ("128GB/256GB"), or says "all models", "all storage", "many sets", "from $..." |
+| `PRICE_LIST_IN_DESCRIPTION` | Price list | warn | the description offers 3+ distinct prices, or has 2+ lines like "15 Pro 256GB - $850" |
+| `LISTED_PRICE_IS_FLOOR` | Floor price | warn | the listed price is the lowest of 2+ prices in the description, or the description says "from $..." |
+| `PRICE_BELOW_MARKET` | Below market | info | the price is under 60% of the median of the other results on the page (needs 5+ others) |
+| `PRICE_NOT_FOR_YOUR_ITEM` | Price not for your item | warn | the price lookup read the description and found no price for your variant |
+
+A listing with any warn tag is multi-item (`is_multi_item`). Reference prices ("bought at $1,299", "retail $1,599") are not counted as offered prices; storage sizes, percentages, durations, years and Singapore phone numbers are never read as prices.
+
+How it runs, per page of results:
+
+1. The title rule and the below-market rule run on every listing; they need no requests.
+2. Listings tagged in step 1 get their listing detail, through the 12-hour detail cache, for at most `--max-detail-fetches` (default 10) Carousell requests per search, so a page of 20 to 48 results never costs more than 10 extra requests. Then the description rules run.
+3. Listings that are multi-item after step 2 go to the price resolver, through `price_resolution_cache` (keyed by listing id and search keywords, so a listing is never looked up twice for the same search).
+
+**Price lookup (optional).** Put an Anthropic API key in `.env` (`ANTHROPIC_API_KEY=...`, see `.env.example`) and install the `llm` extra. Screening then asks Claude Haiku 5.5 (`claude-haiku-5-5`, structured JSON output, thinking off, `max_tokens` 256) for the price the description states for exactly your search; it answers `not_stated` rather than guess, which adds the "Price not for your item" tag. Descriptions are cut to 1,500 characters. Without a key, multi-item posts keep their listed price and the summary line says so.
+
+Cost estimate per looked-up listing (from character counts; no call has been made yet): about 750 input tokens for a typical description and up to about 1,300 for a 1,500-character one (system prompt and schema about 500, the listing up to about 550, plus the structured-output overhead), and 30 to 80 output tokens. At US$0.10 per million input and US$0.50 per million output tokens that is US$0.0001 to US$0.0002 per listing, so US$1 covers roughly 5,000 to 10,000 lookups. Only multi-item listings with a fetched description are looked up, and cached answers are free.
+
+`--json` prints `{screened_listings, total, total_display, next_page}`; each item has `listing`, `detail` (when the description was checked), `tags`, `resolved_price` (`amount`, `source`: `listed` / `description` / `not_stated`, `note`) and `is_multi_item`. In Telegram, result cards of multi-item posts get the one-line summary from the title rule only (no extra requests), e.g. "Multi-item · listed S$579 · may not be your variant's price".
 
 ### listing
 

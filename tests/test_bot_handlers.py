@@ -1,6 +1,7 @@
 """Handler tests with a fake Telegram bot, a fake clock and the fixture-backed FakeCarousell. No network."""
 
 import asyncio
+import copy
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -23,6 +24,7 @@ from carousearch.config import TelegramSettings
 from carousearch.filters.schema import Condition, SearchRequest
 
 from fake_carousell import FakeCarousell
+from fixture_files import load_json_fixture
 
 OWNER_ID = 1001
 STRANGER_ID = 2002
@@ -540,6 +542,29 @@ def test_end_on_the_results_finishes_the_session(services: BotServices) -> None:
 
     assert current_session(services) is None
     assert bot.calls_to("edit_message_text")[-1]["text"] == messages.SESSION_ENDED_TEXT
+
+
+def test_a_multi_item_card_gets_the_screening_line(tmp_path: Path, clock: FakeClock) -> None:
+    response_json = copy.deepcopy(load_json_fixture("search_price_condition.json"))
+    first_card = next(item["listingCard"] for item in response_json["data"]["results"] if "listingCard" in item)
+    first_card["title"] = "iPhone 15 / 15 Pro / 15 Pro Max all storage"
+    carousell = FakeCarousell(api_responses=[httpx.Response(200, json=response_json)])
+    services = BotServices(
+        carousell_client=carousell.client(),
+        database=storage.open_database(tmp_path / "bot.db"),
+        session_store=SessionStore(clock),
+        owner_user_id=OWNER_ID,
+        clock=clock,
+    )
+    bot = FakeBot()
+    start_at_summary(bot, services)
+
+    tap(bot, services, "go:")
+
+    cards = bot.calls_to("send_photo")
+    assert cards[0]["caption"].endswith("\nMulti-item · listed S$579 · may not be your variant's price")
+    assert all("Multi-item" not in card["caption"] for card in cards[1:])
+    assert [request for request in carousell.api_requests if "listing-detail" in request.url.path] == []
 
 
 def test_photo_rejected_by_telegram_falls_back_to_text(services: BotServices) -> None:

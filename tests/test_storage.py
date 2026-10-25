@@ -6,6 +6,7 @@ import pytest
 from carousearch import storage
 from carousearch.carousell.parse import parse_listing_detail_response, parse_search_response
 from carousearch.filters.schema import Condition, SearchRequest
+from carousearch.screening.models import PriceSource, ResolvedPrice
 
 from fixture_files import load_json_fixture
 
@@ -84,3 +85,27 @@ def test_saved_searches(connection) -> None:
 def test_naive_timestamps_are_rejected(connection) -> None:
     with pytest.raises(ValueError, match="timezone-aware"):
         storage.record_seen_listings(connection, sample_listings()[:1], datetime(2026, 10, 24, 12, 0))
+
+
+def test_price_resolution_cache_is_keyed_by_listing_and_query(connection) -> None:
+    from_description = ResolvedPrice(amount=850, source=PriceSource.DESCRIPTION, note="15 Pro 256GB - $850")
+    not_stated = ResolvedPrice(amount=None, source=PriceSource.NOT_STATED, note="only 128GB is priced")
+
+    storage.save_price_resolution(connection, "1469923094", "iphone 15 pro 256gb", from_description, NOON)
+    storage.save_price_resolution(connection, "1469923094", "iphone 15 pro max", not_stated, NOON)
+
+    assert storage.load_price_resolution(connection, "1469923094", "iphone 15 pro 256gb") == from_description
+    assert storage.load_price_resolution(connection, "1469923094", "iphone 15 pro max") == not_stated
+    assert storage.load_price_resolution(connection, "1469923094", "iphone 15") is None
+    assert storage.load_price_resolution(connection, "1", "iphone 15 pro 256gb") is None
+
+
+def test_price_resolution_cache_replaces_an_entry(connection) -> None:
+    first = ResolvedPrice(amount=850, source=PriceSource.DESCRIPTION)
+    second = ResolvedPrice(amount=None, source=PriceSource.NOT_STATED, note="price removed")
+
+    storage.save_price_resolution(connection, "1469923094", "iphone 15 pro", first, NOON)
+    storage.save_price_resolution(connection, "1469923094", "iphone 15 pro", second, NOON + timedelta(hours=1))
+
+    assert storage.load_price_resolution(connection, "1469923094", "iphone 15 pro") == second
+    assert connection.execute("SELECT COUNT(*) FROM price_resolution_cache").fetchone() == (1,)
