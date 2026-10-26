@@ -8,6 +8,10 @@ Carousearch is a planned personal Telegram bot for searching [Carousell Singapor
 - [docs/MCP.md](docs/MCP.md): the MCP server for agent hosts: its tools, registering it with Claude Code, Codex CLI, the Claude desktop app and ChatGPT, example prompts and the request budget
 - [docs/ANALYSIS_AND_SCREENING_PLAN.md](docs/ANALYSIS_AND_SCREENING_PLAN.md): implementation spec for market analysis (fresh pulls, upsert-by-content-hash storage, plan → scrape → compute → summarise), read-only SQL questions, and the staged screening pipeline with auditable vision verdicts; supersedes the roadmap's Level 3
 
+## For contributors and future sessions
+
+Read [CLAUDE.md](CLAUDE.md) first: setup, checks, code and git rules, and the hard constraints. [docs/NEXT_STEPS.md](docs/NEXT_STEPS.md) is the live plan: current state, what has been verified live, remaining phases, open questions and how to brief and review work.
+
 ## Layout
 
 ```

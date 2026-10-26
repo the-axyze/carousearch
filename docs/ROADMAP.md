@@ -1,5 +1,7 @@
 # Carousearch roadmap
 
+> 2026-10-26: [NEXT_STEPS.md](NEXT_STEPS.md) is now the live plan. This file keeps the original milestones and the dated status history.
+
 Written 2026-10-23. Effort is in solo-developer days. Each milestone ends with something you can use in Telegram. Background and evidence: [FEASIBILITY.md](FEASIBILITY.md), [CAROUSELL_ACCESS_NOTES.md](CAROUSELL_ACCESS_NOTES.md).
 
 Rules for every milestone:
