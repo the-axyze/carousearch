@@ -1,0 +1,34 @@
+<article class="card ask-card">
+  <div class="thumb">
+    {%- if card.thumbnail_url %}
+    <img src="{{ card.thumbnail_url }}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">
+    {%- endif %}
+    {%- if card.warning %}
+    <div class="badges"><span class="badge badge-amber" tabindex="0" title="{{ card.warning }}">Unverified<span class="visually-hidden">: {{ card.warning }}</span></span></div>
+    {%- endif %}
+  </div>
+  <div class="listing-text">
+    <h2 class="listing-title">
+      {%- if card.url %}<a class="listing-link" href="{{ card.url }}" target="_blank" rel="noopener noreferrer">{{ card.title }}</a>
+      {%- else %}{{ card.title }}{% endif -%}
+    </h2>
+    {%- if card.price %}
+    <p class="price-row price-listed"><span class="price">{{ card.price }}</span></p>
+    {%- endif %}
+    <p class="ask-reason">{{ card.reason }}</p>
+    {%- if card.warning %}
+    <p class="ask-warning">{{ card.warning }}</p>
+    {%- endif %}
+    <div class="listing-footer">
+      <span class="meta">{{ card.meta }}</span>
+      {%- if card.details_available %}
+      <button type="button" class="details-toggle" data-detail-toggle hx-get="/listing/{{ card.listing_id }}"
+              hx-target="#ask-detail-{{ card.listing_id }}" aria-controls="ask-detail-{{ card.listing_id }}"
+              aria-expanded="false">Details</button>
+      {%- endif %}
+    </div>
+  </div>
+</article>
+{%- if card.details_available %}
+<section id="ask-detail-{{ card.listing_id }}" class="detail" aria-label="Details of {{ card.title }}"></section>
+{%- endif %}

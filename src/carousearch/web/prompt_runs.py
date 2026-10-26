@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 MAX_KEPT_RUNS = 10
+SHUTDOWN_GRACE_SECONDS = 5.0
 AGENT_FAILED_MESSAGE = ErrorMessage("The agent run failed. The terminal running carousearch web has the details.")
 STOPPED_MESSAGE = ErrorMessage("The run was stopped because carousearch web shut down.")
 
@@ -133,12 +134,14 @@ class PromptRunRegistry:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
-    async def stop(self) -> None:
-        """Cancel the run in flight, if any, and wait for it (the app is shutting down)."""
+    async def stop(self, grace_seconds: float = SHUTDOWN_GRACE_SECONDS) -> None:
+        """Cancel the run in flight, if any, and give it a moment to end (the app is shutting down). A tool call
+        in a worker thread cannot be interrupted, so this waits at most `grace_seconds` for it."""
         tasks = list(self._tasks)
         for task in tasks:
             task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        if tasks:
+            await asyncio.wait(tasks, timeout=grace_seconds)
 
 
 def new_run_id() -> str:
@@ -160,11 +163,13 @@ async def execute_prompt_run(run: PromptRun, services: "WebServices") -> None:
     """Run the agent once over the web app's own client and detail cache, holding the turn throughout. Every
     outcome ends the run: done with the answer, or failed with a calm message (the details go to the log)."""
     # Imported here: Pydantic AI and the MCP SDK cost about a second to import (see the module docstring).
+    import pydantic_ai
     from pydantic_ai.exceptions import AgentRunError, UserError
 
     from carousearch.agent.run_prompt import run_prompt
     from carousearch.mcp_server import McpServices
 
+    pydantic_ai.BANNER_ENABLED = False  # the terminal running carousearch web is its log, as for `carousearch ask`
     clock = services.screening.clock
     try:
         async with services.turn:

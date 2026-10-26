@@ -1,0 +1,13 @@
+{#- A run in flight. It asks for itself again every second and is replaced by the next state, so polling stops
+    once the answer (which has no polling attributes) arrives. -#}
+<div id="ask-progress" class="ask-progress" hx-get="{{ progress.poll_url }}" hx-trigger="every 1s" hx-swap="outerHTML"
+     hx-target="this" data-run-id="{{ progress.run_id }}">
+  <p class="ask-prompt">{{ progress.prompt }}</p>
+  <p class="ask-status"><span class="ask-spinner" aria-hidden="true"></span>{{ progress.status_line }}</p>
+  <p class="ask-budget">{{ progress.budget_line }}</p>
+  {%- if progress.trace %}
+  <ol class="trace">
+    {%- for row in progress.trace %}{% include "partials/ask_trace_row.html" %}{% endfor %}
+  </ol>
+  {%- endif %}
+</div>

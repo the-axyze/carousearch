@@ -1,0 +1,5 @@
+<li class="trace-row trace-{{ row.status_class }}">
+  <span class="trace-status">{{ row.status }}</span>
+  <span class="trace-call"><code>{{ row.tool_name }}</code>{% if row.arguments %} <span class="trace-arguments">{{ row.arguments }}</span>{% endif %}</span>
+  <span class="trace-duration">{{ row.duration }}</span>
+</li>

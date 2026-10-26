@@ -24,6 +24,7 @@ MAX_PROMPT_LENGTH = 2000
 EMPTY_PROMPT_MESSAGE = ErrorMessage("Type what you are looking for, then press Run.")
 RUN_IN_PROGRESS_MESSAGE = ErrorMessage("An Ask run is already in progress. Wait for it to finish, then run again.")
 UNKNOWN_RUN_MESSAGE = ErrorMessage("That Ask run is no longer here (the web app keeps the last 10 until it restarts).")
+NOT_FROM_THE_PAGE_MESSAGE = ErrorMessage("Start Ask runs from the carousearch page itself.")
 UNSEEN_LISTING_WARNING = "Not in any search result: the title, price and link are the model's, not Carousell's."
 
 
@@ -266,6 +267,32 @@ def failed_view(run: PromptRun, error: ErrorMessage, budget: AgentBudget) -> Fai
         budget_line=budget_used_line(latest_budget(run), budget),
         trace=progress_trace_rows(trace_lines(run.events)),
     )
+
+
+# --- a filter search waiting for an Ask run ---------------------------------------------------------------------
+
+
+WAITING_RESULTS_ELEMENT_ID = "ask-waiting-results"  # sent back as HX-Trigger when the results partial asks again
+
+
+@dataclass(frozen=True)
+class WaitingView:
+    """Shown instead of a search or a listing's details while an Ask run holds the Carousell client; it asks
+    again every 2 s and is replaced by the answer once the run has ended."""
+
+    url: str  # the same request again
+    text: str
+    element_id: str | None  # the results region's waiting partial has an id; a detail panel's has none
+
+
+SEARCH_WAITING_TEXT = "An Ask run is in progress; your search will run when it finishes."
+DETAIL_WAITING_TEXT = "An Ask run is in progress; these details will load when it finishes."
+
+
+def waiting_view(url: str, for_detail: bool = False) -> WaitingView:
+    if for_detail:
+        return WaitingView(url=url, text=DETAIL_WAITING_TEXT, element_id=None)
+    return WaitingView(url=url, text=SEARCH_WAITING_TEXT, element_id=WAITING_RESULTS_ELEMENT_ID)
 
 
 # --- formatting ---------------------------------------------------------------------------------------------------

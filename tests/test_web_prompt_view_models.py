@@ -26,6 +26,7 @@ from carousearch.web.prompt_view_models import (
     progress_view,
     prompt_problem,
     trace_row,
+    waiting_view,
 )
 from carousearch.web.view_models import ErrorMessage, meta_line
 
@@ -237,3 +238,11 @@ def test_a_failed_view_keeps_the_calls_made_before_the_failure() -> None:
     assert (view.prompt, view.error) == ("Find a used iPhone 15", error)
     assert [row.status for row in view.trace] == ["ok"]
     assert view.budget_line.startswith("calls 1 of 40")
+
+
+def test_the_waiting_view_asks_for_the_same_url_and_says_what_it_waits_for() -> None:
+    search = waiting_view("/results?q=bike")
+    detail = waiting_view("/listing/123", for_detail=True)
+    assert (search.url, search.text) == ("/results?q=bike", "An Ask run is in progress; your search will run when it finishes.")
+    assert detail.url == "/listing/123" and "details will load" in detail.text
+    assert (search.element_id, detail.element_id) == ("ask-waiting-results", None)

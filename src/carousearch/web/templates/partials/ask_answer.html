@@ -1,0 +1,51 @@
+{#- A finished run: notes, the kept cards, then the dropped listings and the tool calls, collapsed. No polling. -#}
+<div class="ask-answer">
+  <p class="ask-prompt">{{ answer.prompt }}</p>
+  <p class="results-summary">{{ answer.summary }} · {{ answer.budget_line }}</p>
+
+  {%- if answer.notes %}
+  <div class="ask-notes">
+    <h2 class="ask-heading">Notes</h2>
+    <ul>
+      {%- for line in answer.notes %}<li>{{ line }}</li>{% endfor %}
+    </ul>
+  </div>
+  {%- endif %}
+
+  {%- if answer.kept %}
+  <div class="grid ask-grid">
+    {%- for card in answer.kept %}{% include "partials/ask_card.html" %}{% endfor -%}
+  </div>
+  {%- else %}
+  <p class="notice ask-none">The agent kept no listings.</p>
+  {%- endif %}
+
+  <details class="ask-section">
+    <summary>Dropped ({{ answer.dropped | length }})</summary>
+    {%- if answer.dropped %}
+    <ul class="dropped">
+      {%- for row in answer.dropped %}
+      <li class="dropped-row">
+        {%- if row.url %}<a href="{{ row.url }}" target="_blank" rel="noopener noreferrer">{{ row.title }}</a>
+        {%- else %}<span>{{ row.title }}</span>{% endif %}
+        {%- if row.price %} <span class="dropped-price">{{ row.price }}</span>{% endif %}
+        <span class="dropped-reason">{{ row.reason }}</span>
+      </li>
+      {%- endfor %}
+    </ul>
+    {%- else %}
+    <p class="muted">Nothing was dropped.</p>
+    {%- endif %}
+  </details>
+
+  <details class="ask-section">
+    <summary>Tool calls ({{ answer.trace | length }})</summary>
+    {%- if answer.trace %}
+    <ol class="trace">
+      {%- for row in answer.trace %}{% include "partials/ask_trace_row.html" %}{% endfor %}
+    </ol>
+    {%- else %}
+    <p class="muted">No tools were called.</p>
+    {%- endif %}
+  </details>
+</div>

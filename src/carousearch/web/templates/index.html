@@ -3,13 +3,22 @@
 <div class="page">
   <header class="site-header"><h1 class="brand"><a href="/">Carousearch</a></h1></header>
 
+  {#- Two radios styled as tabs; CSS shows the checked mode's section, so switching keeps both forms as typed. #}
+  <div class="mode-switch" role="radiogroup" aria-label="Mode">
+    <label class="mode-tab"><input id="mode-filters" type="radio" name="mode" value="filters"
+           {%- if mode != "ask" %} checked{% endif %}>Filters</label>
+    <label class="mode-tab"><input id="mode-ask" type="radio" name="mode" value="ask"
+           {%- if mode == "ask" %} checked{% endif %}>Ask</label>
+  </div>
+
+  <div class="filters-mode">
   <form id="search-form" class="search" action="/" method="get" role="search"
         hx-get="/results" hx-target="#results" hx-indicator="#loading-bar, #results" hx-sync="this:replace"
         hx-trigger="submit, change from:.js-instant, input changed delay:600ms from:.js-debounced">
     <div class="search-bar">
       <input id="query" class="search-input js-debounced" type="search" name="q" value="{{ form.query }}"
              placeholder="What are you looking for?" aria-label="Search Carousell" autocomplete="off"
-             {%- if not form.query %} autofocus{% endif %}>
+             {%- if not form.query and mode != "ask" %} autofocus{% endif %}>
       <button class="search-button" type="submit">Search</button>
     </div>
     <div id="loading-bar" class="loading-bar" aria-hidden="true"></div>
@@ -59,7 +68,36 @@
   </form>
 
   <main id="results" class="results" aria-live="polite">
+    {%- if waiting %}
+    {% include "partials/ask_waiting.html" %}
+    {%- else %}
     {% include "partials/results.html" %}
+    {%- endif %}
   </main>
+  </div>
+
+  <div class="ask-mode">
+  <form id="ask-form" class="ask" hx-post="/ask" hx-target="#ask-run" hx-swap="innerHTML" hx-disabled-elt="#ask-run-button">
+    <textarea id="prompt" class="ask-input" name="prompt" rows="3" maxlength="{{ ask.max_prompt_length }}"
+              placeholder="A used iPhone 15 under S$700, one phone per post, from a well-rated seller…"
+              aria-label="What should the agent look for?" aria-describedby="ask-model"
+              {%- if mode == "ask" %} autofocus{% endif %}></textarea>
+    <div class="ask-bar">
+      <p id="ask-model" class="ask-model">{{ ask.model_line }} · {{ ask.budget_line }}</p>
+      <button id="ask-run-button" class="search-button" type="submit"{% if ask.run_disabled %} disabled{% endif %}>Run</button>
+    </div>
+    {%- if ask.missing_key %}
+    {% with error = ask.missing_key %}{% include "partials/error.html" %}{% endwith %}
+    {%- endif %}
+  </form>
+
+  <section id="ask-run" class="ask-run" aria-live="polite" aria-label="Ask run">
+    {%- if progress %}
+    {% include "partials/ask_progress.html" %}
+    {%- else %}
+    <p class="notice">Describe what you want in plain English. Nothing runs until you press Run{% if not ask.run_disabled %} (or <kbd>Ctrl</kbd> + <kbd>Enter</kbd>){% endif %}.</p>
+    {%- endif %}
+  </section>
+  </div>
 </div>
 {% endblock %}

@@ -1,12 +1,37 @@
-// Requests, debouncing and swaps are HTMX attributes in the templates. This file adds the "/" and Esc keys,
-// the Details toggle and Close button, and the form state that HTMX's history snapshots need.
+// Requests, debouncing and swaps are HTMX attributes in the templates. This file adds the "/", Esc and Ctrl+Enter
+// keys, the Filters | Ask switch's address, Ask's refusal messages, the Details toggle and Close button, and the
+// form state that HTMX's history snapshots need.
 (() => {
+  const askMode = () => document.getElementById("mode-ask")?.checked;
   document.addEventListener("keydown", (event) => {
     const inField = event.target.closest("input, select, textarea");
     if (event.key === "/" && !inField) {
       event.preventDefault();
-      document.getElementById("query").focus();
+      document.getElementById(askMode() ? "prompt" : "query").focus();
+    } else if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && event.target.id === "prompt") {
+      event.preventDefault();
+      if (!document.getElementById("ask-run-button").disabled) document.getElementById("ask-form").requestSubmit();
     } else if (event.key === "Escape" && inField) event.target.blur();
+  });
+
+  // The switch only shows one section or the other (CSS). The address follows it, so a reload keeps the mode;
+  // the Filters address (with its search) comes back when switching back.
+  let filtersAddress = askMode() ? "/" : location.pathname + location.search;
+  document.addEventListener("change", (event) => {
+    if (event.target.name !== "mode" || !event.target.closest(".mode-switch")) return;
+    for (const radio of document.querySelectorAll(".mode-switch input")) radio.toggleAttribute("checked", radio.checked);
+    if (askMode()) filtersAddress = location.pathname + location.search;
+    history.replaceState(history.state, "", askMode() ? "/?mode=ask" : filtersAddress);
+    document.getElementById(askMode() ? "prompt" : "query").focus();
+  });
+
+  // Ask's refusals (no key, empty prompt, a run in progress, an unknown run) come with a 4xx status, which HTMX
+  // does not swap by default; in the Ask section, show them.
+  document.addEventListener("htmx:beforeSwap", (event) => {
+    if (event.detail.elt.closest(".ask-mode") && [403, 404, 409, 422].includes(event.detail.xhr.status)) {
+      event.detail.shouldSwap = true;
+      event.detail.isError = false;
+    }
   });
   const closeDetail = (button) => {
     button.setAttribute("aria-expanded", "false");
