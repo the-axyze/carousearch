@@ -4,6 +4,8 @@
 
 The server is a connector and nothing more. The host does the reasoning: it writes regexes over the returned JSON, looks at photos, ranks, and plans its own calls. By design the server has no filtering, scoring, LLM calls or planning tools.
 
+The same server also powers `carousearch ask`, carousearch's own agent, which runs it inside its process and adds per-run budgets ([README, "Ask the agent"](../README.md#ask-the-agent)).
+
 | Tool | What it does | Carousell requests |
 |---|---|---|
 | `search_listings(request, limit=20, page_token=None)` | One page of a search with Carousell's own filters (keywords, price range, condition, meet-up / mailing, Buyer Protection, free delivery, sort, category, category facets). Returns `{listings, total, next_page}`. | 1 per page |

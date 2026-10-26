@@ -1,6 +1,6 @@
 # carousearch
 
-Carousearch is a planned personal Telegram bot for searching [Carousell Singapore](https://www.carousell.sg) in plain English. A cheap LLM turns a prompt like "lightly used Aeron chair under $600, meet-up near Tampines, newest first" into Carousell's own search filters (Level 1). It then fills the search keywords and category-specific fields such as phone model, storage or shoe size (Level 2). Finally it screens the listings it finds: plain rules for seller rating, account age, price outliers and keyword blocklists, plus a vision model for subjective calls like low-effort photos or reseller-template descriptions (Level 3). It ranks results and shows them in Telegram with editable filter buttons. **Phase 1 is built** (2026-10-24): a tested Python client and command line for structured Carousell searches, listing details and a breakage canary. **Phase 2 task 1** adds a single-user Telegram bot that builds a search one question at a time with buttons (see [Running the Telegram bot](#running-the-telegram-bot)). **Phase 3a** adds [screening](#screening) for multi-item "catalogue" posts, with optional Claude Haiku price lookup; prompt-to-filters has no LLM yet. **Phase 3b** adds a local [web app](#web-app) for searching with filters and reading screened results in a card grid; the Telegram bot stays for quick lookups and future alerts. An [MCP server](#mcp-server) lets agent hosts such as Claude Code search Carousell through the same client.
+Carousearch is a planned personal Telegram bot for searching [Carousell Singapore](https://www.carousell.sg) in plain English. A cheap LLM turns a prompt like "lightly used Aeron chair under $600, meet-up near Tampines, newest first" into Carousell's own search filters (Level 1). It then fills the search keywords and category-specific fields such as phone model, storage or shoe size (Level 2). Finally it screens the listings it finds: plain rules for seller rating, account age, price outliers and keyword blocklists, plus a vision model for subjective calls like low-effort photos or reseller-template descriptions (Level 3). It ranks results and shows them in Telegram with editable filter buttons. **Phase 1 is built** (2026-10-24): a tested Python client and command line for structured Carousell searches, listing details and a breakage canary. **Phase 2 task 1** adds a single-user Telegram bot that builds a search one question at a time with buttons (see [Running the Telegram bot](#running-the-telegram-bot)). **Phase 3a** adds [screening](#screening) for multi-item "catalogue" posts, with optional Claude Haiku price lookup; prompt-to-filters has no LLM yet. **Phase 3b** adds a local [web app](#web-app) for searching with filters and reading screened results in a card grid; the Telegram bot stays for quick lookups and future alerts. An [MCP server](#mcp-server) lets agent hosts such as Claude Code search Carousell through the same client. **Phase B** adds [`carousearch ask`](#ask-the-agent): carousearch's own agent, which answers a plain-English shopping prompt by calling that server's tools with a model of your choice (Claude Haiku by default).
 
 - [docs/FEASIBILITY.md](docs/FEASIBILITY.md): full feasibility study: verdict, recommended stack, costs, risks, architecture
 - [docs/CAROUSELL_ACCESS_NOTES.md](docs/CAROUSELL_ACCESS_NOTES.md): raw technical findings on Carousell's endpoints, filters, response shapes and anti-bot behaviour
@@ -47,6 +47,12 @@ src/carousearch/
   web/templates/, web/static/  Jinja2 templates; app.css, app.js, htmx.min.js (2.0.11, vendored)
   mcp_server.py          build_server(services): the MCP tools (search, details, photo, screening tags, usage notes)
   mcp_instructions.md    the usage notes the MCP server sends to hosts
+  agent/settings.py      AGENT_MODEL, the per-run budgets and the provider API keys (environment or .env)
+  agent/prompt.py        the agent's system prompt
+  agent/result.py        AgentAnswer: kept, dropped, notes and tool_trace (the contract for `ask --json`)
+  agent/budget.py        ToolBudget: counts a run's tool calls, photos and listings against the caps (pure)
+  agent/trace.py         the tool trace, from a run's message history (pure)
+  agent/run_prompt.py    run_prompt: a Pydantic AI agent over the in-process MCP server, with the budget hook
   canary.py              the health check behind `carousearch canary`
   fixture_capture.py     the dev command behind `carousearch capture-fixtures`
   text_render.py, cli.py terminal output and the `carousearch` command
@@ -319,6 +325,38 @@ claude mcp add --scope user carousearch -- /home/moses/carousearch/.venv/bin/car
 ```
 
 [docs/MCP.md](docs/MCP.md) has the setup for every host, example prompts and the request budget (about 40 Carousell requests per task).
+
+## Ask the agent
+
+`carousearch ask` answers a shopping prompt in plain English. It runs an agent built with [Pydantic AI](https://pydantic.dev/docs/ai/) whose tools are the [MCP server](#mcp-server)'s five tools, nothing else. The server runs inside the same process, so a run starts no second interpreter. The agent searches first, filters the results itself, fetches details for a shortlist only and looks at photos last, then reports what it kept, everything it dropped with the reason, and notes.
+
+```bash
+.venv/bin/carousearch ask "Find Nintendo Switch consoles under S\$200 with meet-up. Drop listings whose title mentions more than one console model. For the top 3 by likes, look at the main photo and say whether it looks like a real used unit or a stock/catalogue image."
+.venv/bin/carousearch ask "used Aeron chair under S\$600, meet-up" --json         # the answer as AgentAnswer JSON
+.venv/bin/carousearch ask "road bike under S\$800" --model openai:gpt-5 --max-photos 5
+```
+
+It needs the API key of the model's provider: `ANTHROPIC_API_KEY` for the default `anthropic:claude-haiku-5-5`, `OPENAI_API_KEY` for an `openai:` model, in `.env` or the environment. Without it, `ask` exits with an error before making any request.
+
+The output, top to bottom:
+
+- **Tool calls**: one line per call, with its duration, the tool and its arguments, and `[refused]` (over a budget, never sent to Carousell), `[failed]` (the tool reported an error, such as Carousell blocking) or `[not run]` when it did not run normally.
+- **Kept**: a table of price, title, seller, URL and the agent's one-line reason. The reason comes last so it is never cut off.
+- **Dropped**: every listing the agent saw and excluded, each with its reason.
+- **Notes**: the agent's assumptions and what you should check yourself, plus a line for each budget that stopped or shortened the run.
+
+`--json` prints the same as one `AgentAnswer` object: `kept` (`listing_id`, `title`, `price`, `url`, `seller`, `reason`), `dropped` (`listing_id`, `title`, `reason`), `notes` and `tool_trace` (`tool_name`, `arguments`, `duration_seconds`, `status`).
+
+| Setting (`.env` or environment) | Default | Meaning |
+|---|---|---|
+| `AGENT_MODEL` | `anthropic:claude-haiku-5-5` | Any Pydantic AI model string, `provider:model`. `--model` overrides it. |
+| `AGENT_MAX_TOOL_CALLS` | 40 | Tool calls per run: search pages, details, photos and tags together. |
+| `AGENT_MAX_PHOTOS` | 15 | Photos the agent may look at. `--max-photos` overrides it. |
+| `AGENT_MAX_LISTINGS` | 200 | Listings asked for across all search pages. A page that would pass it is cut short. |
+
+The budgets are enforced, not advised. A call over a budget is refused before it reaches Carousell, and the agent is told to finish with what it has. The notes then say which budget was reached. A model that keeps calling tools anyway is stopped after its tool-call budget plus 5 more model requests. Carousell requests still go through the usual rate limiter (1.0 s ± 0.3 s apart), so a run with 20 tool calls takes at least 20 seconds plus the model's time. Details come from the 12-hour cache shared with the other commands.
+
+Photos reach the model as images: Anthropic models and OpenAI's Responses API get them inside the tool result, and OpenAI chat models get them in a separate user message (Pydantic AI chooses). Cost with Claude Haiku 5.5 (US$0.10 per million input tokens, US$0.50 per million output tokens) should be a few US cents per run. That is an estimate, not yet measured against the real API.
 
 ## Running the Telegram bot
 

@@ -295,3 +295,48 @@ Differences from the brief for this phase:
 - Every tool is annotated read-only and open-world. With `--transport http` a tunnel must rewrite the Host header to `localhost:8766`, because the SDK accepts only local Host headers on a server bound to 127.0.0.1.
 
 Deferred: registering and trying the server in a real host (Claude Code, Codex, the desktop app, ChatGPT); a tunnel and any authentication for the HTTP transport; caching photos; counting requests per task (the 40-request budget is advice in the usage notes; only the rate is enforced).
+
+---
+
+## MCP server: phase B status, the in-app agent (2026-10-26)
+
+Built: `carousearch ask "<prompt>" [--json] [--model provider:model] [--max-photos N]`, an agent that answers a plain-English shopping prompt by calling the MCP server's own five tools. It prints the tool trace, a kept table, every dropped listing with its reason, and notes. `README.md`, "Ask the agent", has the usage and settings.
+
+**Reuse, not a second tool set.** The agent's tools are the MCP server's tools: `run_prompt` hands `mcp_server.build_server(services)` to Pydantic AI's `MCPToolset`, which reaches it in this process through FastMCP's in-memory transport (it accepts the MCP SDK's own `MCPServer`). No subprocess, no second interpreter start-up. The server's usage notes become part of the agent's instructions (`include_instructions=True`).
+
+- `agent/settings.py`: `AgentSettings` (`model`, `budget`, `anthropic_api_key`, `openai_api_key`) and `AgentBudget` (`max_tool_calls` 40, `max_photos` 15, `max_listings` 200), read from the environment or `.env` (`AGENT_MODEL`, `AGENT_MAX_TOOL_CALLS`, `AGENT_MAX_PHOTOS`, `AGENT_MAX_LISTINGS`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`). `missing_key_variable()` names the key the model's provider needs; providers outside the Anthropic / OpenAI table are left to Pydantic AI's own environment lookup.
+- `agent/prompt.py`: `SYSTEM_PROMPT`, a plain string with the budget numbers filled in: cheapest work first (search, filter the JSON in its head, details for the shortlist, photos last), every drop kept with its reason, the budgets and what to do when one is reached, the answer's contract, and seller text treated as data.
+- `agent/result.py`: `ModelAnswer` (`kept: list[KeptListing]`, `dropped: list[DroppedListing]`, `notes`) is the structured output the model returns through a `final_answer` output tool; `AgentAnswer` adds `tool_trace: list[ToolCall]` (`tool_name`, `arguments` summary, `duration_seconds`, `status`). `build_agent_answer` appends the run's budget notes to the model's notes.
+- `agent/budget.py` (pure): `ToolBudget.admit(tool_name, arguments)` counts the call or raises `BudgetExhausted`; a search is cut to the listings left; `notes()` gives one line per cap reached.
+- `agent/trace.py` (pure): `build_tool_trace(messages, records, output_tool_name)`: the calls and their order come from the run's message history, and the duration, status and arguments actually sent come from the hook's records, keyed by tool-call id.
+- `agent/run_prompt.py`: `run_prompt` (async) and `run_prompt_sync`; `ToolCallGate`, the toolset's `process_tool_call` hook, admits and times every call; `build_model` turns `AGENT_MODEL` into a model with `infer_model` and passes the key from settings to the provider.
+- CLI: `ask` in `cli.py` (Pydantic AI and the MCP SDK imported only by this command); the text rendering is `render_agent_answer` in `text_render.py`. A missing provider key exits 2 before any request; a failed model request exits 1.
+- Dependency: `pydantic-ai-slim[anthropic,mcp,openai]>=2.61,<3` (2.61.0 installed).
+- Tests: 679 offline (632 before; 47 new: settings 14, budget 8, trace 5, answer and rendering 4, scripted runs 9, CLI 7). The scripted runs drive the real in-process MCP server over a fake Carousell with Pydantic AI's `FunctionModel`, so they need no network and no key.
+
+How the budgets are enforced. Pydantic AI's `UsageLimits` raises `UsageLimitExceeded` and ends the run with no answer, so it is only the backstop. The main mechanism is the hook. A call over a cap is answered with a failed tool result (`ToolFailed`) telling the model to finish with what it has, and the call never reaches Carousell. The run's notes then name the cap. A model that keeps calling tools regardless is stopped by `UsageLimits(request_limit=max_tool_calls + 5)`, and the answer says so, with the trace of what was looked at. Tool errors (Carousell blocking, a refused photo URL) come back as failed results (`tool_error_behavior="failed"`), so they do not use up the model's retries.
+
+Photos: an MCP `ImageContent` becomes a `BinaryImage` in the tool result, which Pydantic AI sends to Anthropic and to OpenAI's Responses API inside the tool result, and to chat-only APIs as a separate user message. No workaround was needed; a test checks that the model receives an image.
+
+Pydantic AI APIs used, checked against the docs and the installed 2.61.0 source:
+
+- `MCPToolset(server, include_instructions=True, tool_error_behavior="failed", process_tool_call=...)`: https://pydantic.dev/docs/ai/mcp/client/
+- `UsageLimits(request_limit=...)` and `UsageLimitExceeded`: https://pydantic.dev/docs/ai/agents/ (usage limits)
+- Images returned by tools: https://pydantic.dev/docs/ai/tools-advanced/
+- `FunctionModel`, `capture_run_messages`, `models.ALLOW_MODEL_REQUESTS`: https://pydantic.dev/docs/ai/testing/
+- `Agent(model, output_type=ToolOutput(ModelAnswer, name="final_answer"), instructions=..., toolsets=[...])` and `models.infer_model(name, provider_factory=...)`, from the installed source.
+
+Live check: not run. No `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is configured on this machine, so the agent has only been exercised with scripted models. The model and provider plumbing (`infer_model`, keys from `.env`) is untested against a real API.
+
+Differences from the brief for this phase:
+
+- The package is `pydantic-ai-slim` with the `anthropic`, `mcp` and `openai` extras. It is the same library as `pydantic-ai`, without the 30 or so extra packages the full package pulls in (Google, Logfire, evals and others).
+- Two extra pure modules, `budget.py` and `trace.py`, keep the counting and the trace building out of `run_prompt.py`. The text rendering sits in `text_render.py` with the other terminal output, reusing its column helpers.
+- A third budget setting, `AGENT_MAX_LISTINGS` (default 200, about four pages of 48): the brief asked for a listings cap but gave no default. It counts the page sizes asked for, not the listings Carousell returned.
+- `run_prompt` is the async core and `run_prompt_sync` the wrapper, following Pydantic AI's `run` / `run_sync`. Both take an optional `model` that replaces the one the settings name, which is how the tests inject a scripted model.
+- `ToolCall` has a `status` (`ok`, `failed`, `refused`, `not run`) so the trace shows refused calls. Durations are measured in the hook, because the message history only stamps when a tool returned, and the server's lock runs parallel calls one at a time.
+- The kept table's columns are price, title, seller, URL, reason: the reason comes last so it is never cut.
+- `usage_notes` stays a tool (the agent sees exactly the five), but its text is already in the instructions and the prompt tells the model not to call it.
+- A missing provider key exits with code 2, like the bot's missing settings.
+
+Deferred: a live run with an API key, including the photo verdict on real listings and the cost per run; showing progress during a run (the trace is printed at the end); prompt caching for longer runs; the agent in the web app and the Telegram bot.
