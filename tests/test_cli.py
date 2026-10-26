@@ -8,8 +8,14 @@ import anyio
 import httpx
 import pytest
 from mcp import Client
+from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from carousearch import cli
+from carousearch.agent.result import AgentAnswer
+from carousearch.agent.run_prompt import OUTPUT_TOOL_NAME
+from carousearch.agent.settings import AgentBudget, AgentSettings
 from carousearch.carousell.rate_limit import RateLimiter
 from carousearch.config import TelegramSettings
 from carousearch.filters.schema import Condition, DealMethod, SortOrder
@@ -469,3 +475,112 @@ def test_mcp_serves_a_server_wired_to_carousell_and_the_detail_cache(tmp_path: P
     assert (served["transport"], served["port"]) == ("http", 9001)
     assert served["requests_before_any_tool_call"] == 0
     assert len(carousell.api_requests) == 1
+
+
+# --- ask ---------------------------------------------------------------------------
+
+
+def client_factory_that_must_not_run(rate_limiter: RateLimiter) -> None:
+    raise AssertionError("no Carousell client should be created")
+
+
+def run_ask(
+    carousell: FakeCarousell, data_dir: Path, as_json: bool, model: FunctionModel, settings: AgentSettings | None = None
+) -> int:
+    return cli.run_ask_command(
+        "Find an iPhone 15 under S$600.", settings or AgentSettings(), data_dir, carousell.client, RateLimiter(0, 0),
+        as_json, sys.stdout, sys.stderr, model=model,
+    )
+
+
+def search_then_details_twice_then_answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """A scripted model: one search, the same listing's details twice (the second from the SQLite cache), an answer."""
+    turn = sum(isinstance(message, ModelResponse) for message in messages)
+    if turn == 0:
+        return ModelResponse(parts=[ToolCallPart("search_listings", {"request": {"query": "iphone 15"}, "limit": 3})])
+    if turn in (1, 2):
+        return ModelResponse(parts=[ToolCallPart("listing_details", {"listing_id": "1469923094"})])
+    kept = {
+        "listing_id": "1469923094", "title": "iPhone 15 256GB Blue", "price": 579.0,
+        "url": "https://www.carousell.sg/p/1469923094/", "seller": "seller", "reason": "under S$600, one phone",
+    }
+    dropped = {"listing_id": "1463757293", "title": "iPhone 15 Pro", "reason": "a Pro, not an iPhone 15"}
+    return ModelResponse(
+        parts=[ToolCallPart(OUTPUT_TOOL_NAME, {"kept": [kept], "dropped": [dropped], "notes": "One page only."})]
+    )
+
+
+@pytest.mark.parametrize(
+    ("model", "variable"), [("anthropic:claude-haiku-5-5", "ANTHROPIC_API_KEY"), ("openai:gpt-5", "OPENAI_API_KEY")]
+)
+def test_ask_without_the_models_provider_key_exits_with_a_clear_message(
+    tmp_path: Path, capsys, model: str, variable: str
+) -> None:
+    exit_code = cli.run_ask_command(
+        "find a switch", AgentSettings(model=model), tmp_path, client_factory_that_must_not_run, RateLimiter(0, 0),
+        False, sys.stdout, sys.stderr,
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert captured.out == ""
+    assert f"error: {variable} not set; the model {model} needs it." in captured.err
+    assert ".env" in captured.err and "--model" in captured.err
+
+
+def test_ask_json_output_parses_back_into_an_agent_answer(tmp_path: Path, capsys) -> None:
+    carousell = FakeCarousell()
+
+    exit_code = run_ask(carousell, tmp_path, as_json=True, model=FunctionModel(search_then_details_twice_then_answer))
+
+    answer = AgentAnswer.model_validate_json(capsys.readouterr().out)
+    assert exit_code == 0
+    assert [item.listing_id for item in answer.kept] == ["1469923094"]
+    assert [item.reason for item in answer.dropped] == ["a Pro, not an iPhone 15"]
+    assert answer.notes == "One page only."
+    assert [call.tool_name for call in answer.tool_trace] == ["search_listings", "listing_details", "listing_details"]
+    assert {call.status for call in answer.tool_trace} == {"ok"}
+    assert len(carousell.api_requests) == 2  # the search and one detail; the repeat came from the SQLite cache
+
+
+def test_ask_prints_the_trace_then_kept_dropped_and_notes(tmp_path: Path, capsys) -> None:
+    exit_code = run_ask(FakeCarousell(), tmp_path, as_json=False, model=FunctionModel(search_then_details_twice_then_answer))
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert output.startswith("Tool calls (3):\n")
+    assert output.index("Kept (1):") < output.index("Dropped (1):") < output.index("Notes:\n  One page only.")
+    assert "https://www.carousell.sg/p/1469923094/  under S$600, one phone" in output
+
+
+def test_ask_reports_a_failed_model_request_and_exits_with_failure(tmp_path: Path, capsys) -> None:
+    def refused_key(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ModelHTTPError(status_code=401, model_name="claude-haiku-5-5", body="invalid x-api-key")
+
+    exit_code = run_ask(FakeCarousell(), tmp_path, as_json=False, model=FunctionModel(refused_key))
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert "error: the agent run failed: ModelHTTPError" in captured.err
+
+
+def test_ask_options_override_the_model_and_the_photo_budget() -> None:
+    arguments = cli.build_argument_parser().parse_args(
+        ["ask", "find a bike", "--model", "openai:gpt-5", "--max-photos", "3", "--json"]
+    )
+
+    settings = cli.agent_settings_from_arguments(AgentSettings(budget=AgentBudget(max_tool_calls=10)), arguments)
+
+    assert (arguments.prompt, arguments.json) == ("find a bike", True)
+    assert settings.model == "openai:gpt-5"
+    assert settings.budget == AgentBudget(max_tool_calls=10, max_photos=3)
+
+
+def test_ask_options_are_checked_before_anything_runs() -> None:
+    parser = cli.build_argument_parser()
+
+    with pytest.raises(ValueError, match="--max-photos must be 0 or more"):
+        cli.agent_settings_from_arguments(AgentSettings(), parser.parse_args(["ask", "x", "--max-photos", "-1"]))
+    with pytest.raises(ValueError, match="provider:model"):
+        cli.agent_settings_from_arguments(AgentSettings(), parser.parse_args(["ask", "x", "--model", "gpt-5"]))
