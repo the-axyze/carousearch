@@ -21,6 +21,7 @@ from carousearch.web.view_models import (
     error_message_for,
     format_day,
     format_month,
+    hidden_rows,
     meta_line,
     price_display,
     results_summary,
@@ -155,6 +156,46 @@ def test_results_view_hides_multi_item_cards_and_says_so() -> None:
     assert "cursor=cursor-2" in view.load_more_url
     assert "hidden=2" in view.load_more_url
     assert not view.nothing_found
+
+
+def test_hidden_rows_list_the_hidden_posts_with_their_warning_reasons() -> None:
+    page = mixed_page().listings + [screened(make_listing("5"), tags=[TITLE_TAG, PRICE_LIST_TAG, BELOW_MARKET_TAG])]
+    rows = hidden_rows(page, hide_multi_item=True)
+    assert [row.listing_id for row in rows] == ["1", "4", "5"]
+    assert (rows[0].title, rows[0].url, rows[0].price) == (
+        TEMPLATE_LISTING.title,
+        TEMPLATE_LISTING.listing_url,
+        "S$579",
+    )
+    assert rows[2].reasons == [
+        "Multi-item title: title names 3 variants: 15, 15 Pro, 15 Pro Max",
+        "Price list: description lists 4 prices",
+    ]
+
+
+def test_hidden_rows_are_empty_when_the_switch_is_off() -> None:
+    assert hidden_rows(mixed_page().listings, hide_multi_item=False) == []
+
+
+def test_hidden_row_reasons_are_the_multi_item_badge_tooltip_lines() -> None:
+    item = screened(tags=[BELOW_MARKET_TAG, TITLE_TAG, PRICE_LIST_TAG])
+    [row] = hidden_rows([item], hide_multi_item=True)
+    [multi_item_badge, _low_price] = badges_for(item)
+    assert row.reasons == multi_item_badge.reasons.split("\n")
+
+
+def test_results_view_lists_this_pages_hidden_posts_and_counts_every_page() -> None:
+    earlier = ResultsTally(shown=6, multi_item=2, hidden=2, screened=3)
+    view = results_view(mixed_page(), REQUEST, True, earlier, price_lookup_enabled=True)
+    assert view.hide_multi_item
+    assert [row.listing_id for row in view.hidden] == ["1", "4"]
+    assert view.hidden == hidden_rows(mixed_page().listings, hide_multi_item=True)
+    assert view.hidden_summary == "Hidden (4)"
+
+
+def test_results_view_without_the_switch_has_no_hidden_section() -> None:
+    view = results_view(mixed_page(), REQUEST, False, ResultsTally(), price_lookup_enabled=True)
+    assert (view.hide_multi_item, view.hidden, view.hidden_summary) == (False, [], "Hidden (0)")
 
 
 def test_results_view_adds_the_earlier_pages_and_drops_load_more_on_the_last_page() -> None:
