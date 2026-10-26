@@ -1,12 +1,15 @@
 """run_prompt end to end, offline: a scripted FunctionModel drives the agent, whose tools are the real MCP server
 (in this process) over a fake Carousell. No network, no provider key."""
 
+import logging
 from collections.abc import Callable
 
+import pytest
 from pydantic_ai import models
 from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
+from carousearch.agent.progress import ToolCallEvent
 from carousearch.agent.result import AgentAnswer
 from carousearch.agent.run_prompt import OUTPUT_TOOL_NAME, run_prompt_sync
 from carousearch.agent.settings import AgentBudget, AgentSettings
@@ -55,11 +58,16 @@ def final_answer(notes: str = "", kept: list[dict] | None = None, dropped: list[
 
 
 def ask(
-    script: ScriptedModel, carousell: FakeCarousellSource | None = None, budget: AgentBudget | None = None
+    script: ScriptedModel,
+    carousell: FakeCarousellSource | None = None,
+    budget: AgentBudget | None = None,
+    observer: Callable[[ToolCallEvent], None] | None = None,
 ) -> AgentAnswer:
     settings = AgentSettings(budget=budget or AgentBudget())  # no API key: the scripted model needs none
     services = fake_services(carousell or FakeCarousellSource())
-    return run_prompt_sync("Find a used iPhone 15 under S$700.", services, settings, model=FunctionModel(script))
+    return run_prompt_sync(
+        "Find a used iPhone 15 under S$700.", services, settings, model=FunctionModel(script), observer=observer
+    )
 
 
 SEARCH_CALL = ("search_listings", {"request": {"query": "iphone 15", "price_max": 700}, "limit": 5})
@@ -190,3 +198,85 @@ def test_a_carousell_block_reaches_the_model_as_a_failed_result_and_the_run_stil
     assert "blocking or rate-limiting" in failure.content
     assert [call.status for call in answer.tool_trace] == ["failed"]
     assert answer.notes == "Carousell is blocking requests."
+
+
+# --- progress observer ----------------------------------------------------------------------------------------
+
+
+def observed_run(
+    *turns: Turn, carousell: FakeCarousellSource | None = None, budget: AgentBudget | None = None
+) -> tuple[AgentAnswer, list[ToolCallEvent]]:
+    events: list[ToolCallEvent] = []
+    answer = ask(ScriptedModel(*turns), carousell, budget, observer=events.append)
+    return answer, events
+
+
+def test_the_observer_sees_each_call_start_and_finish_in_order_with_the_budget_used() -> None:
+    _, events = observed_run(calls(SEARCH_CALL), calls(DETAILS_CALL), final_answer())
+
+    assert [(event.phase, event.tool_name, event.status) for event in events] == [
+        ("started", "search_listings", None),
+        ("finished", "search_listings", "ok"),
+        ("started", "listing_details", None),
+        ("finished", "listing_details", "ok"),
+    ]
+    assert [event.budget.tool_calls_used for event in events] == [1, 1, 2, 2]
+    assert {(event.budget.max_tool_calls, event.budget.max_photos) for event in events} == {(40, 15)}
+    assert events[1].budget.listings_used == 5
+    assert events[0].arguments == 'query="iphone 15" price_max=700 limit=5'
+    assert events[0].duration_seconds == 0.0 and events[1].duration_seconds >= 0.0
+
+
+def test_a_finished_search_event_carries_the_listings_carousell_returned() -> None:
+    _, events = observed_run(calls(SEARCH_CALL), calls(DETAILS_CALL), final_answer())
+
+    search_finished, details_finished = events[1], events[3]
+    assert [listing.id for listing in search_finished.listings] == [listing.id for listing in SEARCH_RESULT.listings]
+    assert search_finished.listings[0].price_display == FIRST_LISTING.price_display
+    assert details_finished.listings == ()
+
+
+def test_a_refused_call_has_only_a_finished_event_marked_refused() -> None:
+    carousell = FakeCarousellSource(photo=jpeg_bytes(400, 300))
+    first_photo = calls(("listing_photo", {"url": PHOTO_URL}))
+    second_photo = calls(("listing_photo", {"url": SECOND_PHOTO_URL}))
+    _, events = observed_run(
+        first_photo, second_photo, final_answer(), carousell=carousell, budget=AgentBudget(max_photos=1)
+    )
+
+    assert [(event.phase, event.status) for event in events] == [
+        ("started", None),
+        ("finished", "ok"),
+        ("finished", "refused"),
+    ]
+    refused = events[2]
+    assert refused.arguments == f"url={SECOND_PHOTO_URL.rsplit('/', 1)[-1]}"
+    assert (refused.duration_seconds, refused.budget.photos_used, refused.budget.tool_calls_used) == (0.0, 1, 1)
+
+
+def test_a_failed_search_is_reported_as_failed_without_listings() -> None:
+    carousell = FakeCarousellSource(search_result=CarousellBlockedError("rate limited by Carousell (HTTP 429)"))
+    _, events = observed_run(calls(SEARCH_CALL), final_answer(), carousell=carousell)
+
+    assert [(event.phase, event.status) for event in events] == [("started", None), ("finished", "failed")]
+    assert events[1].listings == ()
+
+
+def test_an_observer_that_raises_is_logged_and_does_not_change_the_answer(caplog: pytest.LogCaptureFixture) -> None:
+    def broken_observer(event: ToolCallEvent) -> None:
+        raise RuntimeError("display went away")
+
+    turns = (calls(SEARCH_CALL), calls(DETAILS_CALL), final_answer("Prices checked.", [KEPT], [DROPPED]))
+    carousell = FakeCarousellSource()
+    with caplog.at_level(logging.ERROR, logger="carousearch.agent.run_prompt"):
+        observed = ask(ScriptedModel(*turns), carousell, observer=broken_observer)
+    unobserved = ask(ScriptedModel(*turns))
+
+    assert observed.model_dump(exclude={"tool_trace"}) == unobserved.model_dump(exclude={"tool_trace"})
+    assert [(call.tool_name, call.status) for call in observed.tool_trace] == [
+        ("search_listings", "ok"),
+        ("listing_details", "ok"),
+    ]
+    assert carousell.detail_requests == [DETAIL.id]  # the calls went ahead
+    assert len(caplog.records) == 4  # one per event
+    assert all("progress observer failed" in record.getMessage() for record in caplog.records)
