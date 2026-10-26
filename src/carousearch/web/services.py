@@ -2,6 +2,7 @@
 
 Everything here is synchronous. Routes run it in a worker thread, one call at a time (`WebServices.turn`),
 because the Carousell client, its rate limiter and the SQLite connection must not be used by two threads at once.
+An Ask run (web/prompt_runs.py) holds the same turn for its whole run.
 """
 
 import asyncio
@@ -10,12 +11,16 @@ from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
+from carousearch.agent.settings import AgentSettings
 from carousearch.filters.schema import ListingDetail, SearchRequest, SearchResult
 from carousearch.screening.models import ScreenedListing
 from carousearch.screening.pipeline import ScreeningServices, screen_listings
 from carousearch.web.view_models import ScreenedPage
+
+if TYPE_CHECKING:  # Pydantic AI is imported only when an Ask run starts (web/prompt_runs.py)
+    from pydantic_ai.models import Model
 
 logger = logging.getLogger(__name__)
 
@@ -27,11 +32,14 @@ RECENT_SCREENING_LIMIT = 2000
 
 
 class CarousellSource(Protocol):
-    """What the web app needs from Carousell (CarousellClient satisfies it)."""
+    """What the web app needs from Carousell (CarousellClient satisfies it). get_photo is for the Ask agent's
+    listing_photo tool."""
 
     def search(self, request: SearchRequest) -> SearchResult: ...
 
     def get_listing(self, listing_id: str) -> ListingDetail: ...
+
+    def get_photo(self, url: str) -> bytes: ...
 
 
 class RecentSearches:
@@ -86,8 +94,10 @@ class WebServices:
     close: Callable[[], None] = field(default=lambda: None)
     recent_searches: RecentSearches = field(default_factory=RecentSearches)
     recent_screenings: RecentScreenings = field(default_factory=RecentScreenings)
-    # Held around every call into the functions below; see the module docstring.
+    # Held around every call into the functions below, and for the whole of an Ask run; see the module docstring.
     turn: asyncio.Lock = field(default_factory=asyncio.Lock)
+    agent: AgentSettings = field(default_factory=AgentSettings)  # Ask mode: AGENT_MODEL, budgets, provider keys
+    agent_model: "Model | None" = None  # replaces the model AGENT_MODEL names; tests inject a scripted one
 
 
 def search_and_screen(request: SearchRequest, services: WebServices) -> ScreenedPage:

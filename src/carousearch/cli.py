@@ -133,7 +133,9 @@ def main(
         if arguments.command == "whoami":
             return run_whoami_command(load_telegram_settings(), sys.stdout, sys.stderr)
         if arguments.command == "web":
-            settings = WebSettings(data_dir=data_dir, screening=load_screening_settings())
+            settings = WebSettings(
+                data_dir=data_dir, screening=load_screening_settings(), agent=load_agent_settings()
+            )
             return run_web_command(settings, client_factory, rate_limiter, arguments.host, arguments.port)
         if arguments.command == "mcp":
             return run_mcp_command(data_dir, client_factory, rate_limiter, arguments.transport, arguments.port)

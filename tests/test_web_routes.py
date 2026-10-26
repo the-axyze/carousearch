@@ -18,6 +18,7 @@ from carousearch.web.app import WebSettings, create_app
 from carousearch.web.routes import RequestAbandoned, call_in_turn
 from carousearch.web.services import WebServices
 
+from fake_mcp_services import jpeg_bytes
 from fixture_files import load_json_fixture
 
 START = datetime(2026, 10, 25, 12, 0, tzinfo=UTC)
@@ -61,6 +62,7 @@ class FakeCarousell:
         self.detail_error: Exception | None = None
         self.search_requests: list[SearchRequest] = []
         self.detail_requests: list[str] = []
+        self.photo_requests: list[str] = []
 
     def search(self, request: SearchRequest) -> SearchResult:
         self.search_requests.append(request)
@@ -74,6 +76,10 @@ class FakeCarousell:
             raise self.detail_error
         description = PRICE_LIST if listing_id in {"200", "201", "400"} else "Selling as I upgraded. No box."
         return TEMPLATE_DETAIL.model_copy(update={"id": listing_id, "description": description, "raw": {}})
+
+    def get_photo(self, url: str) -> bytes:
+        self.photo_requests.append(url)
+        return jpeg_bytes(400, 300)
 
 
 class FakeStore:
