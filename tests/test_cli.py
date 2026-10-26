@@ -97,6 +97,17 @@ def test_search_json_output_omits_raw(tmp_path: Path, capsys) -> None:
     assert result["next_page"]
 
 
+def test_search_with_no_matches_prints_an_empty_table_and_the_summary(tmp_path: Path, capsys) -> None:
+    no_results = httpx.Response(200, json=load_json_fixture("search_no_results.json"))
+
+    exit_code = run_cli(["search", "r15 bike with low quality image"], FakeCarousell([no_results]), tmp_path)
+
+    header, summary = capsys.readouterr().out.splitlines()
+    assert exit_code == 0
+    assert header.split()[:2] == ["ID", "PRICE"]
+    assert summary == "Showing 0 of 0 results; no more pages."
+
+
 def test_invalid_search_is_a_usage_error_without_network(tmp_path: Path, capsys) -> None:
     carousell = FakeCarousell()
 

@@ -595,6 +595,18 @@ def test_blocked_search_sends_a_friendly_message_and_keeps_the_summary(services:
     assert current_session(services).stage == Stage.SUMMARY
 
 
+def test_search_with_no_matches_says_so(services: BotServices) -> None:
+    no_results = httpx.Response(200, json=load_json_fixture("search_no_results.json"))
+    services.carousell_client = FakeCarousell(api_responses=[no_results]).client()
+    bot = FakeBot()
+    start_at_summary(bot, services)
+
+    tap(bot, services, "go:")
+
+    assert bot.calls_to("send_photo") == []
+    assert bot.last_text() == "No listings match these filters."
+
+
 def test_schema_change_points_at_the_canary(services: BotServices) -> None:
     services.carousell_client = FakeCarousell(api_responses=[httpx.Response(200, json={"data": {}})]).client()
     bot = FakeBot()
