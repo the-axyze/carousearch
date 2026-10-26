@@ -1,10 +1,11 @@
 # carousearch
 
-Carousearch is a planned personal Telegram bot for searching [Carousell Singapore](https://www.carousell.sg) in plain English. A cheap LLM turns a prompt like "lightly used Aeron chair under $600, meet-up near Tampines, newest first" into Carousell's own search filters (Level 1). It then fills the search keywords and category-specific fields such as phone model, storage or shoe size (Level 2). Finally it screens the listings it finds: plain rules for seller rating, account age, price outliers and keyword blocklists, plus a vision model for subjective calls like low-effort photos or reseller-template descriptions (Level 3). It ranks results and shows them in Telegram with editable filter buttons. **Phase 1 is built** (2026-10-24): a tested Python client and command line for structured Carousell searches, listing details and a breakage canary. **Phase 2 task 1** adds a single-user Telegram bot that builds a search one question at a time with buttons (see [Running the Telegram bot](#running-the-telegram-bot)). **Phase 3a** adds [screening](#screening) for multi-item "catalogue" posts, with optional Claude Haiku price lookup; prompt-to-filters has no LLM yet. **Phase 3b** adds a local [web app](#web-app) for searching with filters and reading screened results in a card grid; the Telegram bot stays for quick lookups and future alerts.
+Carousearch is a planned personal Telegram bot for searching [Carousell Singapore](https://www.carousell.sg) in plain English. A cheap LLM turns a prompt like "lightly used Aeron chair under $600, meet-up near Tampines, newest first" into Carousell's own search filters (Level 1). It then fills the search keywords and category-specific fields such as phone model, storage or shoe size (Level 2). Finally it screens the listings it finds: plain rules for seller rating, account age, price outliers and keyword blocklists, plus a vision model for subjective calls like low-effort photos or reseller-template descriptions (Level 3). It ranks results and shows them in Telegram with editable filter buttons. **Phase 1 is built** (2026-10-24): a tested Python client and command line for structured Carousell searches, listing details and a breakage canary. **Phase 2 task 1** adds a single-user Telegram bot that builds a search one question at a time with buttons (see [Running the Telegram bot](#running-the-telegram-bot)). **Phase 3a** adds [screening](#screening) for multi-item "catalogue" posts, with optional Claude Haiku price lookup; prompt-to-filters has no LLM yet. **Phase 3b** adds a local [web app](#web-app) for searching with filters and reading screened results in a card grid; the Telegram bot stays for quick lookups and future alerts. An [MCP server](#mcp-server) lets agent hosts such as Claude Code search Carousell through the same client.
 
 - [docs/FEASIBILITY.md](docs/FEASIBILITY.md): full feasibility study: verdict, recommended stack, costs, risks, architecture
 - [docs/CAROUSELL_ACCESS_NOTES.md](docs/CAROUSELL_ACCESS_NOTES.md): raw technical findings on Carousell's endpoints, filters, response shapes and anti-bot behaviour
 - [docs/ROADMAP.md](docs/ROADMAP.md): Levels 1 to 3 as milestones with tasks, acceptance criteria and effort estimates (and the phase 1 status)
+- [docs/MCP.md](docs/MCP.md): the MCP server for agent hosts: its tools, registering it with Claude Code, Codex CLI, the Claude desktop app and ChatGPT, example prompts and the request budget
 - [docs/ANALYSIS_AND_SCREENING_PLAN.md](docs/ANALYSIS_AND_SCREENING_PLAN.md): implementation spec for market analysis (fresh pulls, upsert-by-content-hash storage, plan → scrape → compute → summarise), read-only SQL questions, and the staged screening pipeline with auditable vision verdicts; supersedes the roadmap's Level 3
 
 ## Layout
@@ -16,6 +17,7 @@ src/carousearch/
   carousell/client.py    CarousellClient: session bootstrap, CSRF, re-bootstrap, rate limiting (all network I/O)
   carousell/parse.py     pure functions: response JSON / HTML -> models, block detection
   carousell/rate_limit.py, carousell/errors.py
+  photos.py              downsize a listing photo to a maximum width (Pillow, pure)
   storage.py             SQLite: seen_listings, listing_detail_cache, saved_searches, listings (upsert by content hash),
                          listing_changes, harvest_runs
   market/hashing.py      content hash of a listing, hash of a search request (pure)
@@ -43,6 +45,8 @@ src/carousearch/
   web/view_models.py     price row, badges, meta line, results line, form and detail views (pure)
   web/services.py        WebServices; the screened search and listing detail (blocking, run one at a time)
   web/templates/, web/static/  Jinja2 templates; app.css, app.js, htmx.min.js (2.0.11, vendored)
+  mcp_server.py          build_server(services): the MCP tools (search, details, photo, screening tags, usage notes)
+  mcp_instructions.md    the usage notes the MCP server sends to hosts
   canary.py              the health check behind `carousearch canary`
   fixture_capture.py     the dev command behind `carousearch capture-fixtures`
   text_render.py, cli.py terminal output and the `carousearch` command
@@ -305,6 +309,16 @@ The line above the grid reads like `20 of 10,000+ results · 3 multi-item hidden
 Keyboard: `/` puts the cursor in the search box from anywhere on the page; Esc leaves a field.
 
 Requests: a search costs one Carousell search plus, for flagged listings, up to 10 detail requests (cached for 12 hours, shared with the CLI and the bot), all through one rate limiter and one call at a time. The same search again within 2 minutes (toggling the switch, going Back) is answered from memory, and a search the browser has already replaced is skipped. If Carousell blocks the client the page says "Carousell is rate-limiting us, try again in a minute"; if its response changed shape it says to run `carousearch canary` (see [When Carousell changes](#when-carousell-changes)). Details of any error go to the terminal running `carousearch web`, never to the page.
+
+## MCP server
+
+`carousearch mcp` lets an agent host (Claude Code, Codex CLI, the Claude desktop app, or ChatGPT through a tunnel) search Carousell through this client: `search_listings`, `listing_details` (12-hour cache), `listing_photo` (downsized, Carousell's media host only), the optional `screening_tags`, and `usage_notes`. It is only a connector: the host filters, ranks, looks at photos and plans; the server does none of that. Over stdio by default; `--transport http --port 8766` serves streamable HTTP on 127.0.0.1 for tunnelling.
+
+```bash
+claude mcp add --scope user carousearch -- /home/moses/carousearch/.venv/bin/carousearch mcp
+```
+
+[docs/MCP.md](docs/MCP.md) has the setup for every host, example prompts and the request budget (about 40 Carousell requests per task).
 
 ## Running the Telegram bot
 

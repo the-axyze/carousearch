@@ -269,3 +269,29 @@ Differences from the brief for this phase:
 
 Deferred: a live look at a real catalogue post with an API key; Buyer Protection, free delivery and category facets in the web filters; saved searches in the web app; per-search page titles; Carousell's full-size photos on cards (cards use the 240 x 320 thumbnail).
 
+
+---
+
+## MCP server: phase A status (2026-10-26)
+
+Built: `carousearch mcp`, a thin [MCP](https://modelcontextprotocol.io) server through which an agent host (Claude Code, Codex CLI, the Claude desktop app, ChatGPT through a tunnel) searches Carousell with carousearch's client. [MCP.md](MCP.md) has the host setup, example prompts and the request budget. (Not to be confused with phase A of the market-analysis plan above.)
+
+**Filtering, vision and planning stay with the host, by design.** The server only connects: it has no filtering, scoring, LLM calls or planning tools. The host writes its own regexes over the returned JSON, looks at photos with its own model, ranks, and decides which calls to make. That keeps the server small, and a better host model improves the results without any change here. The rule-based `screening_tags` is exposed only because those rules already existed.
+
+- `mcp_server.py`: `build_server(services) -> MCPServer` with five read-only tools: `search_listings` (`CarousellClient.search`; `limit` and `page_token` set the page size and cursor), `listing_details` (`get_listing` through the 12-hour detail cache, `SqliteScreeningStore`), `listing_photo` (https on `media.karousell.com` only, scaled to `max_width`), `screening_tags` (the title and description rules for one listing) and `usage_notes` (`mcp_instructions.md`, also sent as the server's instructions on connect). `McpServices` holds the injected Carousell source, detail cache, clock and a lock: the SDK runs synchronous tools in worker threads, and the lock keeps them to one Carousell or database call at a time. Carousell errors become `ToolError`s whose text the host reads; a block tells it to stop.
+- `carousell/client.py`: `get_photo(url)` through the shared rate limiter, refusing anything but https on `media.karousell.com` (`is_carousell_media_url`). `photos.py` (pure): `downsize_photo`.
+- CLI: `carousearch mcp [--transport stdio|http] [--port 8766]` (`config.DEFAULT_MCP_HTTP_PORT`). Only this command imports the MCP SDK, which costs about half a second of start-up.
+- Dependencies: `mcp>=2.3,<3`, `pillow>=13`.
+- Tests: 632 offline (597 before; 35 new: MCP server 14, through the SDK's in-process client with a fake Carousell and an in-memory cache; client photo download 12; photos 6; CLI 3, one of which serves a real `CarousellClient` over the fake transport with the SQLite cache across worker threads).
+
+Live check, 2026-10-26: the stdio server, driven by the SDK's client, listed its five tools; `search_listings` for "nintendo switch" with limit 5 returned 5 listings, the first "Nintendo Switch Console gen 1 modded with Joy-Cons and Box" at S$250; `listing_photo` on its thumbnail returned a 320 x 240 JPEG (16,817 bytes, no downsizing needed). Three Carousell requests: the home page, the search, the photo.
+
+Differences from the brief for this phase:
+
+- mcp 2.3 renamed FastMCP to `MCPServer` (`mcp.server.mcpserver`, which also has `Image`). The server uses it rather than pinning `mcp<2`.
+- `build_server` takes the services rather than settings; `run_mcp_command` opens the client and the database and closes them when the server stops, as `carousearch bot` does.
+- The photo download is a new `CarousellClient.get_photo`, so it shares the rate limiter. The host check runs in the tool (a refused URL costs no request) and again in the client.
+- `screening_tags` takes an optional `query`, which the title rule uses to tell variants apart ("Switch / Switch Lite").
+- Every tool is annotated read-only and open-world. With `--transport http` a tunnel must rewrite the Host header to `localhost:8766`, because the SDK accepts only local Host headers on a server bound to 127.0.0.1.
+
+Deferred: registering and trying the server in a real host (Claude Code, Codex, the desktop app, ChatGPT); a tunnel and any authentication for the HTTP transport; caching photos; counting requests per task (the 40-request budget is advice in the usage notes; only the rate is enforced).
