@@ -4,8 +4,10 @@ import json
 import sys
 from pathlib import Path
 
+import anyio
 import httpx
 import pytest
+from mcp import Client
 
 from carousearch import cli
 from carousearch.carousell.rate_limit import RateLimiter
@@ -424,3 +426,46 @@ def test_web_serves_the_app_on_the_given_port_with_services_built_at_startup(tmp
 def test_web_defaults_to_port_8765_on_this_machine_only() -> None:
     arguments = cli.build_argument_parser().parse_args(["web"])
     assert (arguments.host, arguments.port) == ("127.0.0.1", 8765)
+
+
+# --- mcp ---------------------------------------------------------------------------
+
+
+def test_mcp_help_lists_the_transport_and_port_options(capsys) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main(["mcp", "--help"])
+
+    help_text = capsys.readouterr().out
+    assert exit_info.value.code == 0
+    assert "--transport {stdio,http}" in help_text
+    assert "--port" in help_text
+
+
+def test_mcp_defaults_to_stdio_and_to_port_8766_for_http() -> None:
+    parser = cli.build_argument_parser()
+
+    assert parser.parse_args(["mcp"]).transport == "stdio"
+    http = parser.parse_args(["mcp", "--transport", "http"])
+    assert (http.transport, http.port) == ("http", 8766)
+
+
+def test_mcp_serves_a_server_wired_to_carousell_and_the_detail_cache(tmp_path: Path) -> None:
+    carousell = FakeCarousell()
+    served = {}
+
+    async def fetch_one_listing_twice(server) -> None:
+        async with Client(server) as client:
+            for _ in range(2):  # the second call is answered from the SQLite cache, in another worker thread
+                result = await client.call_tool("listing_details", {"listing_id": "1469923094"})
+                assert result.is_error is False
+
+    def fake_serve(server, transport: str, port: int) -> None:
+        served.update(transport=transport, port=port, requests_before_any_tool_call=len(carousell.requests))
+        anyio.run(fetch_one_listing_twice, server)
+
+    exit_code = cli.run_mcp_command(tmp_path, carousell.client, RateLimiter(0, 0), "http", 9001, serve=fake_serve)
+
+    assert exit_code == 0
+    assert (served["transport"], served["port"]) == ("http", 9001)
+    assert served["requests_before_any_tool_call"] == 0
+    assert len(carousell.api_requests) == 1

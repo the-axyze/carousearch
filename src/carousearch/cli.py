@@ -1,4 +1,5 @@
-"""The `carousearch` command line: search, listing, harvest, analyze, canary, capture-fixtures, bot, whoami and web."""
+"""The `carousearch` command line: search, listing, harvest, analyze, canary, capture-fixtures, bot, whoami, web
+and mcp."""
 
 import argparse
 import asyncio
@@ -34,6 +35,7 @@ from carousearch.config import (
     CANARY_LOG_FILE_NAME,
     DATABASE_FILE_NAME,
     DEFAULT_ENV_FILE,
+    DEFAULT_MCP_HTTP_PORT,
     TELEGRAM_BOT_TOKEN_VARIABLE,
     TELEGRAM_OWNER_ID_VARIABLE,
     TelegramSettings,
@@ -62,6 +64,7 @@ from carousearch.web.app import DEFAULT_WEB_HOST, DEFAULT_WEB_PORT, WebSettings,
 ClientFactory = Callable[[RateLimiter], CarousellClient]
 PriceResolverFactory = Callable[[], PriceResolver]
 WebServer = Callable[..., None]  # uvicorn.run's shape: (app, host=..., port=...)
+McpServe = Callable[..., None]  # mcp_server.serve's shape: (server, transport, port)
 
 # Shorthands accepted by --condition in addition to the exact condition names.
 CONDITION_GROUPS: dict[str, list[Condition]] = {
@@ -127,6 +130,8 @@ def main(
         if arguments.command == "web":
             settings = WebSettings(data_dir=data_dir, screening=load_screening_settings())
             return run_web_command(settings, client_factory, rate_limiter, arguments.host, arguments.port)
+        if arguments.command == "mcp":
+            return run_mcp_command(data_dir, client_factory, rate_limiter, arguments.transport, arguments.port)
     except (ValidationError, ValueError) as error:
         print(f"error: {_describe_input_error(error)}", file=sys.stderr)
         return EXIT_USAGE_ERROR
@@ -184,6 +189,13 @@ def build_argument_parser() -> argparse.ArgumentParser:
     web = commands.add_parser("web", help="run the local web app (http://localhost:8765 by default)")
     web.add_argument("--port", type=int, default=DEFAULT_WEB_PORT, help="default %(default)s")
     web.add_argument("--host", default=DEFAULT_WEB_HOST, help="default %(default)s (this machine only)")
+
+    mcp = commands.add_parser("mcp", help="run the MCP server for agent hosts such as Claude Code (docs/MCP.md)")
+    mcp.add_argument("--transport", choices=["stdio", "http"], default="stdio",
+                     help="stdio for a host on this machine (default); http serves streamable HTTP at "
+                          "http://127.0.0.1:PORT/mcp, e.g. behind a tunnel")
+    mcp.add_argument("--port", type=int, default=DEFAULT_MCP_HTTP_PORT,
+                     help="with --transport http (default %(default)s)")
     return parser
 
 
@@ -506,6 +518,30 @@ def run_web_command(
     logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.INFO)
     app = create_app(settings, services_factory=lambda: build_web_services(settings, client_factory(rate_limiter)))
     serve(app, host=host, port=port)
+    return EXIT_OK
+
+
+def run_mcp_command(
+    data_dir: Path,
+    client_factory: ClientFactory,
+    rate_limiter: RateLimiter,
+    transport: str,
+    port: int,
+    serve: McpServe | None = None,
+) -> int:
+    """Serve the MCP server until the host disconnects (stdio) or Ctrl+C (http). No Carousell request is made
+    until a tool is called. Logs go to stderr, because with stdio, stdout carries the protocol."""
+    # Imported here so the other commands do not pay the MCP SDK's import time (about half a second).
+    from carousearch import mcp_server
+
+    logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.INFO)
+    with (
+        client_factory(rate_limiter) as client,
+        # The SDK runs tools in worker threads; McpServices.lock lets only one use the connection at a time.
+        closing(storage.open_database(data_dir / DATABASE_FILE_NAME, check_same_thread=False)) as database,
+    ):
+        services = mcp_server.McpServices(carousell=client, detail_cache=SqliteScreeningStore(database))
+        (serve or mcp_server.serve)(mcp_server.build_server(services), transport, port)
     return EXIT_OK
 
 

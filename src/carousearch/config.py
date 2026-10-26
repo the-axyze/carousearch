@@ -23,6 +23,8 @@ TELEGRAM_OWNER_ID_VARIABLE = "TELEGRAM_OWNER_ID"
 ANTHROPIC_API_KEY_VARIABLE = "ANTHROPIC_API_KEY"
 # The model that reads a multi-item listing's description for the searched variant's price.
 DEFAULT_PRICE_MODEL = "claude-haiku-5-5"
+# `carousearch mcp --transport http` listens here (the web app has 8765).
+DEFAULT_MCP_HTTP_PORT = 8766
 
 
 def default_data_dir() -> Path:

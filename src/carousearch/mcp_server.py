@@ -30,6 +30,7 @@ from pydantic import Field
 
 from carousearch.carousell.client import CAROUSELL_MEDIA_HOSTS, is_carousell_media_url
 from carousearch.carousell.errors import CarousellBlockedError, CarousellError
+from carousearch.config import DEFAULT_MCP_HTTP_PORT
 from carousearch.filters.schema import MAX_PAGE_SIZE, ListingDetail, SearchRequest, SearchResult
 from carousearch.photos import Photo, downsize_photo
 from carousearch.screening.models import Tag
@@ -39,7 +40,6 @@ SERVER_NAME = "carousearch"
 USAGE_NOTES_FILE = Path(__file__).with_name("mcp_instructions.md")
 McpTransport = Literal["stdio", "http"]
 HTTP_HOST = "127.0.0.1"  # this machine only; a tunnel reaches it from outside (docs/MCP.md)
-DEFAULT_HTTP_PORT = 8766
 DEFAULT_SEARCH_LIMIT = 20
 DEFAULT_PHOTO_MAX_WIDTH = 800
 # Every tool only reads, from a site outside this machine. Hosts such as ChatGPT skip their confirmation prompt
@@ -166,7 +166,7 @@ def build_server(services: McpServices) -> MCPServer:
     return server
 
 
-def serve(server: MCPServer, transport: McpTransport, port: int = DEFAULT_HTTP_PORT) -> None:
+def serve(server: MCPServer, transport: McpTransport, port: int = DEFAULT_MCP_HTTP_PORT) -> None:
     """Run until the host disconnects (stdio) or Ctrl+C (http: streamable HTTP at http://127.0.0.1:<port>/mcp)."""
     if transport == "stdio":
         server.run("stdio")
