@@ -28,9 +28,9 @@ shared core  SearchRequest (filters/schema.py) ──> CarousellClient (carousel
 | `canary.py`, `fixture_capture.py` | daily health check; dev command that refreshes `tests/fixtures/` |
 | `config.py`, `text_render.py`, `cli.py` | settings from `.env`, data dir, ports; terminal output; the `carousearch` command |
 | `bot/` | Telegram wizard: `state.py`, `keyboard.py`, `messages.py`, `price_input.py` (pure), `session_store.py` (in memory), `handlers.py` (I/O), `app.py` |
-| `web/` | FastAPI + Jinja2 + HTMX: `app.py`, `routes.py` (thin), `services.py` (blocking work, one call at a time), `query_params.py` and `view_models.py` (pure), `templates/`, `static/` (no build step) |
+| `web/` | FastAPI + Jinja2 + HTMX: `app.py`, `routes.py` (thin), `services.py` (blocking work, one call at a time), `query_params.py`, `view_models.py` and `prompt_view_models.py` (pure), `prompt_runs.py` (Ask mode's runs and their in-memory registry), `templates/`, `static/` (no build step) |
 | `mcp_server.py` | `build_server(McpServices)`: `search_listings`, `listing_details`, `listing_photo`, `screening_tags`, `usage_notes`. A connector only: no filtering, ranking or LLM calls |
-| `agent/` | `run_prompt.py`: Pydantic AI agent over `build_server(...)` in-process, budget hook `ToolCallGate`; `budget.py`, `trace.py` (pure); `settings.py` (`AGENT_MODEL`, budgets, keys); `prompt.py`; `result.py` (`AgentAnswer`) |
+| `agent/` | `run_prompt.py`: Pydantic AI agent over `build_server(...)` in-process, budget hook `ToolCallGate`; `budget.py`, `trace.py`, `progress.py` (pure; `progress.py` holds the events a run's optional observer receives); `settings.py` (`AGENT_MODEL`, budgets, keys); `prompt.py`; `result.py` (`AgentAnswer`) |
 
 ## Setup
 
@@ -65,7 +65,7 @@ On the owner's machine the bot and web app run under `nohup` (commands in docs/N
 ## Tests and checks
 
 ```bash
-.venv/bin/pytest                 # offline; 679 passed, 1 deselected at 2026-10-26
+.venv/bin/pytest                 # offline; 765 passed, 1 deselected at 2026-10-26
 .venv/bin/pytest -m live         # 1 test, about 5 real Carousell requests; owner's home machine only
 .venv/bin/ruff check src tests   # must print "All checks passed!"
 ```
