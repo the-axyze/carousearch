@@ -1,5 +1,5 @@
-"""The `carousearch` command line: search, listing, harvest, analyze, canary, capture-fixtures, bot, whoami, web
-and mcp."""
+"""The `carousearch` command line: search, listing, harvest, analyze, canary, capture-fixtures, bot, whoami, web,
+mcp and ask."""
 
 import argparse
 import asyncio
@@ -9,10 +9,10 @@ import sys
 import time
 from collections.abc import Callable
 from contextlib import closing
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TextIO
+from typing import TYPE_CHECKING, TextIO
 
 import httpx
 import uvicorn
@@ -20,6 +20,7 @@ from pydantic import ValidationError
 from telegram.error import TelegramError
 
 from carousearch import storage
+from carousearch.agent.settings import DEFAULT_AGENT_MODEL, AgentSettings, load_agent_settings, parse_model_name
 from carousearch.bot.app import create_bot_services, fetch_recent_senders, run_polling
 from carousearch.canary import (
     DEFAULT_MINIMUM_LISTINGS,
@@ -54,12 +55,16 @@ from carousearch.screening.pipeline import DEFAULT_MAX_DETAIL_FETCHES, Screening
 from carousearch.screening.price_resolver import NoopPriceResolver, PriceResolver, build_price_resolver
 from carousearch.screening.store import SqliteScreeningStore
 from carousearch.text_render import (
+    render_agent_answer,
     render_listing_detail,
     render_listing_table,
     render_screened_table,
     render_search_summary,
 )
 from carousearch.web.app import DEFAULT_WEB_HOST, DEFAULT_WEB_PORT, WebSettings, build_web_services, create_app
+
+if TYPE_CHECKING:
+    from pydantic_ai.models import Model
 
 ClientFactory = Callable[[RateLimiter], CarousellClient]
 PriceResolverFactory = Callable[[], PriceResolver]
@@ -132,6 +137,11 @@ def main(
             return run_web_command(settings, client_factory, rate_limiter, arguments.host, arguments.port)
         if arguments.command == "mcp":
             return run_mcp_command(data_dir, client_factory, rate_limiter, arguments.transport, arguments.port)
+        if arguments.command == "ask":
+            settings = agent_settings_from_arguments(load_agent_settings(), arguments)
+            return run_ask_command(
+                arguments.prompt, settings, data_dir, client_factory, rate_limiter, arguments.json, sys.stdout, sys.stderr
+            )
     except (ValidationError, ValueError) as error:
         print(f"error: {_describe_input_error(error)}", file=sys.stderr)
         return EXIT_USAGE_ERROR
@@ -196,6 +206,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
                           "http://127.0.0.1:PORT/mcp, e.g. behind a tunnel")
     mcp.add_argument("--port", type=int, default=DEFAULT_MCP_HTTP_PORT,
                      help="with --transport http (default %(default)s)")
+
+    ask = commands.add_parser("ask", help="answer a shopping prompt with an AI agent that uses the MCP tools")
+    ask.add_argument("prompt", help='e.g. "Nintendo Switch under S$200 with meet-up, drop bundles"')
+    ask.add_argument("--json", action="store_true", help="print the answer as JSON (AgentAnswer)")
+    ask.add_argument("--model", help=f"Pydantic AI model, provider:model (default AGENT_MODEL or {DEFAULT_AGENT_MODEL})")
+    ask.add_argument("--max-photos", type=int, help="photos the agent may look at (default AGENT_MAX_PHOTOS or 15)")
     return parser
 
 
@@ -237,6 +253,17 @@ def search_request_from_arguments(arguments: argparse.Namespace) -> SearchReques
         page_size=getattr(arguments, "limit", MAX_PAGE_SIZE),
         page_cursor=getattr(arguments, "page_cursor", None),
     )
+
+
+def agent_settings_from_arguments(settings: AgentSettings, arguments: argparse.Namespace) -> AgentSettings:
+    """The settings with --model and --max-photos applied."""
+    if arguments.max_photos is not None and arguments.max_photos < 0:
+        raise ValueError("--max-photos must be 0 or more")
+    model = parse_model_name(arguments.model) if arguments.model else settings.model
+    budget = settings.budget
+    if arguments.max_photos is not None:
+        budget = replace(budget, max_photos=arguments.max_photos)
+    return replace(settings, model=model, budget=budget)
 
 
 def screening_options_from_arguments(arguments: argparse.Namespace) -> ScreeningOptions:
@@ -543,6 +570,57 @@ def run_mcp_command(
         services = mcp_server.McpServices(carousell=client, detail_cache=SqliteScreeningStore(database))
         (serve or mcp_server.serve)(mcp_server.build_server(services), transport, port)
     return EXIT_OK
+
+
+def run_ask_command(
+    prompt: str,
+    settings: AgentSettings,
+    data_dir: Path,
+    client_factory: ClientFactory,
+    rate_limiter: RateLimiter,
+    as_json: bool,
+    output: TextIO,
+    errors: TextIO,
+    model: "Model | None" = None,
+) -> int:
+    """Answer the prompt with the agent and print the trace, kept, dropped and notes (or the AgentAnswer JSON).
+    `model` replaces the one the settings name; without it, the provider's API key must be set."""
+    missing_key = settings.missing_key_variable()
+    if model is None and missing_key:
+        print(describe_missing_agent_key(settings.model, missing_key), file=errors)
+        return EXIT_USAGE_ERROR
+    # Imported here so the other commands do not pay for Pydantic AI and the MCP SDK.
+    import pydantic_ai
+    from pydantic_ai.exceptions import AgentRunError, UserError
+
+    from carousearch.agent.run_prompt import run_prompt_sync
+    from carousearch.mcp_server import McpServices
+
+    pydantic_ai.BANNER_ENABLED = False  # this command owns its output
+    with (
+        client_factory(rate_limiter) as client,
+        # The MCP SDK runs tools in worker threads; McpServices.lock lets only one use the connection at a time.
+        closing(storage.open_database(data_dir / DATABASE_FILE_NAME, check_same_thread=False)) as database,
+    ):
+        services = McpServices(carousell=client, detail_cache=SqliteScreeningStore(database))
+        try:
+            answer = run_prompt_sync(prompt, services, settings, model)
+        except UserError as error:  # e.g. a provider Pydantic AI does not know
+            print(f"error: {error}", file=errors)
+            return EXIT_USAGE_ERROR
+        except AgentRunError as error:  # the model API failed (key refused, rate limit) or misbehaved
+            print(f"error: the agent run failed: {type(error).__name__}: {error}", file=errors)
+            return EXIT_FAILURE
+    print(answer.model_dump_json(indent=2) if as_json else render_agent_answer(answer), file=output)
+    return EXIT_OK
+
+
+def describe_missing_agent_key(model: str, variable: str) -> str:
+    return (
+        f"error: {variable} not set; the model {model} needs it.\n"
+        f"Add it to {DEFAULT_ENV_FILE} or the environment, or choose another model with --model or AGENT_MODEL "
+        "(README: 'Ask the agent')."
+    )
 
 
 def run_whoami_command(settings: TelegramSettings, output: TextIO, errors: TextIO) -> int:

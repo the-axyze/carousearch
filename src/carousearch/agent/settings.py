@@ -87,7 +87,7 @@ def parse_model_name(text: str) -> str:
     model = text.strip() or DEFAULT_AGENT_MODEL
     provider, separator, name = model.partition(":")
     if not (provider and separator and name):
-        raise ValueError(f"{AGENT_MODEL_VARIABLE} must look like provider:model, e.g. {DEFAULT_AGENT_MODEL}; got {model!r}")
+        raise ValueError(f"the model must look like provider:model, e.g. {DEFAULT_AGENT_MODEL}; got {model!r}")
     return model
 
 

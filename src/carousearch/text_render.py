@@ -2,6 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 
+from carousearch.agent.result import AgentAnswer, DroppedListing, KeptListing, ToolCall
 from carousearch.filters.schema import Listing, ListingDetail, SearchResult, SellerVerification
 from carousearch.screening.models import PriceSource, ResolvedPrice, ScreenedListing, format_sgd
 
@@ -92,6 +93,55 @@ def render_listing_detail(detail: ListingDetail) -> str:
     lines.extend(["", "Description:"])
     lines.extend(f"  {line}" for line in (detail.description or "-").splitlines())
     return "\n".join(lines)
+
+
+def render_agent_answer(answer: AgentAnswer) -> str:
+    """`carousearch ask`: the tool trace, the kept listings as a table, the dropped ones with reasons, the notes."""
+    sections = [
+        render_tool_trace(answer.tool_trace),
+        render_kept_listings(answer.kept),
+        render_dropped_listings(answer.dropped),
+        render_notes(answer.notes),
+    ]
+    return "\n\n".join(sections)
+
+
+def render_tool_trace(tool_trace: list[ToolCall]) -> str:
+    """One line per call: '  1.   1.3 s  search_listings  query="nintendo switch" limit=48', plus any non-ok status."""
+    lines = [f"Tool calls ({len(tool_trace)}):"]
+    for number, call in enumerate(tool_trace, start=1):
+        status = "" if call.status == "ok" else f"  [{call.status}]"
+        lines.append(f"{number:>3}. {call.duration_seconds:>5.1f} s  {call.tool_name:<16} {call.arguments}{status}")
+    return "\n".join(lines)
+
+
+def render_kept_listings(kept: list[KeptListing]) -> str:
+    """A table with the reason last, so it is never cut; the URL column is as wide as the longest URL."""
+    if not kept:
+        return "Kept: none."
+    url_width = max(len("URL"), *(len(item.url) for item in kept))
+    columns = [("PRICE", 9), ("TITLE", 40), ("SELLER", 16), ("URL", url_width), ("REASON", 0)]
+    rows = [[header for header, _ in columns]]
+    for item in kept:
+        price = format_sgd(item.price) if item.price is not None else "-"
+        rows.append([price, item.title, item.seller or "-", item.url, " ".join(item.reason.split())])
+    return f"Kept ({len(kept)}):\n" + "\n".join(_format_row(row, columns) for row in rows)
+
+
+def render_dropped_listings(dropped: list[DroppedListing]) -> str:
+    if not dropped:
+        return "Dropped: none."
+    lines = [f"Dropped ({len(dropped)}):"]
+    for item in dropped:
+        lines.append(f"  {_fit(item.listing_id, 10)}  {_fit(item.title, 44)}  {' '.join(item.reason.split())}")
+    return "\n".join(lines)
+
+
+def render_notes(notes: str) -> str:
+    lines = [line.strip() for line in notes.splitlines() if line.strip()]
+    if not lines:
+        return "Notes: none."
+    return "Notes:\n" + "\n".join(f"  {line}" for line in lines)
 
 
 def format_datetime(moment: datetime | None) -> str:
