@@ -3,7 +3,6 @@
 import base64
 import io
 import json
-from datetime import UTC, datetime
 
 import anyio
 from mcp import Client
@@ -11,68 +10,14 @@ from mcp.types import CallToolResult
 from PIL import Image
 
 from carousearch.carousell.errors import CarousellBlockedError
-from carousearch.carousell.parse import parse_listing_detail_response, parse_search_response
-from carousearch.filters.schema import DealMethod, ListingDetail, SearchRequest, SearchResult, SortOrder
-from carousearch.mcp_server import McpServices, build_server, load_usage_notes
+from carousearch.filters.schema import DealMethod, SearchRequest, SortOrder
+from carousearch.mcp_server import build_server, load_usage_notes
 
-from fixture_files import load_json_fixture
-
-SEARCH_RESULT = parse_search_response(load_json_fixture("search_price_condition.json"))  # 5 listings
-DETAIL = parse_listing_detail_response(load_json_fixture("listing_detail.json"))
-PHOTO_URL = "https://media.karousell.com/media/photos/products/2026/10/2/iphone_15_pro_1790934810_9e7fb979.jpg"
-NOW = datetime(2026, 10, 26, 12, 0, tzinfo=UTC)
-
-
-def jpeg_bytes(width: int, height: int) -> bytes:
-    buffer = io.BytesIO()
-    Image.new("RGB", (width, height), color="white").save(buffer, format="JPEG")
-    return buffer.getvalue()
-
-
-class FakeCarousellSource:
-    """Answers with the saved fixtures (or what the test passes) and records every call."""
-
-    def __init__(
-        self,
-        search_result: SearchResult | Exception = SEARCH_RESULT,
-        detail: ListingDetail = DETAIL,
-        photo: bytes = b"",
-    ) -> None:
-        self.search_result = search_result
-        self.detail = detail
-        self.photo = photo
-        self.search_requests: list[SearchRequest] = []
-        self.detail_requests: list[str] = []
-        self.photo_requests: list[str] = []
-
-    def search(self, request: SearchRequest) -> SearchResult:
-        self.search_requests.append(request)
-        if isinstance(self.search_result, Exception):
-            raise self.search_result
-        return self.search_result
-
-    def get_listing(self, listing_id: str) -> ListingDetail:
-        self.detail_requests.append(listing_id)
-        return self.detail
-
-    def get_photo(self, url: str) -> bytes:
-        self.photo_requests.append(url)
-        return self.photo
-
-
-class InMemoryDetailCache:
-    def __init__(self) -> None:
-        self.details: dict[str, ListingDetail] = {}
-
-    def load_detail(self, listing_id: str, now: datetime) -> ListingDetail | None:
-        return self.details.get(listing_id)
-
-    def save_detail(self, detail: ListingDetail, fetched_at: datetime) -> None:
-        self.details[detail.id] = detail
+from fake_mcp_services import DETAIL, PHOTO_URL, SEARCH_RESULT, FakeCarousellSource, fake_services, jpeg_bytes
 
 
 def build_test_server(carousell: FakeCarousellSource):
-    return build_server(McpServices(carousell=carousell, detail_cache=InMemoryDetailCache(), clock=lambda: NOW))
+    return build_server(fake_services(carousell))
 
 
 def call_tool(server, name: str, arguments: dict | None = None) -> CallToolResult:

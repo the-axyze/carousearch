@@ -53,4 +53,4 @@ line-length = 120
 [tool.ruff.lint.isort]
 known-first-party = ["carousearch"]
 # Helper modules that pytest imports from the tests/ folder.
-known-local-folder = ["fake_carousell", "fixture_files"]
+known-local-folder = ["fake_carousell", "fake_mcp_services", "fixture_files"]
