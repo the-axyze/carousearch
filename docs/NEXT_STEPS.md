@@ -1,6 +1,6 @@
 # Carousearch: next steps
 
-Written 2026-10-26 against commit `26f68c9` on `main` (identical to `origin/main`). This is the live plan. [ROADMAP.md](ROADMAP.md) keeps the original milestones and the dated status history; [CLAUDE.md](../CLAUDE.md) has the working rules.
+Written 2026-10-26 against commit `26f68c9` on `main` (identical to `origin/main`); updated the same day for phase C, on branch `feature/phase-c-prompt-mode`. This is the live plan. [ROADMAP.md](ROADMAP.md) keeps the original milestones and the dated status history; [CLAUDE.md](../CLAUDE.md) has the working rules.
 
 Labels used below: **verified** means checked against the code, or run, while this file was written on 2026-10-26. **Unverified** means taken from the docs or the owner's account and not re-checked. **Estimate** means a number nobody has measured.
 
@@ -10,8 +10,8 @@ Phase letters: phases C and D below continue the MCP and agent track in ROADMAP.
 
 ## 1. Current state (2026-10-26)
 
-- Head: `26f68c9 Keep ask's terminal output to the answer`. Everything is pushed.
-- Tests: `.venv/bin/pytest` gives 679 passed, 1 deselected (the live test), in about 4.5 s. `ruff check src tests` is clean. Both verified.
+- Head: phase C (prompt mode in the web app, tasks C1 to C5) is on branch `feature/phase-c-prompt-mode`, PR pending, on top of `main`. `main` is pushed; the branch is not.
+- Tests: `.venv/bin/pytest` gives 765 passed, 1 deselected (the live test), in about 10 s on the cloud sandbox where phase C was built. `ruff check src tests` is clean. Both verified on the branch.
 - No type checker runs (see H1).
 
 ### 1.1 Components
@@ -23,7 +23,7 @@ Phase letters: phases C and D below continue the MCP and agent track in ROADMAP.
 | Screening | `screening/` | Title rule, description price-list and floor-price rules, below-market rule, a 10-request detail budget per page, a price resolver (Claude Haiku via the `anthropic` SDK, or Noop without a key), 12-hour detail cache, price cache | Rules checked live 2026-10-25. **The price resolver has never called a real model** |
 | Market analysis | `market/`, `harvest`, `analyze` | Phase A of the analysis plan (section 1.4) | Offline tests only. The live acceptance run of the example spec has not been done (ROADMAP, phase A status) |
 | Telegram bot | `bot/` | Step-by-step search wizard, one locked session per chat (30-minute idle expiry, in memory), Next 5 / Refine / End, Details, `/save` and `/saved`, `[seen]` tags, multi-item caption line (title rule only) | **Used live by the owner** (`data/bot.log`). Running now |
-| Web app | `web/` | One page: keywords, price, condition, delivery, sort, category, "Hide multi-item posts"; card grid with resolved-price row and badges; Details panel with every tag's reason; Load more; 2-minute repeat memory | **Used live by the owner** (`data/web.log`). Running now on 127.0.0.1:8765 |
+| Web app | `web/` | One page: keywords, price, condition, delivery, sort, category, "Hide multi-item posts" with a collapsed Hidden (n) list of the hidden posts and their reasons; card grid with resolved-price row and badges; Details panel with every tag's reason; Load more; 2-minute repeat memory. **Ask mode** (Filters \| Ask switch): runs the `ask` agent in the background, polls its progress every second, shows kept cards from Carousell's data with the agent's reason, Dropped (n), notes and the tool trace; one run at a time; filter searches wait while it runs | Filters mode: **used live by the owner** (`data/web.log`), running on 127.0.0.1:8765 (the running process predates phase C). Ask mode and the Hidden section: **built, scripted models only, not run in a browser** |
 | MCP server | `mcp_server.py`, `mcp_instructions.md` | Five read-only tools over stdio or streamable HTTP; no auth on HTTP | **Verified over stdio with a script** driving the SDK client, 2026-10-26 (3 Carousell requests). **Not registered in any host yet** (verified: `~/.claude.json` has no `carousearch` entry) |
 | In-app agent | `agent/`, `ask` | Pydantic AI agent whose only tools are the MCP server's, run in-process; per-run budgets (40 tool calls, 15 photos, 200 listings) enforced by a hook; kept / dropped / notes / tool trace; `--json` | **Scripted models only. Never run against a real model** |
 | Canary | `canary.py` | One search plus one detail; exit code; one line in `data/canary.log` | One logged run (2026-10-24, OK). Not scheduled: `crontab -l` says no crontab (verified) |
@@ -38,6 +38,7 @@ Verified live:
 
 Never run live:
 - `carousearch ask` against any real model. Model and provider wiring (`infer_model`, keys from `.env`) is untested.
+- The web app's Ask mode and Hidden (n) section (phase C): no real model, no live Carousell, and no real browser. The mode switch, CSS (dark theme, phone width), HTMX polling and out-of-band swaps were checked only through `TestClient` tests and, for the Hidden swaps, a jsdom replay the C4 implementer reported (unverified; not kept in the repo).
 - The price resolver against the Anthropic API. Its prompt and the cost estimate are untested.
 - The MCP server inside a real host (Claude Code, Codex CLI, Claude desktop, ChatGPT), and the HTTP transport through a tunnel.
 - The `analyze` example spec against the live site, and a real two-page `sort=recent` fixture pair.
@@ -75,8 +76,8 @@ Deferred, per ROADMAP: the live acceptance run and a real two-page fixture. Phas
 | `ask` does not report token usage, so its cost cannot be measured from its output | `agent/` | H9 |
 | The canary is not scheduled and nothing alerts on failure | operations | H10 |
 | The price resolver calls the `anthropic` SDK directly, so it is Claude-only, unlike `ask` | `screening/price_resolver.py` | H11, Q6 |
-| "Hide multi-item posts" in the web app only counts the hidden posts; their reasons are not shown anywhere (verified: `visible_listings` in `web/view_models.py`, `partials/results.html`) | `web/` | Phase C, task C4 |
-| No photo-quality flag in the web app or bot; only `ask` or an external host can judge photos | `web/`, `bot/` | Phase C (agent path) |
+| ~~"Hide multi-item posts" in the web app only counts the hidden posts; their reasons are not shown anywhere~~ Done in C4: a collapsed Hidden (n) section lists each hidden post with its tag reasons (verified: `hidden_rows` in `web/view_models.py`, tests in `tests/test_web_routes.py`) | `web/` | Done (C4) |
+| ~~No photo-quality flag in the web app~~ Available in the web app's Ask mode, where the agent can look at photos with `listing_photo` (scripted-model tests only). Filters mode and the bot still have no photo flag | `web/`, `bot/` | Done for the web app (Ask mode); bot: none |
 | `python-telegram-bot` is installed without the `job-queue` extra (APScheduler is absent; verified), which the alert job needs | `pyproject.toml` | Phase D, task D1 |
 | No HTML or Playwright fallback if Carousell blocks the JSON API (TODO in `CarousellClient.search`) | `carousell/client.py` | Build only if the canary starts failing |
 | Commit trailers: `a39b9f8`, `9e92d10` and `307dbe0` carry `Co-Authored-By` and `Claude-Session` lines. So do the older `609f1f2`, `27d921a`, `4b97362`, `096ccd6` and `420d384` (verified). History is not rewritten, by decision | git history | none |
@@ -118,11 +119,11 @@ How the requirements map to the code today:
 | Requirement | Covered by | Gap |
 |---|---|---|
 | Flag catalogue posts whose price is not for your variant | `screening/` rules and price resolver; web badges and price row; bot caption line; `screening_tags` tool | Resolver never run live (phase L) |
-| Flag poor-quality photos | `ask` and external hosts via `listing_photo` | Not in the web app until phase C |
+| Flag poor-quality photos | `ask`, the web app's Ask mode and external hosts via `listing_photo` | Not in Filters mode or the bot; never run against a real model (phase L) |
 | Flag multi-brand or multi-model titles split by `\|` or `/` | Title rule (models, storage sizes, catalogue phrases) | Brand-only lists missed (H8) |
-| A reason for every drop | Tag reasons; `ask` dropped list | Web "Hide multi-item" hides without reasons (C4) |
+| A reason for every drop | Tag reasons; `ask` and Ask mode dropped lists; the web app's Hidden (n) section | None known |
 | Vendor-neutral models | `AGENT_MODEL` through Pydantic AI | Price resolver is Claude-only (H11) |
-| Tools defined once | `mcp_server.py` used by `ask` in-process | Keep it that way in phases C, D and M |
+| Tools defined once | `mcp_server.py` used in-process by `ask` and the web app's Ask mode | Keep it that way in phases D and M |
 
 ---
 
@@ -158,10 +159,10 @@ Each process has its own Carousell session and rate limiter, and they all share 
 | Variable | Used by | Default |
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_OWNER_ID` | `bot`, `whoami` | none; the bot exits with code 2 without them |
-| `ANTHROPIC_API_KEY` | price resolver; `ask` with an `anthropic:` model | unset: resolver off, `ask` exits 2 |
-| `OPENAI_API_KEY` | `ask` with an `openai:` model | unset |
-| `AGENT_MODEL` | `ask` | `anthropic:claude-haiku-5-5` |
-| `AGENT_MAX_TOOL_CALLS`, `AGENT_MAX_PHOTOS`, `AGENT_MAX_LISTINGS` | `ask` | 40, 15, 200 |
+| `ANTHROPIC_API_KEY` | price resolver; `ask` and the web app's Ask mode with an `anthropic:` model | unset: resolver off, `ask` exits 2, Ask mode's Run is disabled |
+| `OPENAI_API_KEY` | `ask` and Ask mode with an `openai:` model | unset |
+| `AGENT_MODEL` | `ask`, the web app's Ask mode | `anthropic:claude-haiku-5-5` |
+| `AGENT_MAX_TOOL_CALLS`, `AGENT_MAX_PHOTOS`, `AGENT_MAX_LISTINGS` | `ask`, the web app's Ask mode | 40, 15, 200 |
 | `CAROUSEARCH_DATA_DIR` | everything | `~/carousearch/data` |
 
 The web app reads its settings once at start-up, so it needs a restart after `.env` changes.
@@ -209,16 +210,18 @@ Effort is in solo-developer days, as in ROADMAP.md, and is a rough estimate.
 | H1, H2 | pyright; the `cli.py` readability fix | 0.5 day | nothing | no |
 | H9 | Token usage in `AgentAnswer` | 0.25 day | nothing | no |
 | L | First live validation with a real model | 1 to 2 hours | an API key (H9 helps) | yes: key, present for the run |
-| C | Prompt mode in the web app | 2 to 3 days | nothing (L before release) | screenshots after L |
+| C | Prompt mode in the web app | **Done** (C1 to C5, 2026-10-26; branch `feature/phase-c-prompt-mode`, PR pending) | nothing (L before release) | screenshots after L |
 | H8 | Title rule for brand-only lists | 0.5 day | nothing | no |
-| D | Saved searches and prompts, alert job | 2 to 3 days | C for "save a prompt" | to enable alerts |
+| D | Saved searches and prompts, alert job | 2 to 3 days | C for "save a prompt" (done) | to enable alerts |
 | H3, H10 | systemd user services; scheduled canary with a Telegram alert | 1 day | nothing | yes: linger, Task Scheduler |
 | H4 to H7, H11 | MCP auth, photo cache, bot sessions in SQLite, external request budget, vendor-neutral resolver | 2.5 to 3.5 days | as listed | H4 only if a tunnel is wanted |
 | M | Saved searches over MCP (optional) | 0.5 day | D | decide Q9 |
 
-Suggested order: H2 and H1, then H9, then C (offline, with scripted models), with L as soon as a key exists, then H8, D, H3 and H10, then the rest as needed.
+Suggested order: H2 and H1, then H9 (C is done, offline, with scripted models), with L as soon as a key exists, then H8, D, H3 and H10, then the rest as needed.
 
-### 4.1 Phase C: prompt mode in the web app (2 to 3 days)
+### 4.1 Phase C: prompt mode in the web app (done 2026-10-26, except the after-L acceptance bullet)
+
+**Status.** C1 to C5 are done on branch `feature/phase-c-prompt-mode` (PR pending). [ROADMAP.md](ROADMAP.md), "Web app: phase C status, prompt mode", has what was built and the deviations from the design below (among them: the callback is `observer`; waiting searches are a partial that asks again every 2 s; `POST /ask` also refuses non-HTMX requests). Every acceptance bullet but the last is covered by offline tests (verified); nothing has run against a real model or in a real browser. The design below is kept as it was proposed.
 
 **Goal.** In the web app, type a plain-English request, watch the agent work, then read the kept listings as cards with the agent's reason, every dropped listing with its reason, the notes and the tool trace. Built on `agent.run_prompt.run_prompt`; no new tools and no second agent loop.
 
@@ -234,21 +237,21 @@ Suggested order: H2 and H1, then H9, then C (offline, with scripted models), wit
 - Errors (`AgentRunError`, `UserError`, Carousell errors) show a calm message; details go to the log only, as the existing routes do.
 
 **Tasks.**
-1. C1: progress callback and search-result capture in `agent/run_prompt.py` (pure helpers in `agent/trace.py` or a new small module), with `FunctionModel` tests.
-2. C2: `web/prompt_runs.py`; routes `POST /ask` and `GET /ask/{run_id}`; `AgentSettings` loaded by `carousearch web` and passed in through `WebSettings`.
-3. C3: pure view functions (kept card, dropped row, trace row, progress) in `web/view_models.py`, or in a new `web/prompt_view_models.py` if that file gets too long; templates and CSS.
-4. C4: in Filters mode, "Hide multi-item posts" lists the hidden posts in a collapsed "Hidden (n)" section with their tag reasons.
-5. C5: docs: README "Web app" section, a ROADMAP status paragraph, this file.
+1. C1 (done): progress callback and search-result capture in `agent/run_prompt.py` (pure helpers in `agent/trace.py` or a new small module), with `FunctionModel` tests. Built as `agent/progress.py`.
+2. C2 (done): `web/prompt_runs.py`; routes `POST /ask` and `GET /ask/{run_id}`; `AgentSettings` loaded by `carousearch web` and passed in through `WebSettings`.
+3. C3 (done): pure view functions (kept card, dropped row, trace row, progress) in `web/view_models.py`, or in a new `web/prompt_view_models.py` if that file gets too long; templates and CSS. Built in `web/prompt_view_models.py`.
+4. C4 (done): in Filters mode, "Hide multi-item posts" lists the hidden posts in a collapsed "Hidden (n)" section with their tag reasons.
+5. C5 (done): docs: README "Web app" section, a ROADMAP status paragraph, this file.
 
-**Acceptance.**
+**Acceptance** (all but the last bullet verified by tests on the branch).
 - Through `TestClient` with a scripted `FunctionModel`: `POST /ask` returns the progress partial; polling shows each tool call as it finishes; the final partial shows kept cards with real thumbnail and price plus the model's reason, a Dropped section with every dropped listing and its reason, the notes, and the trace with statuses.
 - A budget refusal appears as `refused` in the trace and in the notes.
 - Without a provider key, Run is disabled, the message names the variable, and no model or Carousell call is made.
 - A filter search during a run never overlaps an agent tool call (a fake client that fails on overlapping calls proves it).
 - With "Hide multi-item posts" on, the hidden posts are listed with their reasons.
 - No GET request starts a model run.
-- `pytest` green (679 plus the new tests), ruff clean.
-- After phase L: one real prompt in the browser, with desktop and mobile screenshots in `docs/examples/`.
+- `pytest` green (679 plus the new tests), ruff clean. Done: 765 passed.
+- After phase L: one real prompt in the browser, with desktop and mobile screenshots in `docs/examples/`. **Open.**
 
 **Verify.**
 ```bash
@@ -263,7 +266,7 @@ Suggested order: H2 and H1, then H9, then C (offline, with scripted models), wit
 
 **Design (proposed).**
 - Storage: a new table `alerts` (id, name unique, kind `search` or `prompt`, `request_json`, `prompt`, `interval_minutes`, `paused`, `last_run_at`, `created_at`) and `alert_seen` (alert_id, listing_id, first_seen_at; primary key on both ids). The existing `saved_searches`, `/save` and `/saved` keep working unchanged; the analysis plan's convention allows new tables and guarded `ADD COLUMN` only.
-- For a prompt, the "plan" saved is the prompt plus the search requests the agent actually made. `ToolCallGate.records` holds the arguments each call was made with, so the `search_listings` requests can be recovered from a run.
+- For a prompt, the "plan" saved is the prompt plus the search requests the agent actually made. `ToolCallGate.records` holds the arguments each call was made with, so the `search_listings` requests can be recovered from a run. Since phase C, the web app keeps its recent runs in `PromptRunRegistry` (`web/prompt_runs.py`); a `PromptRun` has the prompt, its `ToolCallEvent`s (each with an arguments summary, not the full arguments) and the listings its searches returned. "Save a prompt" in the web app can start from the run in the registry; recovering the exact search requests needs the gate's records, which `run_prompt` does not return today.
 - Each run starts cheap: the saved search sorted by recent, page 1 (one request), then new ids against `alert_seen`.
   - Search alerts: screen the new listings with `screen_listings` (rules, budgeted details, the resolver when a key exists), leave out multi-item posts if the alert says so, and push the rest.
   - Prompt alerts: only when there are new listings, run the agent with the saved prompt and the new listing ids, under a smaller budget (for example 10 tool calls, 3 photos). Push the kept listings with reasons and the number dropped.
@@ -342,6 +345,8 @@ Each has the default that will be assumed if there is no answer.
 | Q9 | Should external hosts be able to create or delete alerts over MCP? | No; phase M is read-only |
 | Q10 | Should the web app and agent mark listings as seen (which changes the bot's `[seen]` tags)? | No, as today |
 | Q11 | systemd user services or a Windows Task Scheduler task per process? | systemd user services (systemd is already on), plus one Task Scheduler task to start WSL at logon |
+| Q12 | Should Run be disabled while an Ask run is in progress, instead of a second Run being refused with a message? | No; keep the refusal (the message shows, and the first run's progress keeps showing under it) |
+| Q13 | Should Ask mode show the last finished run's answer after a page reload? | No, until asked (the registry keeps the last 10 runs, but the page shows only a run in flight) |
 
 ---
 
@@ -355,7 +360,7 @@ Each has the default that will be assumed if there is no answer.
 4. `docs/MCP.md` for MCP or agent work; `docs/ANALYSIS_AND_SCREENING_PLAN.md` for market analysis only; `docs/CAROUSELL_ACCESS_NOTES.md` and `docs/FEASIBILITY.md` for Carousell internals and the risk background.
 5. The module docstrings of the modules to change, then their tests.
 
-Then check the baseline: `git status`, `git log --oneline -5`, `.venv/bin/pytest -q` (679 passed, 1 deselected, or more if work has landed since), `.venv/bin/ruff check src tests`.
+Then check the baseline: `git status`, `git log --oneline -5`, `.venv/bin/pytest -q` (765 passed, 1 deselected, or more if work has landed since), `.venv/bin/ruff check src tests`.
 
 If you are working from GitHub without the owner's machine: there is no `.env`, no `data/` and no running process; do not make live requests; list every owner-only step (section 3.7) in your report instead of attempting it.
 
