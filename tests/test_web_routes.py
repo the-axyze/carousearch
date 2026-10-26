@@ -242,6 +242,57 @@ def test_results_honour_hide_multi_item() -> None:
     assert "6 of 1,000+ results · 2 multi-item hidden" in page
 
 
+def hidden_section(page: str) -> str:
+    """The collapsed "Hidden (n)" section of a first page."""
+    match = re.search(r'<details id="hidden-posts" class="hidden-posts">.*?</details>', page, re.DOTALL)
+    assert match, "no hidden section"
+    return match.group(0)
+
+
+def test_hidden_multi_item_posts_are_listed_with_their_reasons() -> None:
+    with open_client(FakeCarousell()) as client:
+        page = client.get(SEARCH + "&hide_multi_item=1").text
+    grid = page.split('id="results-grid"', 1)[1].split('id="hidden-posts"', 1)[0]
+    assert "/listing/200" not in grid and "/listing/201" not in grid
+    section = hidden_section(page)
+    assert '<summary id="hidden-summary">Hidden (2)</summary>' in section
+    assert section.count('class="hidden-row"') == 2
+    assert 'data-listing-id="200"' in section and 'data-listing-id="201"' in section
+    assert CATALOGUE_TITLE in section and MAX_ONLY_TITLE in section
+    assert 'target="_blank" rel="noopener noreferrer"' in section
+    assert '<span class="hidden-price">S$579</span>' in section and '<span class="hidden-price">S$1,199</span>' in section
+    assert "<li>Multi-item title: title names 3 variants" in section
+    assert "<li>Price list: description lists 3 prices" in section
+
+
+def test_without_hide_multi_item_there_is_no_hidden_section() -> None:
+    with open_client(FakeCarousell()) as client:
+        first = client.get(SEARCH).text
+        more = client.get(SEARCH + "&cursor=cursor-2&shown=8&multi_item=2&hidden=0&screened=3").text
+    for page in (first, more):
+        assert "hidden-posts" not in page and "hidden-summary" not in page and "hidden-row" not in page
+
+
+def test_hide_multi_item_shows_hidden_zero_when_nothing_was_hidden() -> None:
+    listings = [make_listing("300", "iPhone 15 Pro 256GB Natural", 800)]
+    ordinary_only = FakeCarousell(pages={None: SearchResult(listings=listings, total=1, total_display="1", next_page=None)})
+    with open_client(ordinary_only) as client:
+        page = client.get(SEARCH + "&hide_multi_item=1").text
+    section = hidden_section(page)
+    assert "Hidden (0)" in section and "hidden-row" not in section
+
+
+def test_load_more_appends_the_hidden_posts_and_updates_the_count_out_of_band() -> None:
+    with open_client(FakeCarousell()) as client:
+        page = client.get(SEARCH + "&hide_multi_item=1&cursor=cursor-2&shown=6&multi_item=2&hidden=2&screened=3").text
+    assert page.count('class="card"') == 1 and "/listing/400" not in page.split("<summary", 1)[0]
+    assert '<summary id="hidden-summary" hx-swap-oob="true">Hidden (3)</summary>' in page
+    appended = page.split('<ul hx-swap-oob="beforeend:#hidden-list">', 1)[1]
+    assert appended.count('class="hidden-row"') == 1 and 'data-listing-id="400"' in appended
+    assert "<li>Multi-item title: title names 3 variants" in appended
+    assert "7 results · 3 multi-item hidden" in page
+
+
 def test_load_more_button_appears_only_when_there_is_a_next_page() -> None:
     with open_client(FakeCarousell()) as client:
         page = client.get(SEARCH).text

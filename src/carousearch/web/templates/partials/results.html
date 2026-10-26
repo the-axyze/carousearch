@@ -1,4 +1,5 @@
-{#- The results region: an error, nothing found, the first page of cards, or (before any search) a hint. -#}
+{#- The results region: an error, nothing found, the first page of cards (with the posts "Hide multi-item posts"
+    hid, collapsed under the grid), or (before any search) a hint. -#}
 {% if error %}
   {% include "partials/error.html" %}
 {% elif results and results.nothing_found %}
@@ -8,6 +9,14 @@
   <div id="results-grid" class="grid">
     {%- for card in results.cards %}{% include "partials/card.html" %}{% endfor -%}
   </div>
+  {%- if results.hide_multi_item %}
+  <details id="hidden-posts" class="hidden-posts">
+    <summary id="hidden-summary">{{ results.hidden_summary }}</summary>
+    <ul id="hidden-list" class="hidden-list">
+      {%- for row in results.hidden %}{% include "partials/hidden_row.html" %}{% endfor -%}
+    </ul>
+  </details>
+  {%- endif %}
   {% include "partials/load_more.html" %}
 {% else %}
   <p class="notice">Search Carousell Singapore. Press <kbd>/</kbd> to start typing.</p>
