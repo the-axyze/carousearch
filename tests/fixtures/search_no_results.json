@@ -1,0 +1,38 @@
+{
+  "data": {
+    "appliedContext": {
+      "filters": [
+        {
+          "fieldName": "collections",
+          "idsOrKeywords": {
+            "value": [
+              "0"
+            ]
+          }
+        }
+      ],
+      "query": "r15 bike with low quality image"
+    },
+    "filterBubbles": [
+      {
+        "label": "Delivery",
+        "fieldName": "_delivery"
+      },
+      {
+        "label": "In",
+        "displayValue": "All",
+        "fieldName": "collection_text"
+      }
+    ],
+    "formattedTotal": "0",
+    "isSellerSearch": false,
+    "session": "(trimmed: opaque 1324-character session token)",
+    "sfContext": {
+      "collectionId": "393"
+    },
+    "shouldPromptKeywordCorrected": false,
+    "showBpOnboarding": false,
+    "total": {},
+    "searchContext": "0a0208141a0408bbe17222230a1f7231352062696b652077697468206c6f77207175616c69747920696d61676578013204080178013a02180b4204080110014a0620012801400150015a0208016a0473657270"
+  }
+}

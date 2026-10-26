@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from httpx import Response
@@ -28,6 +29,7 @@ from carousearch.web.app import WebSettings, create_app
 from carousearch.web.routes import RequestAbandoned, call_in_turn
 from carousearch.web.services import WebServices
 
+from fake_carousell import FakeCarousell as FakeCarousellSite
 from fake_mcp_services import jpeg_bytes
 from fixture_files import load_json_fixture
 from scripted_model import ScriptedModel, calls, final_answer
@@ -331,6 +333,16 @@ def test_an_empty_search_says_nothing_matches() -> None:
     nothing = FakeCarousell(pages={None: SearchResult(listings=[], total=0, total_display="0", next_page=None)})
     with open_client(nothing) as client:
         assert "No listings match" in client.get("/results?q=unobtainium").text
+
+
+def test_carousells_real_zero_match_response_shows_the_empty_state_not_an_error() -> None:
+    # The captured response omits `data.results`; here it goes through the real client and parser.
+    no_results = httpx.Response(200, json=load_json_fixture("search_no_results.json"))
+    site = FakeCarousellSite(page_responses={None: no_results})
+    with site.client() as carousell, open_client(carousell) as client:
+        page = client.get("/results?q=r15+bike+with+low+quality+image").text
+    assert "No listings match" in page
+    assert 'class="error-box"' not in page
 
 
 def test_a_repeated_search_is_answered_from_memory_until_it_goes_stale() -> None:

@@ -97,10 +97,9 @@ def _html_title(page_html: str) -> str:
 
 def parse_search_response(response_json: Any) -> SearchResult:
     data = require_key(response_json, "data", "", dict)
-    results = require_key(data, "results", "data", list)
     listings = [
         parse_listing_card(require_key(item, "listingCard", f"data.results[{index}]", dict))
-        for index, item in enumerate(results)
+        for index, item in enumerate(_read_results(data))
         if isinstance(item, dict) and "listingCard" in item  # skip banners and other promos
     ]
     return SearchResult(
@@ -111,11 +110,20 @@ def parse_search_response(response_json: Any) -> SearchResult:
     )
 
 
+def _read_results(data: dict) -> list:
+    # A search with no matches omits `results` (protobuf-style JSON drops empty lists) and sends a zero `total`.
+    # Only that pairing means no listings; a missing `results` with a missing or nonzero `total` is a schema change.
+    if "results" not in data and _read_total(data) == 0:
+        return []
+    return require_key(data, "results", "data", list)
+
+
 def _read_total(data: dict) -> int | None:
     total = data.get("total")
     if not isinstance(total, dict):
         return None
-    return long_to_int(total.get("value"))
+    # Zero is omitted like any protobuf default: a search with no matches sends "total": {}.
+    return long_to_int(total.get("value", 0))
 
 
 def _read_next_page(data: dict) -> str | None:

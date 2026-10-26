@@ -231,6 +231,7 @@ Notes:
 - `seller.sellerType` is sometimes present: `"Professional Seller"` on 41 of 96 sampled cards.
 - `tags` seen: `Buyer Protection`, and a Carousell Certified logo image tag.
 - `results` can contain non-listing items (`banner` seen).
+- A search with no matches omits `results` and `hasMore` entirely and sends `"total": {}` (zero omitted, protobuf-style) with `"formattedTotal": "0"` (seen 2026-10-27, `tests/fixtures/search_no_results.json`). The parser reads that as zero listings; a missing `results` with a missing or nonzero `total` is still a schema error.
 - `cardType` values seen: absent, 3, 9, 13. Meaning unknown.
 - `sfContext.collectionId` is a **cc_id** (e.g. laptops: id 1793, cc_id 2195; the response said `2195`). Carousell auto-narrows the category from the query: "iphone 15 pro" in Mobile Phones (5707) came back with `sfContext.collectionId = 6359` ("iPhone 15 Series").
 

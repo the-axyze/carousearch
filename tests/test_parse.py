@@ -103,11 +103,33 @@ def test_last_page_has_no_next_page() -> None:
     assert parse_search_response(response).next_page is None
 
 
-def test_missing_results_key_raises_schema_error_naming_the_key() -> None:
+def test_search_without_matches_has_no_listings_and_no_next_page() -> None:
+    response = load_json_fixture("search_no_results.json")
+    assert "results" not in response["data"]  # Carousell omits the key when nothing matches
+
+    result = parse_search_response(response)
+
+    assert result.listings == []
+    assert result.total == 0
+    assert result.total_display == response["data"]["formattedTotal"] == "0"
+    assert result.next_page is None
+
+
+@pytest.mark.parametrize("total", [{"value": {"low": 36, "high": 0}}, None], ids=["nonzero total", "no total"])
+def test_missing_results_without_a_zero_total_raises_schema_error_naming_the_key(total: dict | None) -> None:
     response = load_json_fixture("search_price_condition.json")
     del response["data"]["results"]
+    response["data"].pop("total")
+    if total is not None:
+        response["data"]["total"] = total
 
     with pytest.raises(CarousellSchemaError, match=r"'data\.results'"):
+        parse_search_response(response)
+
+
+@pytest.mark.parametrize("response", [{}, {"data": None}, {"data": []}, {"errors": [{"message": "x"}]}, []])
+def test_missing_or_malformed_data_raises_schema_error(response: object) -> None:
+    with pytest.raises(CarousellSchemaError, match=r"'data'"):
         parse_search_response(response)
 
 
