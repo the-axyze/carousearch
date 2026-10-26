@@ -7,9 +7,11 @@ import pytest
 from carousearch.filters.schema import Condition, DealMethod, SearchRequest, SortOrder
 from carousearch.web.query_params import (
     WEB_PAGE_SIZE,
+    PageMode,
     ResultsTally,
     hide_multi_item_from_params,
     load_more_url,
+    mode_from_params,
     page_url,
     params_from_search_request,
     params_from_tally,
@@ -125,6 +127,15 @@ def test_a_non_numeric_category_is_ignored(text: str) -> None:
 )
 def test_hide_multi_item_flag(values: list[str], expected: bool) -> None:
     assert hide_multi_item_from_params({"hide_multi_item": values}) is expected
+
+
+@pytest.mark.parametrize(
+    ("values", "expected"),
+    [(["ask"], PageMode.ASK), ([" ASK "], PageMode.ASK), (["filters"], PageMode.FILTERS), (["chat"], PageMode.FILTERS),
+     ([], PageMode.FILTERS)],
+)
+def test_mode_is_ask_only_when_the_url_says_so(values: list[str], expected: PageMode) -> None:
+    assert mode_from_params({"mode": values}) is expected
 
 
 def test_tally_round_trips_and_malformed_counts_are_zero() -> None:
