@@ -597,6 +597,9 @@ def run_ask_command(
     from carousearch.mcp_server import McpServices
 
     pydantic_ai.BANNER_ENABLED = False  # this command owns its output
+    # Building the MCP server turns on INFO logging (every HTTP request) unless logging is already set up; keep the
+    # terminal to the answer, with warnings and errors on stderr.
+    logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.WARNING)
     with (
         client_factory(rate_limiter) as client,
         # The MCP SDK runs tools in worker threads; McpServices.lock lets only one use the connection at a time.
