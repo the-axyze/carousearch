@@ -5,6 +5,7 @@ cookies and the CSRF token, then send the token as the `csrf-token` header on ev
 """
 
 from typing import Any, Self
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -31,6 +32,10 @@ BROWSER_USER_AGENT = (
 )
 BROWSER_HEADERS = {"User-Agent": BROWSER_USER_AGENT, "Accept-Language": "en-SG,en;q=0.9"}
 HTML_ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+# No AVIF: the formats asked for are the ones model hosts accept as image input.
+PHOTO_ACCEPT = "image/webp,image/jpeg,image/png,image/*;q=0.8"
+# Listing photos (search-card thumbnails and the detail's image_urls) come from this host.
+CAROUSELL_MEDIA_HOSTS = frozenset({"media.karousell.com"})
 
 # 422 is what the API returns when cookies or the CSRF token are missing (access notes section 2).
 SESSION_REJECTED_STATUS_CODES = frozenset({401, 403, 422})
@@ -94,6 +99,20 @@ class CarousellClient:
             extra_headers={"y-build-no": "1"},
         )
 
+    def get_photo(self, url: str) -> bytes:
+        """One listing photo as the bytes Carousell's media host sends. No session needed; rate-limited as usual."""
+        if not is_carousell_media_url(url):
+            allowed_hosts = ", ".join(sorted(CAROUSELL_MEDIA_HOSTS))
+            raise ValueError(f"only https photo URLs on {allowed_hosts} can be downloaded, got {url!r}")
+        response = self._send("GET", url, headers={"Accept": PHOTO_ACCEPT, "Referer": self._base_url + "/"})
+        raise_if_blocked(response.status_code, response.headers, response.text)
+        if response.status_code != 200:
+            raise CarousellHTTPError(f"photo {url} returned HTTP {response.status_code}", response.status_code)
+        content_type = response.headers.get("content-type", "")
+        if not content_type.startswith("image/"):
+            raise CarousellSchemaError(f"photo {url} is not an image (content-type {content_type or 'missing'})")
+        return response.content
+
     def _call_api(
         self,
         method: str,
@@ -155,6 +174,15 @@ def decode_api_response(response: httpx.Response, endpoint: str) -> Any:
     except ValueError as error:
         content_type = response.headers.get("content-type", "unknown")
         raise CarousellSchemaError(f"response from {endpoint} is not JSON (content-type {content_type})") from error
+
+
+def is_carousell_media_url(url: str) -> bool:
+    """True for an https URL on one of CAROUSELL_MEDIA_HOSTS; False for any other host or scheme."""
+    try:
+        parts = urlsplit(url)
+    except ValueError:  # malformed, e.g. an unclosed IPv6 bracket
+        return False
+    return parts.scheme == "https" and parts.hostname in CAROUSELL_MEDIA_HOSTS
 
 
 def create_carousell_client(

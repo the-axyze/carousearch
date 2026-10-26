@@ -3,13 +3,13 @@ import json
 import httpx
 import pytest
 
-from carousearch.carousell.client import BROWSER_USER_AGENT, CarousellClient
+from carousearch.carousell.client import BROWSER_USER_AGENT, CarousellClient, is_carousell_media_url
 from carousearch.carousell.errors import CarousellBlockedError, CarousellHTTPError, CarousellSchemaError
 from carousearch.carousell.rate_limit import RateLimiter
 from carousearch.filters.payload import build_search_payload
 from carousearch.filters.schema import SearchRequest
 
-from fake_carousell import BOOTSTRAP_PATH, SEARCH_PATH, FakeCarousell
+from fake_carousell import BOOTSTRAP_PATH, SEARCH_PATH, FakeCarousell, no_wait_rate_limiter
 from fixture_files import load_json_fixture
 
 REQUEST = SearchRequest(query="iphone 15", price_max=900)
@@ -178,3 +178,72 @@ def test_every_request_waits_for_the_rate_limiter() -> None:
     assert len(carousell.requests) == 3
     assert clock.sleeps == pytest.approx([1.2, 1.2])
     assert jitter_ranges == [(-0.3, 0.3), (-0.3, 0.3)]
+
+
+# --- photos ------------------------------------------------------------------------
+
+PHOTO_URL = "https://media.karousell.com/media/photos/products/2026/10/2/iphone_15_pro_1790934810_9e7fb979_thumbnail.jpg"
+
+
+def photo_host(response: httpx.Response) -> tuple[CarousellClient, list[httpx.Request]]:
+    """A client whose every request is answered with `response`, and the list of requests it sent."""
+    requests: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return response
+
+    return CarousellClient(httpx.Client(transport=httpx.MockTransport(handle)), no_wait_rate_limiter()), requests
+
+
+def test_get_photo_downloads_the_photo_without_a_session_bootstrap() -> None:
+    client, requests = photo_host(httpx.Response(200, content=b"jpeg bytes", headers={"content-type": "image/jpeg"}))
+
+    assert client.get_photo(PHOTO_URL) == b"jpeg bytes"
+    assert [str(request.url) for request in requests] == [PHOTO_URL]
+    assert requests[0].headers["user-agent"] == BROWSER_USER_AGENT
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://evil.example/photo.jpg",
+        "http://media.karousell.com/media/photo.jpg",
+        "https://media.karousell.com.evil.example/photo.jpg",
+        "https://media.karousell.com@evil.example/photo.jpg",
+        "https://www.carousell.sg/",
+        "file:///etc/passwd",
+        "https://[media.karousell.com/photo.jpg",
+    ],
+)
+def test_only_https_urls_on_the_media_host_are_carousell_photos(url: str) -> None:
+    assert is_carousell_media_url(url) is False
+
+
+def test_get_photo_refuses_other_hosts_without_sending_a_request() -> None:
+    client, requests = photo_host(httpx.Response(200, content=b"x", headers={"content-type": "image/jpeg"}))
+
+    with pytest.raises(ValueError, match="media.karousell.com"):
+        client.get_photo("https://evil.example/photo.jpg")
+    assert requests == []
+
+
+def test_get_photo_error_status_raises_http_error() -> None:
+    client, _ = photo_host(httpx.Response(404, text="not found"))
+
+    with pytest.raises(CarousellHTTPError, match="HTTP 404"):
+        client.get_photo(PHOTO_URL)
+
+
+def test_get_photo_that_is_not_an_image_raises_schema_error() -> None:
+    client, _ = photo_host(httpx.Response(200, text="<html></html>", headers={"content-type": "text/html"}))
+
+    with pytest.raises(CarousellSchemaError, match="not an image"):
+        client.get_photo(PHOTO_URL)
+
+
+def test_get_photo_rate_limited_by_carousell_raises_blocked_error() -> None:
+    client, _ = photo_host(httpx.Response(429))
+
+    with pytest.raises(CarousellBlockedError):
+        client.get_photo(PHOTO_URL)
