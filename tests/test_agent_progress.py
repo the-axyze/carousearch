@@ -69,7 +69,8 @@ def test_budget_used_reads_the_counters_and_the_caps() -> None:
 def test_a_started_event_has_no_status_duration_or_listings() -> None:
     event = started_event("search_listings", SEARCH, ToolBudget(AgentBudget()))
 
-    assert (event.phase, event.tool_name, event.arguments) == ("started", "search_listings", 'query="iphone 15" price_max=700 limit=5')
+    assert (event.phase, event.tool_name) == ("started", "search_listings")
+    assert event.arguments == 'query="iphone 15" price_max=700 limit=5'
     assert (event.status, event.duration_seconds, event.listings) == (None, 0.0, ())
 
 
@@ -84,4 +85,5 @@ def test_only_an_ok_search_carries_listings() -> None:
     budget = ToolBudget(AgentBudget())
 
     assert finished_event("search_listings", SEARCH, "failed", 0.2, budget).listings == ()
-    assert finished_event("listing_details", {"listing_id": "1"}, "ok", 0.2, budget, search_tool_result()).listings == ()
+    details = finished_event("listing_details", {"listing_id": "1"}, "ok", 0.2, budget, search_tool_result())
+    assert details.listings == ()
