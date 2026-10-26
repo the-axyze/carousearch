@@ -49,6 +49,7 @@ def create_app(settings: WebSettings, services_factory: ServicesFactory | None =
         try:
             yield
         finally:
+            await services.prompt_runs.stop()  # an Ask run in flight must not outlive the client it uses
             services.close()
 
     app = FastAPI(title="Carousearch", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)

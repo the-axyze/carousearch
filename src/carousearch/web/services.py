@@ -17,6 +17,7 @@ from carousearch.agent.settings import AgentSettings
 from carousearch.filters.schema import ListingDetail, SearchRequest, SearchResult
 from carousearch.screening.models import ScreenedListing
 from carousearch.screening.pipeline import ScreeningServices, screen_listings
+from carousearch.web.prompt_runs import PromptRunRegistry
 from carousearch.web.view_models import ScreenedPage
 
 if TYPE_CHECKING:  # Pydantic AI is imported only when an Ask run starts (web/prompt_runs.py)
@@ -98,6 +99,7 @@ class WebServices:
     turn: asyncio.Lock = field(default_factory=asyncio.Lock)
     agent: AgentSettings = field(default_factory=AgentSettings)  # Ask mode: AGENT_MODEL, budgets, provider keys
     agent_model: "Model | None" = None  # replaces the model AGENT_MODEL names; tests inject a scripted one
+    prompt_runs: PromptRunRegistry = field(default_factory=PromptRunRegistry)  # Ask mode's recent runs
 
 
 def search_and_screen(request: SearchRequest, services: WebServices) -> ScreenedPage:
