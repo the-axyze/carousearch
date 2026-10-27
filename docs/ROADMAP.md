@@ -387,6 +387,6 @@ Built on branch `feature/tiered-agent-tools` (from `feature/phase-c-prompt-mode`
 - Four local tools that pass through the same budget gate as the MCP tools: `run_python` (a Landlock-confined `python -I -S` subprocess over the run's `listings.db`), `judge_listings` and `judge_photos` (worker model, batched, cached in `judgement_cache`), `photo_metrics` (no model).
 - MCP server: `category_fields` (tree snapshot plus live fieldset) and `fields` on `search_listings`.
 - Hosted web search capped per run, Pydantic AI prompt caching, and a cost estimate per model in `ask` and Ask mode (H9).
-- Tests: 895 offline (775 before; 120 new), ruff clean.
+- Tests: 896 offline (775 before; 121 new), ruff clean.
 
 Live check: four `ask` runs on the owner's two motorcycle prompts with `openai:gpt-5.4-mini` and `openai:gpt-5.4-nano`, US$0.026 to US$0.039 and 5 to 14 Carousell requests each. Every tool worked; the planner model follows multi-step prompts only partly (follow-up T1 in NEXT_STEPS). Ask mode has still not been opened in a real browser.

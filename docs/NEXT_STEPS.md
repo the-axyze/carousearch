@@ -11,7 +11,7 @@ Phase letters: phases C and D below continue the MCP and agent track in ROADMAP.
 ## 1. Current state (2026-10-26)
 
 - Head: phase C (prompt mode in the web app, tasks C1 to C5) is on branch `feature/phase-c-prompt-mode` (PR #4). The tiered agent (section 4.6) is on `feature/tiered-agent-tools`, branched from it on 2026-10-27, not pushed.
-- Tests: `.venv/bin/pytest` gives 895 passed, 1 deselected (the live test), in about 13 s on the owner's machine (verified 2026-10-27 on `feature/tiered-agent-tools`; 775 before it). `ruff check src tests` is clean.
+- Tests: `.venv/bin/pytest` gives 896 passed, 1 deselected (the live test), in about 13 s on the owner's machine (verified 2026-10-27 on `feature/tiered-agent-tools`; 775 before it). `ruff check src tests` is clean.
 - No type checker runs (see H1).
 
 ### 1.1 Components
@@ -336,7 +336,7 @@ Acceptance: the tool is listed with the read-only annotation; a test with an in-
 
 ### 4.6 Tiered agent tools (done 2026-10-27, branch `feature/tiered-agent-tools`)
 
-**Status.** Built and committed on `feature/tiered-agent-tools` (not pushed). 895 offline tests pass, ruff is clean. Run live four times through `carousearch ask` (2026-10-27).
+**Status.** Built and committed on `feature/tiered-agent-tools` (not pushed). 896 offline tests pass, ruff is clean. Run live four times through `carousearch ask` (2026-10-27).
 
 **What changed.**
 - Two model tiers: `AGENT_PLANNER_MODEL` (default `openai:gpt-5.4-mini`) runs the loop, `AGENT_WORKER_MODEL` (default `openai:gpt-5.4-nano`) answers the judge tools and screening's price lookup. `AGENT_MODEL` is a deprecated alias for both. Model building and provider keys live in `language_models.py`, shared by the agent and screening (H11 done).
