@@ -23,6 +23,8 @@ class KeptListing(BaseModel):
 
 
 class DroppedListing(BaseModel):
+    """A shortlisted listing that failed a later check of a criterion the shopper stated."""
+
     listing_id: str
     title: str
     reason: str = Field(description="The stated criterion it failed, with the number, in a few words.")
@@ -32,7 +34,10 @@ class ModelAnswer(BaseModel):
     """The final answer: the listings kept, the listings that failed a stated criterion, and notes."""
 
     kept: list[KeptListing]
-    dropped: list[DroppedListing]
+    dropped: list[DroppedListing] = Field(
+        description="Only shortlisted listings that then failed a check of a stated criterion (a COE, a photo, a "
+        "detail). Listings filtered out by price, title or post type are not dropped: count them in not_shortlisted."
+    )
     not_shortlisted: int = Field(
         default=0,
         description="How many other listings you saw that you neither kept nor dropped; they are not listed.",

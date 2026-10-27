@@ -57,6 +57,7 @@ from carousearch.mcp_server import McpServices, build_server
 logger = logging.getLogger(__name__)
 
 OUTPUT_TOOL_NAME = "final_answer"
+USAGE_NOTES_TOOL = "usage_notes"  # its text is already in the instructions
 # The backstop for a model that ignores refusals: the run ends after this many model requests beyond the
 # tool-call budget. Parallel calls make the normal request count lower than the tool-call count.
 EXTRA_MODEL_REQUESTS = 5
@@ -213,10 +214,12 @@ class GatedToolset(WrapperToolset[Any]):
         return await self.gate(ctx, call_wrapped, name, tool_args)
 
 
-def build_toolset(server: MCPServer, gate: ToolCallGate) -> MCPToolset:
-    """The server's tools for the agent. Its usage notes join the instructions; tool errors (a refused photo URL,
-    Carousell blocking) reach the model as failed results without using up its retries."""
-    return MCPToolset(server, include_instructions=True, tool_error_behavior="failed", process_tool_call=gate)
+def build_toolset(server: MCPServer, gate: ToolCallGate) -> AbstractToolset[Any]:
+    """The server's tools for the agent. Its usage notes join the instructions, so the usage_notes tool, which
+    returns the same text, is left out. Tool errors (a refused photo URL, Carousell blocking) reach the model as
+    failed results without using up its retries."""
+    toolset = MCPToolset(server, include_instructions=True, tool_error_behavior="failed", process_tool_call=gate)
+    return toolset.filtered(lambda context, tool_definition: tool_definition.name != USAGE_NOTES_TOOL)
 
 
 def build_agent(

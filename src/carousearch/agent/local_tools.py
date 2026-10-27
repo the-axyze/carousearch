@@ -313,8 +313,9 @@ for all arithmetic, statistics (median, mean, percentiles), regexes, date maths 
 numbers out in prose. The working directory holds listings.db, a SQLite database whose table `listings` has one \
 row for every listing this run's tools have returned (search pages and details), and listings.json with the same \
 rows. Columns: id, title, price (SGD, null when not a plain number), currency, price_display, condition, \
-condition_label, like_count, seller_username, seller_id, url, thumbnail_url, posted_at (ISO time created, when \
-known), bumped_at (ISO time of the latest bump, when known), category (category id), category_name, raw_json \
+condition_label, like_count, seller_username, seller_id, url, thumbnail_url, posted_at (ISO time the listing was \
+created, when known: days listed = julianday('now') - julianday(posted_at)), bumped_at (ISO time of the latest \
+bump, when known), category (category id), category_name, raw_json \
 (the search result as JSON), has_details (1 once details were fetched), description, seller_rating, review_count, \
 seller_joined_at, response_rate, image_urls (JSON list), meetup_locations (JSON list), detail_json. Python \
 standard library only ({libraries}): sqlite3, json, re, statistics, math, datetime, collections. No network, no \
