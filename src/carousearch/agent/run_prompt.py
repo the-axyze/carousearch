@@ -186,7 +186,7 @@ def build_agent(
 ) -> Agent[None, ModelAnswer]:
     return Agent(
         model,
-        output_type=ToolOutput(ModelAnswer, name=OUTPUT_TOOL_NAME),
+        output_type=ToolOutput(ModelAnswer, name=OUTPUT_TOOL_NAME, strict=True),  # the provider enforces the schema
         instructions=build_execution_prompt(budget),
         toolsets=list(toolsets),
         retries=MODEL_RETRIES,

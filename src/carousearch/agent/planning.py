@@ -5,8 +5,8 @@ AgentSettings.planning_budget: 6 tool calls by default, no photos), the provider
 one, and the owner's knowledge notes whose keywords appear in the request. It answers with a SearchPlan; a plan
 whose parts do not fit together (agent.plan.plan_problems) is sent back once or twice to be fixed, and a first plan
 made without reading a single search page is sent back once with a reminder to sample the listings (the plan's
-display says so if it still did not: agent.result.planning_sampled_listings). A revision (PlanAmendment) shows the planner its previous plan and the owner's
-requested change, and needs no new sample.
+display says so if it still did not: agent.result.planning_sampled_listings). A revision (PlanAmendment) shows the
+planner its previous plan and the owner's requested change, and needs no new sample.
 
 The search pages it reads go into the run's listings.db, where the execution phase finds them again.
 
@@ -174,7 +174,9 @@ def build_planning_agent(
 ) -> Agent[None, SearchPlan]:
     agent: Agent[None, SearchPlan] = Agent(
         planner,
-        output_type=ToolOutput(SearchPlan, name=PLAN_OUTPUT_TOOL_NAME),
+        # Strict: the provider enforces the schema, so a plan never arrives without its required parts. One retry
+        # more than usual, for the reminder to sample.
+        output_type=ToolOutput(SearchPlan, name=PLAN_OUTPUT_TOOL_NAME, strict=True, max_retries=MODEL_RETRIES + 1),
         instructions=build_planning_prompt(settings.planning_budget),
         toolsets=[build_mcp_toolset(build_server(services), gate, PLANNING_TOOLS)],
         retries=MODEL_RETRIES,
