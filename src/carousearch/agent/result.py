@@ -70,6 +70,16 @@ class ToolCall(BaseModel):
     status: ToolCallStatus
 
 
+# The planning tools that read listings (mcp_server.SAMPLE_TOOL and SEARCH_TOOL; a test keeps them in step).
+LISTING_SAMPLING_TOOLS = ("sample_descriptions", "search_listings")
+NOT_SAMPLED_WARNING = "The planner sampled no listings: its attributes rest on its own knowledge."
+
+
+def planning_sampled_listings(planning_trace: Sequence[ToolCall]) -> bool:
+    """Whether the planning phase read at least one page of listings."""
+    return any(call.tool_name in LISTING_SAMPLING_TOOLS and call.status == "ok" for call in planning_trace)
+
+
 def tool_call_counts(trace: Sequence[ToolCall]) -> list[tuple[str, int]]:
     """How many calls each tool had, most first: [("search_listings", 3), ("run_python", 2)]."""
     return Counter(call.tool_name for call in trace).most_common()

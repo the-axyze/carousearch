@@ -881,14 +881,14 @@ def test_run_shows_the_plan_before_any_search_beyond_planning() -> None:
 def test_execute_runs_the_plan_and_the_answer_shows_the_plan_review() -> None:
     carousell = GatedCarousell()
     review = [{"item": "benchmark", "status": "partial", "note": "only 3 sizes had 5 or more listings"}]
-    script = ScriptedModel(plan_answer(), calls(AGENT_SEARCH), answer_with(review))
+    script = ScriptedModel(calls(SAMPLE), plan_answer(), calls(AGENT_SEARCH), answer_with(review))
     with open_planning_client(script, carousell) as client:
         run_id, _ = plan_page(client)
         executed = client.post(f"/ask/{run_id}/execute", headers=HTMX)
         page = poll_to_the_end(client, run_id)
 
     assert executed.status_code == 200 and "Running ·" in executed.text
-    assert len(carousell.search_requests) == 1  # the execution's search, after Execute
+    assert len(carousell.search_requests) == 2  # planning's sample, then the execution's search after Execute
     assert '<h2 class="ask-heading">Plan review</h2>' in page
     assert re.search(r'review-partial">partial</span>\s*<span class="review-item">Benchmark</span> '
                      r'<span class="review-note">only 3 sizes had 5 or more listings</span>', page)
@@ -899,7 +899,7 @@ def test_execute_runs_the_plan_and_the_answer_shows_the_plan_review() -> None:
 
 def test_edit_sends_the_change_to_the_planner_once_and_shows_the_revised_plan() -> None:
     revised = example_plan(exclusions=[], assumptions=["multi-item posts kept, as asked"])
-    script = ScriptedModel(plan_answer(), plan_answer(revised))
+    script = ScriptedModel(calls(SAMPLE), plan_answer(), plan_answer(revised))
     with open_planning_client(script) as client:
         run_id, _ = plan_page(client)
         revising = client.post(f"/ask/{run_id}/revise", data={"change": "Keep multi-item posts."}, headers=HTMX)
@@ -907,17 +907,17 @@ def test_edit_sends_the_change_to_the_planner_once_and_shows_the_revised_plan() 
         again = client.post(f"/ask/{run_id}/revise", data={"change": "And more."}, headers=HTMX)
 
     assert revising.status_code == 200 and "Planning ·" in revising.text
-    revision_prompt = str(script.requests[1][0][0].parts)
+    revision_prompt = str(script.requests[2][0][0].parts)
     assert "Your previous plan (JSON)" in revision_prompt and "Keep multi-item posts." in revision_prompt
     assert "multi-item posts kept, as asked" in page and "· revised once" in page
     assert "<summary>Edit</summary>" not in page and "Nothing is left out." in page
     assert again.status_code == 409 and "revised once already" in again.text
     assert PLAN_MARKER in again.text  # the plan stays on screen under the refusal
-    assert len(script.requests) == 2
+    assert len(script.requests) == 3
 
 
 def test_an_empty_change_is_refused_and_the_plan_stays() -> None:
-    with open_planning_client(ScriptedModel(plan_answer())) as client:
+    with open_planning_client(ScriptedModel(calls(SAMPLE), plan_answer())) as client:
         run_id, _ = plan_page(client)
         refused = client.post(f"/ask/{run_id}/revise", data={"change": "  "}, headers=HTMX)
 
@@ -927,7 +927,7 @@ def test_an_empty_change_is_refused_and_the_plan_stays() -> None:
 
 def test_cancel_drops_the_plan_and_nothing_else_is_spent() -> None:
     carousell = GatedCarousell()
-    script = ScriptedModel(plan_answer(), calls(AGENT_SEARCH), final_answer())
+    script = ScriptedModel(calls(SAMPLE), plan_answer(), calls(AGENT_SEARCH), final_answer())
     with open_planning_client(script, carousell) as client:
         run_id, _ = plan_page(client)
         cancelled = client.post(f"/ask/{run_id}/cancel", headers=HTMX)
@@ -936,15 +936,15 @@ def test_cancel_drops_the_plan_and_nothing_else_is_spent() -> None:
         page = client.get("/?mode=ask").text
 
     assert cancelled.status_code == 200
-    assert "Plan cancelled. Nothing was searched beyond planning (0 tool calls)." in cancelled.text
+    assert "Plan cancelled. Nothing was searched beyond planning (1 tool call)." in cancelled.text
     assert "Plan cancelled" in later
     assert execute.status_code == 409 and "no longer waiting for a decision" in execute.text
     assert PLAN_MARKER not in page
-    assert carousell.search_requests == [] and len(script.requests) == 1
+    assert len(carousell.search_requests) == 1 and len(script.requests) == 2  # the sample and the plan
 
 
 def test_a_reload_shows_the_plan_still_waiting_for_a_decision() -> None:
-    with open_planning_client(ScriptedModel(plan_answer())) as client:
+    with open_planning_client(ScriptedModel(calls(SAMPLE), plan_answer())) as client:
         run_id, _ = plan_page(client)
         page = client.get("/?mode=ask").text
 
@@ -952,7 +952,7 @@ def test_a_reload_shows_the_plan_still_waiting_for_a_decision() -> None:
 
 
 def test_plan_buttons_need_the_pages_own_htmx_request_and_a_known_planned_run() -> None:
-    script = ScriptedModel(plan_answer(), final_answer())
+    script = ScriptedModel(calls(SAMPLE), plan_answer(), final_answer())
     with open_planning_client(script) as client:
         run_id, _ = plan_page(client)
         not_from_the_page = client.post(f"/ask/{run_id}/execute")
@@ -964,7 +964,7 @@ def test_plan_buttons_need_the_pages_own_htmx_request_and_a_known_planned_run() 
     assert not_from_the_page.status_code == 403
     assert unknown.status_code == 404
     assert first.status_code == 200 and twice.status_code == 409
-    assert len(script.requests) == 2  # one plan, one answer
+    assert len(script.requests) == 3  # a sample, the plan, the answer
 
 
 def test_a_filter_search_waits_while_the_plan_is_being_made() -> None:
@@ -1035,3 +1035,10 @@ def test_saving_a_note_is_refused_when_the_answer_has_none() -> None:
         refused = client.post(f"/ask/{run_id}/knowledge", headers=HTMX)
 
     assert refused.status_code == 409 and "no suggested note" in refused.text
+
+
+def test_a_plan_made_without_sampling_says_so() -> None:
+    with open_planning_client(ScriptedModel(plan_answer())) as client:  # reminded once, then accepted
+        _, page = plan_page(client)
+
+    assert "The planner sampled no listings: its attributes rest on its own knowledge." in page

@@ -29,8 +29,9 @@ from carousearch.agent.planning import (
     plan_prompt,
     plan_prompt_sync,
 )
+from carousearch.agent.result import LISTING_SAMPLING_TOOLS, planning_sampled_listings
 from carousearch.agent.settings import AgentBudget, AgentSettings
-from carousearch.mcp_server import McpServices
+from carousearch.mcp_server import SAMPLE_TOOL, SEARCH_TOOL, McpServices
 
 from fake_mcp_services import FakeCarousellSource, fake_services
 from plan_examples import EXAMPLE_PLAN, example_plan
@@ -88,7 +89,7 @@ def test_the_planner_discovers_then_returns_a_plan_with_its_trace_and_cost(tmp_p
 
 
 def test_the_planner_sees_only_the_discovery_tools_and_the_planning_method() -> None:
-    script = ScriptedModel(plan_answer())
+    script = ScriptedModel(calls(SAMPLE_CALL), plan_answer())
 
     plan_with(script)
 
@@ -111,11 +112,11 @@ def test_search_pages_read_while_planning_land_in_the_runs_listings_db(tmp_path:
 
 def test_a_plan_that_does_not_fit_together_is_sent_back_to_be_fixed() -> None:
     broken = example_plan(benchmark=BenchmarkSpec(population="all", grouping=["colour"], statistic="median"))
-    script = ScriptedModel(plan_answer(broken), plan_answer())
+    script = ScriptedModel(calls(SAMPLE_CALL), plan_answer(broken), plan_answer())
 
     outcome = plan_with(script)
 
-    retry_prompt = script.requests[1][0][-1].parts[0]
+    retry_prompt = script.requests[2][0][-1].parts[0]
     assert "Fix the plan: Benchmark grouping names attributes that the plan does not define: colour." in str(
         retry_prompt.content
     )
@@ -195,3 +196,36 @@ def test_the_tool_results_the_planner_reads_are_the_samples() -> None:
     returned = [part for part in script.requests[1][0][-1].parts if isinstance(part, ToolReturnPart)]
     assert returned[0].tool_name == "sample_descriptions"
     assert len(returned[0].content["samples"]) == 5
+
+
+def test_a_first_plan_made_without_sampling_is_sent_back_once_with_a_reminder() -> None:
+    script = ScriptedModel(plan_answer(), plan_answer())  # never samples
+
+    outcome = plan_with(script)
+
+    reminder = str(script.requests[1][0][-1].parts[0].content)
+    assert reminder.startswith("Fix the plan: Sample the listings before planning: call sample_descriptions")
+    assert len(script.requests) == 2 and outcome.plan == EXAMPLE_PLAN  # reminded once, then accepted
+    assert not planning_sampled_listings(outcome.tool_trace)
+
+
+def test_a_planner_that_samples_first_gets_no_reminder() -> None:
+    script = ScriptedModel(calls(SAMPLE_CALL), plan_answer())
+
+    outcome = plan_with(script)
+
+    assert len(script.requests) == 2 and planning_sampled_listings(outcome.tool_trace)
+
+
+def test_a_revision_needs_no_new_sample() -> None:
+    script = ScriptedModel(plan_answer())
+    amendment = PlanAmendment(previous_plan=EXAMPLE_PLAN, request="Rank by price.")
+
+    asyncio.run(plan_prompt(REQUEST, fake_services(FakeCarousellSource()), AgentSettings(), FunctionModel(script),
+                            amendment=amendment))
+
+    assert len(script.requests) == 1
+
+
+def test_the_sampling_tool_names_match_the_servers() -> None:
+    assert set(LISTING_SAMPLING_TOOLS) == {SAMPLE_TOOL, SEARCH_TOOL}

@@ -2,6 +2,9 @@
 <div id="ask-plan" class="ask-plan" data-run-id="{{ plan.run_id }}">
   <p class="ask-prompt">{{ plan.prompt }}</p>
   <p class="results-summary">{{ plan.planning_line }}{% if plan.revised %} · revised once{% endif %}</p>
+  {%- if plan.sampling_warning %}
+  <p class="ask-warning plan-warning">{{ plan.sampling_warning }}</p>
+  {%- endif %}
 
   <section class="plan-card" aria-label="The plan">
     <h2 class="ask-heading">Plan</h2>

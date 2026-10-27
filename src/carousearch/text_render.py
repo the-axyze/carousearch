@@ -6,7 +6,15 @@ from typing import TYPE_CHECKING
 
 from carousearch.agent.cost import ModelUsage, format_cost_line
 from carousearch.agent.plan import PlanItemStatus, SearchPlan, review_item_label
-from carousearch.agent.result import AgentAnswer, DroppedListing, KeptListing, ToolCall, tool_call_counts
+from carousearch.agent.result import (
+    NOT_SAMPLED_WARNING,
+    AgentAnswer,
+    DroppedListing,
+    KeptListing,
+    ToolCall,
+    planning_sampled_listings,
+    tool_call_counts,
+)
 from carousearch.filters.schema import Listing, ListingDetail, SearchResult, SellerVerification
 from carousearch.screening.models import PriceSource, ResolvedPrice, ScreenedListing, format_sgd
 
@@ -129,8 +137,11 @@ def render_planned_search(plan: SearchPlan, planning_trace: list[ToolCall], usag
 
 
 def render_plan(plan: SearchPlan, planning_trace: list[ToolCall] | None = None) -> str:
-    """The plan in readable sections, headed by a count of the planning tool calls."""
+    """The plan in readable sections, headed by a count of the planning tool calls (and a warning when planning
+    read no listings; a plan from a file has no planning trace)."""
     lines = [f"Plan ({render_tool_counts('planning tool call', planning_trace or [])}):"]
+    if planning_trace and not planning_sampled_listings(planning_trace):
+        lines.append(f"Warning: {NOT_SAMPLED_WARNING}")
     lines.append(_field("Goal", plan.goal))
     lines.append(_field("Item class", plan.item_class))
     lines.append(_field("Value drivers", "; ".join(plan.value_drivers) or "-"))
@@ -192,6 +203,7 @@ def render_eval_outcome(outcome: "EvalOutcome") -> str:
         lines.append(_field("Attributes", sources))
         lines.append(_field("Benchmark", describe_benchmark(answer.plan)))
         lines.append(_field("Template", answer.plan.template or "none"))
+    lines.append(_field("Sampled", "yes" if planning_sampled_listings(answer.planning_trace) else "no"))
     passed = sum(check.passed for check in outcome.checks)
     failed = [check.name for check in outcome.checks if not check.passed]
     lines.append(_field("Checks", f"{passed} of {len(outcome.checks)} passed"

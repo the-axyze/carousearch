@@ -24,7 +24,7 @@ class AttributeSource(StrEnum):
     """Where an attribute's value comes from."""
 
     STRUCTURED_FILTER = "structured_filter"  # a Carousell search filter, applied server-side
-    CARD_FIELD = "card_field"  # a field of the search result or the listing detail (price, posted time, attributes)
+    CARD_FIELD = "card_field"  # a field of the search result or the listing detail (price, posted time, photos)
     TEXT_EXTRACTION = "text_extraction"  # stated by sellers in titles or descriptions (extract_fields)
     DERIVED = "derived"  # computed in run_python from other attributes
     EXTERNAL_FACT = "external_fact"  # a fact from general knowledge, web search or the owner's notes
@@ -110,6 +110,12 @@ def plan_problems(plan: SearchPlan, template_names: Sequence[str]) -> list[str]:
             problems.append(f"Benchmark grouping names attributes that the plan does not define: {', '.join(unknown)}.")
     if plan.template is not None and plan.template not in template_names:
         problems.append(f"Unknown template {plan.template!r}; use one of {', '.join(template_names)} or null.")
+    extracted = [attribute.name for attribute in plan.attributes if attribute.source == AttributeSource.TEXT_EXTRACTION]
+    if extracted and plan.budget_estimate.judgements == 0:
+        problems.append(
+            f"The text_extraction attributes ({', '.join(extracted)}) need worker calls (extract_fields); "
+            "count them in budget_estimate.judgements."
+        )
     return problems
 
 

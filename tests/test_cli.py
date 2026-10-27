@@ -729,8 +729,8 @@ def test_ask_passes_the_owners_matching_notes_to_the_planner(tmp_path: Path, cap
         plan_only=True, knowledge_dir=knowledge,
     )
 
-    (messages, _), = planner.planning_requests
-    assert "Battery health matters." in str(messages[0].parts)
+    first_messages, _ = planner.planning_requests[0]
+    assert "Battery health matters." in str(first_messages[0].parts)
 
 
 def test_ask_rejects_an_invalid_plan_file_before_any_request(tmp_path: Path, capsys) -> None:

@@ -3,8 +3,10 @@
 The planner model gets the discovery tools only (category_fields, search_listings and sample_descriptions, gated by
 AgentSettings.planning_budget: 6 tool calls by default, no photos), the provider's hosted web search where it has
 one, and the owner's knowledge notes whose keywords appear in the request. It answers with a SearchPlan; a plan
-whose parts do not fit together (agent.plan.plan_problems) is sent back once or twice to be fixed. A revision
-(PlanAmendment) shows the planner its previous plan and the owner's requested change.
+whose parts do not fit together (agent.plan.plan_problems) is sent back once or twice to be fixed, and a first plan
+made without reading a single search page is sent back once with a reminder to sample the listings (the plan's
+display says so if it still did not: agent.result.planning_sampled_listings). A revision (PlanAmendment) shows the planner its previous plan and the owner's
+requested change, and needs no new sample.
 
 The search pages it reads go into the run's listings.db, where the execution phase finds them again.
 
@@ -51,6 +53,10 @@ from carousearch.mcp_server import CATEGORY_TOOL, SAMPLE_TOOL, SEARCH_TOOL, McpS
 
 PLAN_OUTPUT_TOOL_NAME = "search_plan"
 PLANNING_TOOLS = frozenset({CATEGORY_TOOL, SEARCH_TOOL, SAMPLE_TOOL})
+SAMPLE_REMINDER = (
+    "Sample the listings before planning: call sample_descriptions on the search you expect to run, then base the "
+    "attributes, regexes and exclusions on what sellers actually state there."
+)
 
 
 class PlanningFailed(AgentRunError):
@@ -103,7 +109,8 @@ async def plan_prompt(
     recorder = RunListingsStore(run_directory) if run_directory is not None else None
     gate = ToolCallGate(ToolBudget(budget), observer=observer, recorder=recorder)
     web_search = web_search_capability(planner, budget.max_web_searches)
-    agent = build_planning_agent(planner, gate, services, settings, web_search)
+    remind_to_sample = amendment is None and budget.max_listings > 0
+    agent = build_planning_agent(planner, gate, services, settings, web_search, remind_to_sample)
     user_prompt = planning_user_prompt(
         prompt,
         format_notes_for_model(notes_shown),
@@ -151,7 +158,12 @@ def plan_prompt_sync(
 
 
 def build_planning_agent(
-    planner: Model, gate: ToolCallGate, services: McpServices, settings: AgentSettings, web_search: Any
+    planner: Model,
+    gate: ToolCallGate,
+    services: McpServices,
+    settings: AgentSettings,
+    web_search: Any,
+    remind_to_sample: bool,
 ) -> Agent[None, SearchPlan]:
     agent: Agent[None, SearchPlan] = Agent(
         planner,
@@ -162,11 +174,22 @@ def build_planning_agent(
         capabilities=[Caching(), *([web_search] if web_search else [])],
     )
 
+    reminded = False
+
     @agent.output_validator
-    def plan_fits_together(plan: SearchPlan) -> SearchPlan:
+    def plan_is_usable(plan: SearchPlan) -> SearchPlan:
+        nonlocal reminded
         problems = plan_problems(plan, template_names())
+        if remind_to_sample and not reminded and not read_a_search_page(gate):
+            reminded = True
+            problems.insert(0, SAMPLE_REMINDER)
         if problems:
             raise ModelRetry("Fix the plan: " + " ".join(problems))
         return plan
 
     return agent
+
+
+def read_a_search_page(gate: ToolCallGate) -> bool:
+    """Whether the planner was admitted a search_listings or sample_descriptions page."""
+    return gate.budget.listings > 0

@@ -88,3 +88,11 @@ def test_review_keys_and_labels_read_well() -> None:
     assert review_item_label(EXAMPLE_PLAN, "attribute:size_cm") == "Attribute size_cm"
     assert review_item_label(None, "benchmark") == "Benchmark"
     assert review_item_label(EXAMPLE_PLAN, "exclusion:9") == "Exclusion 9"
+
+
+def test_a_plan_with_text_extraction_must_budget_worker_calls() -> None:
+    no_worker_calls = example_plan(budget_estimate=EXAMPLE_PLAN.budget_estimate.model_copy(update={"judgements": 0}))
+
+    (problem,) = plan_problems(no_worker_calls, template_names())
+
+    assert problem.startswith("The text_extraction attributes (size_cm) need worker calls (extract_fields)")

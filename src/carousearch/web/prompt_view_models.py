@@ -12,7 +12,14 @@ from typing import TYPE_CHECKING
 
 from carousearch.agent.cost import format_cost_line, total_cost_usd
 from carousearch.agent.plan import AttributeSpec, SearchPlan, review_item_label
-from carousearch.agent.result import AgentAnswer, DroppedListing, KeptListing, ToolCall
+from carousearch.agent.result import (
+    NOT_SAMPLED_WARNING,
+    AgentAnswer,
+    DroppedListing,
+    KeptListing,
+    ToolCall,
+    planning_sampled_listings,
+)
 from carousearch.agent.settings import AgentBudget, AgentSettings
 from carousearch.agent.templates import METHOD_TEMPLATES, find_template
 from carousearch.carousell.parse import LISTING_URL_TEMPLATE
@@ -238,6 +245,7 @@ class PlanView:
     assumptions: list[str]
     knowledge_files: list[str]
     planning_line: str  # "Planned in 12 s · 3 tool calls · about US$0.0041"
+    sampling_warning: str | None  # set when planning read no listings
     planning_trace: list[TraceRowView]
     revised: bool
     can_revise: bool
@@ -269,6 +277,7 @@ def plan_view(run: PromptRun, budget: AgentBudget, planning_seconds: float) -> P
         planning_line=(
             f"Planned in {format_duration(planning_seconds)} · {calls} · about US${planning_cost:.4f} so far"
         ),
+        sampling_warning=None if planning_sampled_listings(run.planning.tool_trace) else NOT_SAMPLED_WARNING,
         planning_trace=answer_trace_rows(run.planning.tool_trace),
         revised=run.revisions > 0,
         can_revise=run.can_revise,

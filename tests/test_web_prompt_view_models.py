@@ -296,6 +296,7 @@ def test_the_plan_view_has_every_section_and_the_buttons() -> None:
     )
     assert view.planning_line == "Planned in 12 s · 1 tool call · about US$0.0041 so far"
     assert view.knowledge_files == ["tables.md"] and view.planning_trace[0].tool_name == "sample_descriptions"
+    assert view.sampling_warning is None
     assert (view.execute_url, view.revise_url, view.cancel_url) == (
         "/ask/abc123/execute", "/ask/abc123/revise", "/ask/abc123/cancel"
     )
@@ -309,6 +310,7 @@ def test_a_revised_plan_cannot_be_revised_again_and_a_plan_without_benchmark_say
     view = plan_view(run, BUDGET, planning_seconds=3)
 
     assert (view.can_revise, view.revised, view.benchmark, view.template_line) == (False, True, [], "none")
+    assert view.sampling_warning.startswith("The planner sampled no listings")
 
 
 def test_progress_while_planning_counts_against_the_planning_budget() -> None:
