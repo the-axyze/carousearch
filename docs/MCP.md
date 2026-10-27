@@ -4,14 +4,15 @@
 
 The server is a connector and nothing more. The host does the reasoning: it writes regexes over the returned JSON, looks at photos, ranks, and plans its own calls. By design the server has no filtering, scoring, LLM calls or planning tools.
 
-The same server also powers `carousearch ask`, carousearch's own agent, which runs it inside its process and adds per-run budgets ([README, "Ask the agent"](../README.md#ask-the-agent)).
+The same server also powers `carousearch ask`, carousearch's own agent, which runs it inside its process, adds per-run budgets and four local tools of its own (a Python sandbox over the run's listings, two worker-model judge tools and photo metrics; [README, "Ask the agent"](../README.md#ask-the-agent)). Those local tools are not part of this server: they need the agent's run folder and worker model.
 
 | Tool | What it does | Carousell requests |
 |---|---|---|
-| `search_listings(request, limit=20, page_token=None)` | One page of a search with Carousell's own filters (keywords, price range, condition, meet-up / mailing, Buyer Protection, free delivery, sort, category, category facets). Returns `{listings, total, next_page}`. | 1 per page |
+| `search_listings(request, limit=20, page_token=None, fields=None)` | One page of a search with Carousell's own filters (keywords, price range, condition, meet-up / mailing, Buyer Protection, free delivery, sort, category, category facets). Returns `{listings, total, next_page}`; `fields` (for example `["id", "title", "price"]`) keeps each listing short. | 1 per page |
 | `listing_details(listing_id)` | Description, all photo URLs, seller rating, reviews, join date, response rate, meet-up points. | 1, or 0 if fetched in the last 12 hours |
 | `listing_photo(url, max_width=800)` | One photo from `media.karousell.com` (other domains are refused), scaled down to `max_width` pixels wide. | 1 per photo |
 | `screening_tags(listing_id, query=None)` | Optional: carousearch's rule-based tags (multi-item title, price list in the description, floor price). | shares the `listing_details` cache |
+| `category_fields(category=None)` | Without a category: the top-level categories. With one: its path, its subcategories and the filters Carousell offers there (field name, label, type, allowed values, and which `search_listings` argument sets it). The tree is a snapshot (2026-10-27); the filters are read live. | 0 without a category, 1 with one |
 | `usage_notes()` | The recommended order, the request budget and the JSON shapes. The same text is sent to the host as the server's instructions when it connects. | 0 |
 
 The usage notes live in [`src/carousearch/mcp_instructions.md`](../src/carousearch/mcp_instructions.md).

@@ -1,6 +1,6 @@
 # Carousearch: next steps
 
-Written 2026-10-26 against commit `26f68c9` on `main` (identical to `origin/main`); updated the same day for phase C, on branch `feature/phase-c-prompt-mode`. This is the live plan. [ROADMAP.md](ROADMAP.md) keeps the original milestones and the dated status history; [CLAUDE.md](../CLAUDE.md) has the working rules.
+Written 2026-10-26 against commit `26f68c9` on `main` (identical to `origin/main`); updated the same day for phase C, on branch `feature/phase-c-prompt-mode`, and on 2026-10-27 for the tiered agent (section 4.6), on branch `feature/tiered-agent-tools`. This is the live plan. [ROADMAP.md](ROADMAP.md) keeps the original milestones and the dated status history; [CLAUDE.md](../CLAUDE.md) has the working rules.
 
 Labels used below: **verified** means checked against the code, or run, while this file was written on 2026-10-26. **Unverified** means taken from the docs or the owner's account and not re-checked. **Estimate** means a number nobody has measured.
 
@@ -10,8 +10,8 @@ Phase letters: phases C and D below continue the MCP and agent track in ROADMAP.
 
 ## 1. Current state (2026-10-26)
 
-- Head: phase C (prompt mode in the web app, tasks C1 to C5) is on branch `feature/phase-c-prompt-mode`, PR pending, on top of `main`. `main` is pushed; the branch is not.
-- Tests: `.venv/bin/pytest` gives 765 passed, 1 deselected (the live test), in about 10 s on the cloud sandbox where phase C was built. `ruff check src tests` is clean. Both verified on the branch.
+- Head: phase C (prompt mode in the web app, tasks C1 to C5) is on branch `feature/phase-c-prompt-mode` (PR #4). The tiered agent (section 4.6) is on `feature/tiered-agent-tools`, branched from it on 2026-10-27, not pushed.
+- Tests: `.venv/bin/pytest` gives 896 passed, 1 deselected (the live test), in about 13 s on the owner's machine (verified 2026-10-27 on `feature/tiered-agent-tools`; 775 before it). `ruff check src tests` is clean.
 - No type checker runs (see H1).
 
 ### 1.1 Components
@@ -20,12 +20,12 @@ Phase letters: phases C and D below continue the MCP and agent track in ROADMAP.
 |---|---|---|---|
 | Carousell client | `carousell/`, `filters/` | Home-page bootstrap (cookies + CSRF), search, listing detail, photo download (https on `media.karousell.com` only), one re-bootstrap on 401/403/422, rate limiter 1.0 s ± 0.3 s, typed errors | Used live by every front end. Canary passed 2026-10-24 |
 | CLI | `cli.py`, `text_render.py` | 11 commands: `search`, `listing`, `harvest`, `analyze`, `canary`, `capture-fixtures`, `bot`, `whoami`, `web`, `mcp`, `ask` | `search`, `listing`, `canary` run live in phase 1 |
-| Screening | `screening/` | Title rule, description price-list and floor-price rules, below-market rule, a 10-request detail budget per page, a price resolver (Claude Haiku via the `anthropic` SDK, or Noop without a key), 12-hour detail cache, price cache | Rules checked live 2026-10-25. **The price resolver has never called a real model** |
+| Screening | `screening/` | Title rule, description price-list and floor-price rules, below-market rule, a 10-request detail budget per page, a price resolver (the worker model through Pydantic AI, or Noop without its key), 12-hour detail cache, price cache | Rules checked live 2026-10-25. **The price resolver has never called a real model** (it now would, with `OPENAI_API_KEY` set: see section 4.6) |
 | Market analysis | `market/`, `harvest`, `analyze` | Phase A of the analysis plan (section 1.4) | Offline tests only. The live acceptance run of the example spec has not been done (ROADMAP, phase A status) |
 | Telegram bot | `bot/` | Step-by-step search wizard, one locked session per chat (30-minute idle expiry, in memory), Next 5 / Refine / End, Details, `/save` and `/saved`, `[seen]` tags, multi-item caption line (title rule only) | **Used live by the owner** (`data/bot.log`). Running now |
 | Web app | `web/` | One page: keywords, price, condition, delivery, sort, category, "Hide multi-item posts" with a collapsed Hidden (n) list of the hidden posts and their reasons; card grid with resolved-price row and badges; Details panel with every tag's reason; Load more; 2-minute repeat memory. **Ask mode** (Filters \| Ask switch): runs the `ask` agent in the background, polls its progress every second, shows kept cards from Carousell's data with the agent's reason, Dropped (n), notes and the tool trace; one run at a time; filter searches wait while it runs | Filters mode: **used live by the owner** (`data/web.log`), running on 127.0.0.1:8765 (the running process predates phase C). Ask mode and the Hidden section: **built, scripted models only, not run in a browser** |
-| MCP server | `mcp_server.py`, `mcp_instructions.md` | Five read-only tools over stdio or streamable HTTP; no auth on HTTP | **Verified over stdio with a script** driving the SDK client, 2026-10-26 (3 Carousell requests). **Not registered in any host yet** (verified: `~/.claude.json` has no `carousearch` entry) |
-| In-app agent | `agent/`, `ask` | Pydantic AI agent whose only tools are the MCP server's, run in-process; per-run budgets (40 tool calls, 15 photos, 200 listings) enforced by a hook; kept / dropped / notes / tool trace; `--json` | **Scripted models only. Never run against a real model** |
+| MCP server | `mcp_server.py`, `mcp_instructions.md` | Six read-only tools (`category_fields` added 2026-10-27, and `fields` on `search_listings`) over stdio or streamable HTTP; no auth on HTTP | **Verified over stdio with a script** driving the SDK client, 2026-10-26 (3 Carousell requests). **Not registered in any host yet** (verified: `~/.claude.json` has no `carousearch` entry) |
+| In-app agent | `agent/`, `ask` | Pydantic AI agent with a planner and a worker model; the MCP server's tools in-process plus four local tools (`run_python` sandbox over the run's `listings.db`, `judge_listings`, `judge_photos`, `photo_metrics`); capped hosted web search; prompt caching; per-run budgets (40 tool calls, 15 photos, 200 listings, 3 web searches) enforced by one gate; kept / dropped / not shortlisted / notes / trace / cost estimate; `--json` | **Run live 2026-10-27** with `openai:gpt-5.4-mini` and `openai:gpt-5.4-nano` on the two motorcycle prompts, twice each (section 4.6) |
 | Canary | `canary.py` | One search plus one detail; exit code; one line in `data/canary.log` | One logged run (2026-10-24, OK). Not scheduled: `crontab -l` says no crontab (verified) |
 
 ### 1.2 What has and has not been verified live
@@ -35,15 +35,16 @@ Verified live:
 - Screening rules on a real search (2026-10-25, ROADMAP phase 3a): no false multi-item tags on 20 single-variant titles; one placeholder price tagged below market.
 - The web app (curl check 2026-10-25, then the owner's own searches, logged in `data/web.log`) and the wizard bot (the owner's own use, logged in `data/bot.log`).
 - The MCP server over stdio: tool list, one search, one photo (2026-10-26).
+- `carousearch ask` with OpenAI models (2026-10-27): four runs, US$0.026 to US$0.039 each, 5 to 14 Carousell requests each (home-page load included); the sandbox, `judge_listings`, `photo_metrics`, `category_fields`, listings.db and the cost line all worked live (section 4.6). `judge_photos` ran live once (prompt B, first run).
 
 Never run live:
-- `carousearch ask` against any real model. Model and provider wiring (`infer_model`, keys from `.env`) is untested.
+- `carousearch ask` with an Anthropic model (no key), and the hosted web search (no live run asked for one).
 - The web app's Ask mode and Hidden (n) section (phase C): no real model, no live Carousell, and no real browser. The mode switch, CSS (dark theme, phone width), HTMX polling and out-of-band swaps were checked only through `TestClient` tests and, for the Hidden swaps, a jsdom replay the C4 implementer reported (unverified; not kept in the repo).
-- The price resolver against the Anthropic API. Its prompt and the cost estimate are untested.
+- The price resolver against any real model. It now runs on the worker model (`openai:gpt-5.4-nano` by default) and will run on the next `search --screen` or web search with multi-item posts, now that `OPENAI_API_KEY` is set.
 - The MCP server inside a real host (Claude Code, Codex CLI, Claude desktop, ChatGPT), and the HTTP transport through a tunnel.
 - The `analyze` example spec against the live site, and a real two-page `sort=recent` fixture pair.
 
-Why: `.env` holds only `TELEGRAM_BOT_TOKEN` and `TELEGRAM_OWNER_ID`. No `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` has been added (verified by key name on 2026-10-26).
+Why: until 2026-10-27 `.env` held no model key. It now has `OPENAI_API_KEY` and `AGENT_MODEL=openai:gpt-5.4-nano` (the deprecated alias, which sets both tiers to nano; the live runs overrode it in the environment). `ANTHROPIC_API_KEY` is empty (verified by key name and length on 2026-10-27).
 
 ### 1.3 Running on the owner's machine
 
@@ -73,9 +74,13 @@ Deferred, per ROADMAP: the live acceptance run and a real two-page fixture. Phas
 | Bot sessions live in memory; a restart forgets them and old buttons stop working | `bot/session_store.py` | H6 |
 | The 40-request budget per task is advice to external hosts; only `ask` enforces budgets | `mcp_instructions.md`, `agent/budget.py` | H7 |
 | The title rule misses brand-only lists. Verified: "Trek \| Giant \| Specialized road bike" and "Shimano / SRAM groupset" get no tag, while "Honda \| ADV150 \| R15 \| MT15" does | `screening/rules.py` | H8 |
-| `ask` does not report token usage, so its cost cannot be measured from its output | `agent/` | H9 |
+| ~~`ask` does not report token usage~~ Done 2026-10-27: `AgentAnswer.usage` per model and a cost-estimate line in `ask` and in Ask mode's notes | `agent/` | Done (H9) |
 | The canary is not scheduled and nothing alerts on failure | operations | H10 |
-| The price resolver calls the `anthropic` SDK directly, so it is Claude-only, unlike `ask` | `screening/price_resolver.py` | H11, Q6 |
+| ~~The price resolver calls the `anthropic` SDK directly~~ Done 2026-10-27: it runs on the worker model through Pydantic AI (verified: no `anthropic` import left in `screening/`) | `screening/price_resolver.py` | Done (H11, Q6) |
+| The planner (gpt-5.4-mini) follows multi-step prompts only partly: it computed one benchmark across different bike models, kept a listing above its own benchmark, and skipped photo checks once (section 4.6) | `agent/prompt.py`, model choice | T1 |
+| Run folders `data/runs/*` and `judgement_cache` rows are never cleaned up | `agent/run_directory.py`, `storage.py` | T2 |
+| `run_python` is confined by Landlock (Linux 5.13+); elsewhere only the working directory, an empty environment and resource limits apply | `agent/sandbox.py` | T3 (accepted) |
+| The category tree is a snapshot (2026-10-27); new Carousell categories are missing until it is recaptured | `carousell/category_tree.json` | T4 |
 | ~~"Hide multi-item posts" in the web app only counts the hidden posts; their reasons are not shown anywhere~~ Done in C4: a collapsed Hidden (n) section lists each hidden post with its tag reasons (verified: `hidden_rows` in `web/view_models.py`, tests in `tests/test_web_routes.py`) | `web/` | Done (C4) |
 | ~~No photo-quality flag in the web app~~ Available in the web app's Ask mode, where the agent can look at photos with `listing_photo` (scripted-model tests only). Filters mode and the bot still have no photo flag | `web/`, `bot/` | Done for the web app (Ask mode); bot: none |
 | `python-telegram-bot` is installed without the `job-queue` extra (APScheduler is absent; verified), which the alert job needs | `pyproject.toml` | Phase D, task D1 |
@@ -122,7 +127,7 @@ How the requirements map to the code today:
 | Flag poor-quality photos | `ask`, the web app's Ask mode and external hosts via `listing_photo` | Not in Filters mode or the bot; never run against a real model (phase L) |
 | Flag multi-brand or multi-model titles split by `\|` or `/` | Title rule (models, storage sizes, catalogue phrases) | Brand-only lists missed (H8) |
 | A reason for every drop | Tag reasons; `ask` and Ask mode dropped lists; the web app's Hidden (n) section | None known |
-| Vendor-neutral models | `AGENT_MODEL` through Pydantic AI | Price resolver is Claude-only (H11) |
+| Vendor-neutral models | `AGENT_PLANNER_MODEL` and `AGENT_WORKER_MODEL` through Pydantic AI, also for the price resolver | None known |
 | Tools defined once | `mcp_server.py` used in-process by `ask` and the web app's Ask mode | Keep it that way in phases D and M |
 
 ---
@@ -159,10 +164,11 @@ Each process has its own Carousell session and rate limiter, and they all share 
 | Variable | Used by | Default |
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_OWNER_ID` | `bot`, `whoami` | none; the bot exits with code 2 without them |
-| `ANTHROPIC_API_KEY` | price resolver; `ask` and the web app's Ask mode with an `anthropic:` model | unset: resolver off, `ask` exits 2, Ask mode's Run is disabled |
-| `OPENAI_API_KEY` | `ask` and Ask mode with an `openai:` model | unset |
-| `AGENT_MODEL` | `ask`, the web app's Ask mode | `anthropic:claude-haiku-5-5` |
-| `AGENT_MAX_TOOL_CALLS`, `AGENT_MAX_PHOTOS`, `AGENT_MAX_LISTINGS` | `ask`, the web app's Ask mode | 40, 15, 200 |
+| `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` | whichever provider the planner and worker models name | unset: the price resolver is off, `ask` exits 2, Ask mode's Run is disabled |
+| `AGENT_PLANNER_MODEL` | `ask`, the web app's Ask mode (the agent loop) | `openai:gpt-5.4-mini` |
+| `AGENT_WORKER_MODEL` | the judge tools and screening's price resolver | `openai:gpt-5.4-nano` |
+| `AGENT_MODEL` | deprecated alias: fills whichever of the two above is unset | unset |
+| `AGENT_MAX_TOOL_CALLS`, `AGENT_MAX_PHOTOS`, `AGENT_MAX_LISTINGS`, `AGENT_MAX_WEB_SEARCHES` | `ask`, the web app's Ask mode | 40, 15, 200, 3 |
 | `CAROUSEARCH_DATA_DIR` | everything | `~/carousearch/data` |
 
 The web app reads its settings once at start-up, so it needs a restart after `.env` changes.
@@ -208,13 +214,15 @@ Effort is in solo-developer days, as in ROADMAP.md, and is a rough estimate.
 | Phase | Goal | Effort | Depends on | Needs the owner |
 |---|---|---|---|---|
 | H1, H2 | pyright; the `cli.py` readability fix | 0.5 day | nothing | no |
-| H9 | Token usage in `AgentAnswer` | 0.25 day | nothing | no |
-| L | First live validation with a real model | 1 to 2 hours | an API key (H9 helps) | yes: key, present for the run |
+| H9 | Token usage in `AgentAnswer` | **Done** (2026-10-27, section 4.6) | | |
+| L | First live validation with a real model | 1 hour left: price resolver, web app Ask mode in a browser, budget refusal (section 4.4) | OPENAI_API_KEY (now set) | yes: present for the run |
+| T | Tiered agent: planner and worker models, sandbox, judge tools, photo metrics, category fields, web search, cost | **Done** (2026-10-27, section 4.6; branch `feature/tiered-agent-tools`, not pushed) | C | review, merge |
+| T1 to T4 | Planner quality on multi-step prompts, cleanup of run folders and judgements, category tree refresh | 0.5 to 1 day | T | T1: choose the planner model |
 | C | Prompt mode in the web app | **Done** (C1 to C5, 2026-10-26; branch `feature/phase-c-prompt-mode`, PR pending) | nothing (L before release) | screenshots after L |
 | H8 | Title rule for brand-only lists | 0.5 day | nothing | no |
 | D | Saved searches and prompts, alert job | 2 to 3 days | C for "save a prompt" (done) | to enable alerts |
 | H3, H10 | systemd user services; scheduled canary with a Telegram alert | 1 day | nothing | yes: linger, Task Scheduler |
-| H4 to H7, H11 | MCP auth, photo cache, bot sessions in SQLite, external request budget, vendor-neutral resolver | 2.5 to 3.5 days | as listed | H4 only if a tunnel is wanted |
+| H4 to H7 | MCP auth, photo cache, bot sessions in SQLite, external request budget (H11, the vendor-neutral resolver, is done) | 2 to 3 days | as listed | H4 only if a tunnel is wanted |
 | M | Saved searches over MCP (optional) | 0.5 day | D | decide Q9 |
 
 Suggested order: H2 and H1, then H9 (C is done, offline, with scripted models), with L as soon as a key exists, then H8, D, H3 and H10, then the rest as needed.
@@ -301,9 +309,9 @@ Suggested order: H2 and H1, then H9 (C is done, offline, with scripted models), 
 | H6 | `SqliteSessionStore` with the same `get`, `remove_if_expired`, `set`, `clear` as `SessionStore`; pure functions to turn a `SearchSession` into JSON and back | A session survives a bot restart; idle expiry still works; the handler tests pass with either store | 0.5 to 1 day |
 | H7 | A Carousell request budget for external hosts: a rolling window per server process (for example `MCP_MAX_REQUESTS_PER_HOUR`), counted in `McpServices`, with cache hits free. Over the cap, tools raise a `ToolError` telling the host to stop. Keep the counting pure and out of `agent/` (`agent/budget.py` imports `mcp_server`, not the other way round) | Calls past the cap never reach the fake client; cached details do not count; `ask` budgets unchanged | 0.5 day |
 | H8 | Extend the title rule so titles listing several brands or products split by `\|` or `/`, without digits, are tagged (the two verified misses in section 1.5), with a table of ordinary titles that must stay untagged ("Black / White", "w/ box", single-brand titles) | Both misses tagged; at least 10 negatives untagged; all existing rule tests pass | 0.5 day |
-| H9 | Add token usage (requests, input and output tokens) from Pydantic AI's run usage to `AgentAnswer`, and print one usage line in `ask` | Scripted-model tests show the counts; `--json` includes them | 0.25 day |
+| H9 | **Done 2026-10-27.** `AgentAnswer.usage` (per model: requests, input, cached input and output tokens, web searches, estimated US$), printed as a cost line by `ask` and in Ask mode's notes | Scripted-model tests show the counts; `--json` includes them (both verified) | done |
 | H10 | Schedule the canary (a systemd timer at 08:00 alongside H3, or cron) and send the owner a Telegram message when it fails, using the bot token and owner id from `.env` | A forced failure (fake client) sends one message; a success sends none | 0.5 day |
-| H11 | Move the price resolver onto Pydantic AI structured output with its own model setting (for example `PRICE_MODEL`, default `anthropic:claude-haiku-5-5`) so it is vendor-neutral like `ask` | Resolver tests pass with a scripted model; no direct `anthropic` import left in `screening/` | 0.5 day |
+| H11 | **Done 2026-10-27.** The price resolver uses Pydantic AI structured output on the worker model (`AGENT_WORKER_MODEL`) instead of a separate `PRICE_MODEL` | Resolver tests pass with a scripted model; no direct `anthropic` import left in `screening/` (both verified) | done |
 
 ### 4.4 Phase L: first live validation, once an API key exists (1 to 2 hours, owner present)
 
@@ -326,6 +334,31 @@ Add one read-only tool, `saved_alerts`, that returns each saved alert's name, ki
 
 Acceptance: the tool is listed with the read-only annotation; a test with an in-memory store returns the saved alerts; the agent tests still pass.
 
+### 4.6 Tiered agent tools (done 2026-10-27, branch `feature/tiered-agent-tools`)
+
+**Status.** Built and committed on `feature/tiered-agent-tools` (not pushed). 896 offline tests pass, ruff is clean. Run live four times through `carousearch ask` (2026-10-27).
+
+**What changed.**
+- Two model tiers: `AGENT_PLANNER_MODEL` (default `openai:gpt-5.4-mini`) runs the loop, `AGENT_WORKER_MODEL` (default `openai:gpt-5.4-nano`) answers the judge tools and screening's price lookup. `AGENT_MODEL` is a deprecated alias for both. Model building and provider keys live in `language_models.py`, shared by the agent and screening (H11 done).
+- Local tools (`agent/local_tools.py`), Pydantic AI function tools that pass through the same `ToolCallGate` as the MCP tools (`GatedToolset`): `run_python` (a subprocess `python -I -S` in the run folder, empty environment, Landlock confinement of files and TCP, `unshare -rn` where available, 20 s / 512 MB / 64 MB file limits, output cut to 4,000 characters), `judge_listings` and `judge_photos` (worker model, 12 listings or 6 photos per structured call, cached in `judgement_cache` by listing, normalised criterion and worker model; details and photos they fetch count against the budgets), and `photo_metrics` (size, Laplacian-variance sharpness, brightness; no model).
+- Each run writes `data/runs/<UTC time>-<id>/` with `listings.db` and `listings.json` (every search page and detail the run saw, filled by the gate), `photos/` and `python/` (each snippet and its output).
+- MCP server: `category_fields(category=None)` (tree snapshot `carousell/category_tree.json`, 725 categories, plus the live fieldset through the new `CarousellClient.get_category_filters`) and `fields` on `search_listings`. `ListingDetail` gained `category_id` and `category_name`. The agent hides `usage_notes`, whose text is in its instructions. The gate sends the planner only the asked-for fields and the first 300 characters of a description.
+- Hosted web search through Pydantic AI's `WebSearch` capability with a dynamic `WebSearchTool` (capped by `AGENT_MAX_WEB_SEARCHES`, default 3, counted from the run's messages; `max_uses` where the provider honours it); prompt caching through the `Caching` capability.
+- `AgentAnswer` gained `not_shortlisted` and `usage`; `dropped` is now only shortlisted listings that failed a stated criterion. `ask` prints a count per tool, "Not shortlisted: n" and a cost line (prices in `agent/settings.py`, checked 2026-10-27).
+
+**Live runs** (`AGENT_PLANNER_MODEL=openai:gpt-5.4-mini AGENT_WORKER_MODEL=openai:gpt-5.4-nano`, outputs in `data/ask-live/`):
+
+| Run | Tools | Result | Cost |
+|---|---|---|---|
+| A, first prompt version | category_fields 1, search 3, run_python 1 | benchmark S$5,766.96 (80% of S$7,208.70 over 27 R15s), 1 kept (S$2,000, 65.2% below); stopped before the COE and photo checks; 19 filtered posts listed as dropped | US$0.038 |
+| B, first prompt version | search 1, run_python 2, judge_photos 1 (and usage_notes) | one median (S$15,800) across all bike models; 6 kept, 41 dropped, one contradiction in sign | US$0.039 |
+| A, after the prompt fix | search 2, run_python 2, judge_listings 1 (5 details fetched) | benchmark S$5,820.86 (80% of S$7,276.08 over 37 R15s); 5 bikes under S$2,910.43; COE checked on all 5, none about 2 years; nearest kept (S$800, COE Oct 2029) | US$0.026 |
+| B, after the prompt fix | category_fields 2, search 2, run_python 2, photo_metrics 1 (10 photos) | still one median (S$9,749.50) across models; kept 5 including one above benchmark and one S$191 placeholder; days listed not computed | US$0.028 |
+
+**Deviations from the brief.** `category_fields` is an MCP tool, not an agent-only tool (it needs no run state, external hosts benefit, and CLAUDE.md keeps tools in `mcp_server.py` where possible). The tiny `--json` live runs were run twice each, once before and once after the prompt fix they prompted. `usage_notes` is filtered out of the agent's tools. The `llm` extra is now empty. Prices in the cost table for Claude Haiku 5.5 come from launch coverage, not Anthropic's page.
+
+**Next (T1 to T4).** T1: planner quality: try `AGENT_PLANNER_MODEL=openai:gpt-5.4` (about three times the price) on the same two prompts, or give the planner a worked example of a per-model benchmark; T2: delete run folders older than N days and expire judgements; T3: accepted, documented; T4: a dev command to recapture the category tree.
+
 ---
 
 ## 5. Open questions for the owner
@@ -339,7 +372,7 @@ Each has the default that will be assumed if there is no answer.
 | Q3 | Alerts: filter searches only, or prompts re-judged by the agent too? | Both; prompt alerts call the model only when there are new listings, under a smaller budget |
 | Q4 | Alert interval and quiet hours? | 60 minutes by default, 30 minimum, no quiet hours, 300 background Carousell requests a day at most |
 | Q5 | Which provider key comes first, and the monthly spend ceiling? | Anthropic, model `anthropic:claude-haiku-5-5`; US$5 a month, set as a hard limit in the provider console |
-| Q6 | Move the price resolver to Pydantic AI so it is vendor-neutral (H11)? | Yes, after phase L, so the first live run uses the code that was designed and estimated |
+| Q6 | Move the price resolver to Pydantic AI so it is vendor-neutral (H11)? | Done 2026-10-27, on the worker model, as the tiered-agent brief asked |
 | Q7 | Resume the analysis plan's phases B to F? If so, on Pydantic AI and the MCP tools instead of the plan's own `llm/` adapter layer? | Paused. When resumed, treat the plan as a spec of behaviour, build the model calls on Pydantic AI, and let the code and CLAUDE.md win where the plan's conventions now differ (the core dependency list has grown; Pillow is a core dependency, not a `vision` extra) |
 | Q8 | Is ChatGPT access through a tunnel wanted at all? | No tunnel until H4 is done; stdio hosts only |
 | Q9 | Should external hosts be able to create or delete alerts over MCP? | No; phase M is read-only |

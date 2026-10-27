@@ -18,9 +18,11 @@ when a run starts, so importing the web app (every CLI command does) stays cheap
 import asyncio
 import logging
 import secrets
+import tempfile
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from carousearch.agent.result import AgentAnswer, ToolCallStatus
@@ -159,6 +161,15 @@ def start_prompt_run(prompt: str, services: "WebServices") -> PromptRun:
     return run
 
 
+def ask_run_directory(runs_root: Path | None, run: PromptRun) -> Path:
+    """<runs_root>/runs/<started>-<run id>/, or a fresh temporary folder when the app was given no data folder."""
+    from carousearch.agent.run_directory import new_run_directory
+
+    if runs_root is None:
+        return Path(tempfile.mkdtemp(prefix=f"carousearch-ask-{run.run_id}-"))
+    return new_run_directory(runs_root, run.started_at, suffix=run.run_id)
+
+
 async def execute_prompt_run(run: PromptRun, services: "WebServices") -> None:
     """Run the agent once over the web app's own client and detail cache, holding the turn throughout. Every
     outcome ends the run: done with the answer, or failed with a calm message (the details go to the log)."""
@@ -166,6 +177,7 @@ async def execute_prompt_run(run: PromptRun, services: "WebServices") -> None:
     import pydantic_ai
     from pydantic_ai.exceptions import AgentRunError, UserError
 
+    from carousearch.agent.local_tools import LocalToolServices
     from carousearch.agent.run_prompt import run_prompt
     from carousearch.mcp_server import McpServices
 
@@ -176,8 +188,13 @@ async def execute_prompt_run(run: PromptRun, services: "WebServices") -> None:
             mcp_services = McpServices(
                 carousell=services.carousell, detail_cache=services.screening.store, clock=clock
             )
+            local = LocalToolServices(
+                run_directory=ask_run_directory(services.runs_root, run),
+                judgement_cache=services.judgement_cache,
+                worker_model=services.agent_worker_model,
+            )
             answer = await run_prompt(
-                run.prompt, mcp_services, services.agent, model=services.agent_model, observer=run.record
+                run.prompt, mcp_services, services.agent, model=services.agent_model, local=local, observer=run.record
             )
     except (AgentRunError, UserError) as error:  # the model API failed or misbehaved; an unusable AGENT_MODEL
         logger.warning("Ask run %s failed: %s: %s", run.run_id, type(error).__name__, error)

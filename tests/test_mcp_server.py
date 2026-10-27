@@ -3,15 +3,24 @@
 import base64
 import io
 import json
+from typing import get_args
 
 import anyio
 from mcp import Client
 from mcp.types import CallToolResult
 from PIL import Image
 
+from carousearch.carousell.categories import load_category_tree
 from carousearch.carousell.errors import CarousellBlockedError
-from carousearch.filters.schema import DealMethod, SearchRequest, SortOrder
-from carousearch.mcp_server import build_server, load_usage_notes
+from carousearch.filters.schema import CategoryFilter, DealMethod, Listing, SearchRequest, SortOrder
+from carousearch.mcp_server import (
+    ListingField,
+    build_server,
+    category_fields_response,
+    filter_setter,
+    load_usage_notes,
+    project_listing,
+)
 
 from fake_mcp_services import DETAIL, PHOTO_URL, SEARCH_RESULT, FakeCarousellSource, fake_services, jpeg_bytes
 
@@ -38,7 +47,7 @@ def error_text(result: CallToolResult) -> str:
     return result.content[0].text
 
 
-def test_the_server_offers_exactly_the_five_tools_and_sends_its_usage_notes_as_instructions() -> None:
+def test_the_server_offers_exactly_the_six_tools_and_sends_its_usage_notes_as_instructions() -> None:
     async def connect() -> tuple[set[str], str | None]:
         async with Client(build_test_server(FakeCarousellSource())) as client:
             tools = await client.list_tools()
@@ -46,7 +55,9 @@ def test_the_server_offers_exactly_the_five_tools_and_sends_its_usage_notes_as_i
 
     tool_names, instructions = anyio.run(connect)
 
-    assert tool_names == {"search_listings", "listing_details", "listing_photo", "screening_tags", "usage_notes"}
+    assert tool_names == {
+        "search_listings", "listing_details", "listing_photo", "screening_tags", "category_fields", "usage_notes"
+    }
     assert instructions == load_usage_notes()
 
 
@@ -88,6 +99,31 @@ def test_search_listings_returns_listing_fields_without_carousells_raw_object() 
     assert first["price"] == 579.0
     assert first["thumbnail_url"].startswith("https://media.karousell.com/")
     assert first["listing_url"] == "https://www.carousell.sg/p/1469923094/"
+
+
+def test_search_listings_keeps_only_the_fields_asked_for_and_always_the_id() -> None:
+    answer = json_answer(
+        call_tool(build_test_server(FakeCarousellSource()), "search_listings",
+                  {"request": {"query": "iphone 15"}, "fields": ["title", "price"]})
+    )
+
+    assert {tuple(sorted(listing)) for listing in answer["listings"]} == {("id", "price", "title")}
+    assert answer["total"] == SEARCH_RESULT.total
+
+
+def test_search_listings_refuses_a_field_that_does_not_exist() -> None:
+    result = call_tool(build_test_server(FakeCarousellSource()), "search_listings",
+                       {"request": {"query": "iphone 15"}, "fields": ["raw"]})
+
+    assert result.is_error is True
+
+
+def test_the_field_names_offered_are_exactly_a_listings_fields() -> None:
+    assert set(get_args(ListingField)) == set(Listing.model_fields) - {"raw"}
+
+
+def test_project_listing_with_no_fields_wanted_keeps_only_the_id() -> None:
+    assert project_listing({"id": "1", "title": "t"}, []) == {"id": "1"}
 
 
 def test_search_listings_rejects_a_request_without_query_or_category_before_calling_carousell() -> None:
@@ -206,3 +242,65 @@ def test_usage_notes_returns_the_order_budget_and_shapes() -> None:
     assert notes == load_usage_notes()
     assert "about 40 Carousell requests" in notes
     assert "## Recommended order" in notes and "## JSON shapes" in notes
+
+
+# --- category_fields -----------------------------------------------------------------------------------------------
+
+
+def test_category_fields_without_a_category_lists_the_top_level_from_the_snapshot_without_a_request() -> None:
+    carousell = FakeCarousellSource()
+
+    answer = json_answer(call_tool(build_test_server(carousell), "category_fields", {}))
+
+    assert {"id": "108", "name": "Motorcycles"} in answer["categories"]
+    assert len(answer["categories"]) == 34
+    assert answer["tree_captured_on"] == "2026-10-27"
+    assert carousell.category_filter_requests == []
+
+
+def test_category_fields_of_a_category_gives_its_path_subcategories_and_live_filters() -> None:
+    carousell = FakeCarousellSource()
+
+    answer = json_answer(call_tool(build_test_server(carousell), "category_fields", {"category": "1595"}))
+
+    assert carousell.category_filter_requests == ["1595"]
+    assert answer["category"] == {"id": "1595", "name": "Class 2B", "path": "Motorcycles > Used Motorcycles > Class 2B"}
+    assert answer["subcategories"] == []
+    filters = {item["field_name"]: item for item in answer["filters"]}
+    assert list(filters) == ["sort_by", "vehicle_motorbike_type", "make", "price_start", "price_end", "deal_options"]
+    assert filters["make"]["set_with"] == "request.category_fields"
+    assert {"value": "Yamaha", "label": "Yamaha"} in filters["make"]["values"]
+    assert filters["price_start"]["set_with"] == "request.price_min"
+    assert filters["sort_by"]["set_with"] == "request.sort"
+    assert filters["vehicle_motorbike_type"]["values"][8] == {
+        "value": "MOTORBIKE_TYPE_SPORTS_BIKE", "label": "Sports Bike"
+    }
+
+
+def test_category_fields_names_the_subcategories_of_a_parent() -> None:
+    tree = load_category_tree()
+
+    answer = category_fields_response(tree, "7100", [])
+
+    assert answer["category"]["path"] == "Motorcycles > Used Motorcycles"
+    assert answer["subcategories"] == [
+        {"id": "1593", "name": "Class 2"}, {"id": "1594", "name": "Class 2A"}, {"id": "1595", "name": "Class 2B"}
+    ]
+
+
+def test_category_fields_of_an_unknown_category_says_so() -> None:
+    answer = category_fields_response(load_category_tree(), "999999", [])
+
+    assert answer["category"] == {"id": "999999", "name": None, "path": "not in the category snapshot"}
+
+
+def test_category_fields_rejects_an_id_that_is_not_numeric() -> None:
+    result = call_tool(build_test_server(FakeCarousellSource()), "category_fields", {"category": "motorcycles"})
+
+    assert result.is_error is True
+
+
+def test_filters_that_search_listings_cannot_set_say_so() -> None:
+    for field_name, filter_type in [("vehicle_age", "float_range"), ("_delivery", "boolean"), ("collections", "id_or_keyword")]:
+        category_filter = CategoryFilter(field_name=field_name, label=None, filter_type=filter_type, options=[])
+        assert filter_setter(category_filter) == "not settable through search_listings"

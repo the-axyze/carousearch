@@ -1,6 +1,14 @@
 """The tool trace (pure): built from a message history and the hook's records."""
 
-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    NativeToolCallPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 
 from carousearch.agent.result import ToolCall
 from carousearch.agent.trace import CallRecord, build_tool_trace, summarise_arguments
@@ -66,3 +74,19 @@ def test_a_call_that_never_reached_the_hook_is_marked_not_run() -> None:
     (entry,) = build_tool_trace(messages, {}, output_tool_name="final_answer")
 
     assert (entry.tool_name, entry.status, entry.duration_seconds) == ("listing_details", "not run", 0.0)
+
+
+def test_hosted_web_searches_appear_in_the_trace_as_run_by_the_provider() -> None:
+    messages = [
+        ModelResponse(parts=[
+            NativeToolCallPart("web_search", {"query": "COE motorcycle Singapore meaning"}, "search-1"),
+            ToolCallPart("search_listings", SEARCH_ARGUMENTS, "call-1"),
+        ]),
+    ]
+
+    trace = build_tool_trace(messages, {"call-1": CallRecord(1.0, "ok", SEARCH_ARGUMENTS)}, "final_answer")
+
+    assert trace[0] == ToolCall(
+        tool_name="web_search", arguments='query="COE motorcycle Singapore meaning"', duration_seconds=0.0, status="ok"
+    )
+    assert trace[1].tool_name == "search_listings"

@@ -9,8 +9,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from carousearch.agent.cost import format_cost_line
 from carousearch.agent.result import AgentAnswer, DroppedListing, KeptListing, ToolCall
-from carousearch.agent.settings import AGENT_MODEL_VARIABLE, AgentBudget, AgentSettings
+from carousearch.agent.settings import AgentBudget, AgentSettings
 from carousearch.carousell.parse import LISTING_URL_TEMPLATE
 from carousearch.filters.schema import Listing
 from carousearch.screening.models import format_sgd
@@ -33,7 +34,7 @@ UNSEEN_LISTING_WARNING = "Not in any search result: the title, price and link ar
 
 @dataclass(frozen=True)
 class AskFormView:
-    model_line: str  # "Model: anthropic:claude-haiku-5-5, from AGENT_MODEL"
+    model_line: str  # "Models: openai:gpt-5.4-mini plans, openai:gpt-5.4-nano judges"
     budget_line: str  # "Up to 40 tool calls, 15 photos and 200 listings per run"
     missing_key: ErrorMessage | None  # set when the model's provider key is missing; Run is then disabled
     run_disabled: bool
@@ -44,7 +45,7 @@ def ask_form_view(settings: AgentSettings) -> AskFormView:
     missing_key = missing_key_message(settings)
     budget = settings.budget
     return AskFormView(
-        model_line=f"Model: {settings.model}, from {AGENT_MODEL_VARIABLE}",
+        model_line=f"Models: {settings.planner_model} plans, {settings.worker_model} judges",
         budget_line=(
             f"Up to {plural(budget.max_tool_calls, 'tool call')}, {plural(budget.max_photos, 'photo')} and "
             f"{plural(budget.max_listings, 'listing')} per run"
@@ -58,10 +59,11 @@ def ask_form_view(settings: AgentSettings) -> AskFormView:
 def missing_key_message(settings: AgentSettings) -> ErrorMessage | None:
     """Names the variable to set; never shows a key."""
     variable = settings.missing_key_variable()
-    if variable is None:
+    model_name = settings.missing_key_model()
+    if variable is None or model_name is None:
         return None
     return ErrorMessage(
-        f"{variable} is not set; the model {settings.model} needs it. Add it to .env and restart", "carousearch web"
+        f"{variable} is not set; the model {model_name} needs it. Add it to .env and restart", "carousearch web"
     )
 
 
@@ -174,7 +176,7 @@ class DroppedRowView:
 @dataclass(frozen=True)
 class AnswerView:
     prompt: str
-    summary: str  # "2 kept · 5 dropped · 6 tool calls · 14 s"
+    summary: str  # "2 kept · 5 dropped · 30 not shortlisted · 6 tool calls · 14 s"
     budget_line: str
     notes: list[str]
     kept: list[KeptCardView]
@@ -186,6 +188,7 @@ def answer_view(run: PromptRun, answer: AgentAnswer, budget: AgentBudget, elapse
     summary_parts = [
         f"{len(answer.kept):,} kept",
         f"{len(answer.dropped):,} dropped",
+        f"{answer.not_shortlisted:,} not shortlisted",
         plural(len(answer.tool_trace), "tool call"),
         format_duration(elapsed_seconds),
     ]
@@ -193,7 +196,7 @@ def answer_view(run: PromptRun, answer: AgentAnswer, budget: AgentBudget, elapse
         prompt=run.prompt,
         summary=" · ".join(summary_parts),
         budget_line=budget_used_line(latest_budget(run), budget),
-        notes=notes_lines(answer.notes),
+        notes=[*notes_lines(answer.notes), format_cost_line(answer.usage)],
         kept=[kept_card(kept, run.seen_listings.get(kept.listing_id)) for kept in answer.kept],
         dropped=[dropped_row(dropped, run.seen_listings.get(dropped.listing_id)) for dropped in answer.dropped],
         trace=answer_trace_rows(answer.tool_trace),

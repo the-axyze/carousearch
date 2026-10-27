@@ -20,7 +20,7 @@ from pydantic import ValidationError
 from telegram.error import TelegramError
 
 from carousearch import storage
-from carousearch.agent.settings import DEFAULT_AGENT_MODEL, AgentSettings, load_agent_settings, parse_model_name
+from carousearch.agent.settings import AgentSettings, load_agent_settings
 from carousearch.bot.app import create_bot_services, fetch_recent_senders, run_polling
 from carousearch.canary import (
     DEFAULT_MINIMUM_LISTINGS,
@@ -46,13 +46,25 @@ from carousearch.config import (
 )
 from carousearch.filters.schema import MAX_PAGE_SIZE, Condition, DealMethod, SearchRequest, SearchResult, SortOrder
 from carousearch.fixture_capture import capture_fixtures
+from carousearch.language_models import (
+    AGENT_PLANNER_MODEL_VARIABLE,
+    AGENT_WORKER_MODEL_VARIABLE,
+    DEFAULT_PLANNER_MODEL,
+    DEFAULT_WORKER_MODEL,
+    parse_model_name,
+)
 from carousearch.market.analysis import AnalysisSpec, analyse
 from carousearch.market.harvest import DEFAULT_REUSE_WINDOW, HarvestOutcome, harvest
 from carousearch.market.limits import HarvestLimits
 from carousearch.market.render import render_analysis_json, render_analysis_text
 from carousearch.screening.models import ScreenedListing
 from carousearch.screening.pipeline import DEFAULT_MAX_DETAIL_FETCHES, ScreeningServices, screen_listings
-from carousearch.screening.price_resolver import NoopPriceResolver, PriceResolver, build_price_resolver
+from carousearch.screening.price_resolver import (
+    ModelPriceResolver,
+    NoopPriceResolver,
+    PriceResolver,
+    build_price_resolver,
+)
 from carousearch.screening.store import SqliteScreeningStore
 from carousearch.text_render import (
     render_agent_answer,
@@ -93,7 +105,7 @@ def main(
     client_factory: ClientFactory = create_carousell_client,
     price_resolver_factory: PriceResolverFactory | None = None,
 ) -> int:
-    """`price_resolver_factory` defaults to the resolver ANTHROPIC_API_KEY selects (build_price_resolver)."""
+    """`price_resolver_factory` defaults to the resolver the worker model's key selects (build_price_resolver)."""
     arguments = build_argument_parser().parse_args(argv)
     data_dir: Path = arguments.data_dir or default_data_dir()
     rate_limiter = RateLimiter(arguments.min_interval, arguments.jitter)
@@ -212,7 +224,13 @@ def build_argument_parser() -> argparse.ArgumentParser:
     ask = commands.add_parser("ask", help="answer a shopping prompt with an AI agent that uses the MCP tools")
     ask.add_argument("prompt", help='e.g. "Nintendo Switch under S$200 with meet-up, drop bundles"')
     ask.add_argument("--json", action="store_true", help="print the answer as JSON (AgentAnswer)")
-    ask.add_argument("--model", help=f"Pydantic AI model, provider:model (default AGENT_MODEL or {DEFAULT_AGENT_MODEL})")
+    ask.add_argument(
+        "--model", help=f"planner model, provider:model (default {AGENT_PLANNER_MODEL_VARIABLE} or {DEFAULT_PLANNER_MODEL})"
+    )
+    ask.add_argument(
+        "--worker-model",
+        help=f"worker model for the judge tools (default {AGENT_WORKER_MODEL_VARIABLE} or {DEFAULT_WORKER_MODEL})",
+    )
     ask.add_argument("--max-photos", type=int, help="photos the agent may look at (default AGENT_MAX_PHOTOS or 15)")
     return parser
 
@@ -258,14 +276,18 @@ def search_request_from_arguments(arguments: argparse.Namespace) -> SearchReques
 
 
 def agent_settings_from_arguments(settings: AgentSettings, arguments: argparse.Namespace) -> AgentSettings:
-    """The settings with --model and --max-photos applied."""
+    """The settings with --model, --worker-model and --max-photos applied."""
     if arguments.max_photos is not None and arguments.max_photos < 0:
         raise ValueError("--max-photos must be 0 or more")
-    model = parse_model_name(arguments.model) if arguments.model else settings.model
     budget = settings.budget
     if arguments.max_photos is not None:
         budget = replace(budget, max_photos=arguments.max_photos)
-    return replace(settings, model=model, budget=budget)
+    return replace(
+        settings,
+        planner_model=parse_model_name(arguments.model or "", settings.planner_model),
+        worker_model=parse_model_name(arguments.worker_model or "", settings.worker_model),
+        budget=budget,
+    )
 
 
 def screening_options_from_arguments(arguments: argparse.Namespace) -> ScreeningOptions:
@@ -371,8 +393,7 @@ def run_screened_search_command(
     else:
         print(render_screened_table(shown), file=output)
         print(render_search_summary(result, len(shown)), file=output)
-        resolution_on = not isinstance(resolver, NoopPriceResolver)
-        print(describe_screening(screened, len(screened) - len(shown), resolution_on, options), file=output)
+        print(describe_screening(screened, len(screened) - len(shown), price_reader(resolver), options), file=output)
     return EXIT_OK
 
 
@@ -389,18 +410,26 @@ def render_screened_json(result: SearchResult, screened: list[ScreenedListing]) 
     return json.dumps(payload, indent=2, ensure_ascii=False)
 
 
+def price_reader(resolver: PriceResolver) -> str | None:
+    """Who reads descriptions for prices: the worker model's name, or None when price resolution is off."""
+    if isinstance(resolver, NoopPriceResolver):
+        return None
+    return resolver.model_name if isinstance(resolver, ModelPriceResolver) else "the price resolver"
+
+
 def describe_screening(
-    screened: list[ScreenedListing], hidden_count: int, resolution_on: bool, options: ScreeningOptions
+    screened: list[ScreenedListing], hidden_count: int, price_reader: str | None, options: ScreeningOptions
 ) -> str:
-    """One line, e.g. 'Screening: 6 of 20 multi-item (6 hidden); 8 descriptions checked (detail budget 10); ...'."""
+    """One line, e.g. 'Screening: 6 of 20 multi-item (6 hidden); 8 descriptions checked (detail budget 10); ...'.
+    `price_reader` names who reads descriptions for prices, None when price resolution is off."""
     multi_item_count = sum(item.is_multi_item for item in screened)
     checked_count = sum(item.detail is not None for item in screened)
     hidden = f" ({hidden_count} hidden)" if hidden_count else ""
     descriptions = "description" if checked_count == 1 else "descriptions"
     resolution = (
-        "your variant's price read from the description by Claude"
-        if resolution_on
-        else "price resolution off (ANTHROPIC_API_KEY not set), so YOUR PRICE is the listed price"
+        f"your variant's price read from the description by {price_reader}"
+        if price_reader
+        else "price resolution off (no API key for the worker model), so YOUR PRICE is the listed price"
     )
     return (
         f"Screening: {multi_item_count} of {len(screened)} multi-item{hidden}; {checked_count} {descriptions} checked "
@@ -584,17 +613,23 @@ def run_ask_command(
     output: TextIO,
     errors: TextIO,
     model: "Model | None" = None,
+    worker_model: "Model | None" = None,
 ) -> int:
-    """Answer the prompt with the agent and print the trace, kept, dropped and notes (or the AgentAnswer JSON).
-    `model` replaces the one the settings name; without it, the provider's API key must be set."""
+    """Answer the prompt with the agent and print the trace, kept, dropped, notes and cost (or the AgentAnswer JSON).
+    `model` and `worker_model` replace the planner and worker the settings name (tests); without them, the
+    providers' API keys must be set. The run's files go to <data dir>/runs/<time>-<id>/."""
     missing_key = settings.missing_key_variable()
-    if model is None and missing_key:
-        print(describe_missing_agent_key(settings.model, missing_key), file=errors)
+    missing_key_model = settings.missing_key_model()
+    if (model is None or worker_model is None) and missing_key and missing_key_model:
+        print(describe_missing_agent_key(missing_key_model, missing_key), file=errors)
         return EXIT_USAGE_ERROR
     # Imported here so the other commands do not pay for Pydantic AI and the MCP SDK.
     import pydantic_ai
     from pydantic_ai.exceptions import AgentRunError, UserError
 
+    from carousearch.agent.judge_cache import SqliteJudgementCache
+    from carousearch.agent.local_tools import LocalToolServices
+    from carousearch.agent.run_directory import new_run_directory
     from carousearch.agent.run_prompt import run_prompt_sync
     from carousearch.mcp_server import McpServices
 
@@ -608,8 +643,13 @@ def run_ask_command(
         closing(storage.open_database(data_dir / DATABASE_FILE_NAME, check_same_thread=False)) as database,
     ):
         services = McpServices(carousell=client, detail_cache=SqliteScreeningStore(database))
+        local = LocalToolServices(
+            run_directory=new_run_directory(data_dir, _now()),
+            judgement_cache=SqliteJudgementCache(database),
+            worker_model=worker_model,
+        )
         try:
-            answer = run_prompt_sync(prompt, services, settings, model)
+            answer = run_prompt_sync(prompt, services, settings, model, local=local)
         except UserError as error:  # e.g. a provider Pydantic AI does not know
             print(f"error: {error}", file=errors)
             return EXIT_USAGE_ERROR
@@ -623,8 +663,8 @@ def run_ask_command(
 def describe_missing_agent_key(model: str, variable: str) -> str:
     return (
         f"error: {variable} not set; the model {model} needs it.\n"
-        f"Add it to {DEFAULT_ENV_FILE} or the environment, or choose another model with --model or AGENT_MODEL "
-        "(README: 'Ask the agent')."
+        f"Add it to {DEFAULT_ENV_FILE} or the environment, or choose other models with --model and --worker-model "
+        f"or {AGENT_PLANNER_MODEL_VARIABLE} and {AGENT_WORKER_MODEL_VARIABLE} (README: 'Ask the agent')."
     )
 
 

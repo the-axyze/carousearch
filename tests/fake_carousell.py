@@ -11,6 +11,7 @@ from fixture_files import load_json_fixture
 
 BOOTSTRAP_PATH = "/"
 SEARCH_PATH = "/ds/search/cf/4.0/search/"
+FILTER_PATH = "/ds/filter/cf/4.0/search/"
 
 
 def bootstrap_page(csrf_token: str) -> str:
@@ -26,7 +27,7 @@ class FakeCarousell:
 
     When the queue is empty, a search is answered from `page_responses` by the `session` cursor the
     client sent (None for a first page), and otherwise with the saved search fixture; a listing detail
-    is answered with the saved listing-detail fixture.
+    is answered with the saved listing-detail fixture, and a filter search with the Class 2B fieldset fixture.
     """
 
     def __init__(
@@ -59,6 +60,8 @@ class FakeCarousell:
             if cursor in self.page_responses:
                 return self.page_responses[cursor]
             return httpx.Response(200, json=load_json_fixture("search_price_condition.json"))
+        if request.url.path == FILTER_PATH:
+            return httpx.Response(200, json=load_json_fixture("category_filters_class_2b.json"))
         if request.url.path.startswith("/ds/listing-detail/"):
             return httpx.Response(200, json=load_json_fixture("listing_detail.json"))
         return httpx.Response(404, text="not found")
