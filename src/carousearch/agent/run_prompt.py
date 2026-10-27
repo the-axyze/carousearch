@@ -40,6 +40,7 @@ from carousearch.agent.run_photos import RunPhotoStore
 from carousearch.agent.settings import AgentBudget, AgentSettings
 from carousearch.agent.toolsets import (
     MODEL_RETRIES,
+    PHASE_MODEL_SETTINGS,
     GatedToolset,
     ToolCallGate,
     add_planner_usage,
@@ -191,6 +192,7 @@ def build_agent(
         toolsets=list(toolsets),
         retries=MODEL_RETRIES,
         capabilities=list(capabilities),
+        model_settings=PHASE_MODEL_SETTINGS,
     )
 
 

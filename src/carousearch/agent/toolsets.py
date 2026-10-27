@@ -6,8 +6,8 @@ over in-memory streams. The execution phase also has the local tools (agent/loca
 GatedToolset. Every call is admitted against the phase's budget, timed, filed into the run's listings.db and shown
 to an optional observer; the model gets a shorter result (agent/tool_results.py).
 
-Also here, for both phases: the request limit of a phase and add_planner_usage, which reads the planner's tokens
-from a phase's messages.
+Also here, for both phases: the request limit and the per-request deadline of a phase, and add_planner_usage, which
+reads the planner's tokens from a phase's messages.
 
 I/O: none of its own; it calls the tools it is handed.
 """
@@ -23,6 +23,7 @@ from pydantic_ai import RunContext, UsageLimits
 from pydantic_ai.exceptions import ToolFailed
 from pydantic_ai.mcp import CallToolFunc, MCPToolset, ToolResult
 from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets.abstract import ToolsetTool
 
@@ -41,6 +42,10 @@ logger = logging.getLogger(__name__)
 EXTRA_MODEL_REQUESTS = 5
 # Retries per tool and for the final output when the model sends arguments that fail validation.
 MODEL_RETRIES = 2
+# A deadline for each model request, so a provider that stops answering ends the phase with ModelRequestTimeout
+# (an AgentRunError) instead of the client's ten-minute default.
+MODEL_REQUEST_TIMEOUT_SECONDS = 180.0
+PHASE_MODEL_SETTINGS = ModelSettings(request_timeout=MODEL_REQUEST_TIMEOUT_SECONDS)
 
 
 class ToolResultRecorder(Protocol):

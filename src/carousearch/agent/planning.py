@@ -36,6 +36,7 @@ from carousearch.agent.settings import AgentSettings
 from carousearch.agent.templates import template_names
 from carousearch.agent.toolsets import (
     MODEL_RETRIES,
+    PHASE_MODEL_SETTINGS,
     ToolCallGate,
     add_planner_usage,
     build_mcp_toolset,
@@ -181,6 +182,7 @@ def build_planning_agent(
         toolsets=[build_mcp_toolset(build_server(services), gate, PLANNING_TOOLS)],
         retries=MODEL_RETRIES,
         capabilities=[Caching(), *([web_search] if web_search else [])],
+        model_settings=PHASE_MODEL_SETTINGS,
     )
 
     reminded = False

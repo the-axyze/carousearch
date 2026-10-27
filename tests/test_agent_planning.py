@@ -97,6 +97,7 @@ def test_the_planner_sees_only_the_discovery_tools_and_the_planning_method() -> 
     assert {tool.name for tool in info.function_tools} == {"category_fields", "search_listings", "sample_descriptions"}
     assert [tool.name for tool in info.output_tools] == [PLAN_OUTPUT_TOOL_NAME]
     assert info.output_tools[0].strict is True  # the provider enforces the plan's schema
+    assert info.model_settings == {"request_timeout": 180.0}
     assert info.instructions.startswith("You plan a search of Carousell Singapore listings for one request.")
     assert "- under_benchmark: Listings priced well below" in info.instructions
     assert "Planning budget: 6 tool calls and 2 web searches" in info.instructions

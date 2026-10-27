@@ -82,6 +82,7 @@ def test_the_agent_offers_the_mcp_tools_and_the_local_tools_and_reads_the_usage_
     assert {tool.name for tool in info.function_tools} == MCP_TOOLS | LOCAL_TOOLS
     assert [tool.name for tool in info.output_tools] == [OUTPUT_TOOL_NAME]
     assert info.output_tools[0].strict is True
+    assert info.model_settings == {"request_timeout": 180.0}  # a provider that stops answering ends the run
     assert "You carry out an agreed search plan over Carousell Singapore listings" in info.instructions
     assert "40 tool calls in total, 200 listings from search pages, 15 photos" in info.instructions
     assert load_usage_notes().strip() in info.instructions
