@@ -378,3 +378,15 @@ Differences from the plan (NEXT_STEPS 4.1):
 - After a reload, Ask mode shows the run in flight but not a finished run's answer: the registry still holds it, but nothing shows it.
 
 Deferred: one real prompt in the browser with desktop and mobile screenshots in `docs/examples/`, after phase L; showing the last finished answer after a reload (open question Q13); disabling Run while a run is in progress instead of refusing a second one (Q12); keeping runs across a restart; token usage and cost per run (H9).
+
+## Agent: tiered tools status (2026-10-27)
+
+Built on branch `feature/tiered-agent-tools` (from `feature/phase-c-prompt-mode`, not pushed): the `ask` agent, and with it the web app's Ask mode, can carry out multi-step, discretionary shopping prompts cheaply and with any provider. [NEXT_STEPS.md](NEXT_STEPS.md), section 4.6, has what changed, the four live runs and the deviations; `README.md`, "Ask the agent", has the usage.
+
+- Two model tiers (`AGENT_PLANNER_MODEL`, `AGENT_WORKER_MODEL`; `AGENT_MODEL` kept as a deprecated alias) through a shared `language_models.py`. Screening's price resolver moved onto the worker model through Pydantic AI (H11).
+- Four local tools that pass through the same budget gate as the MCP tools: `run_python` (a Landlock-confined `python -I -S` subprocess over the run's `listings.db`), `judge_listings` and `judge_photos` (worker model, batched, cached in `judgement_cache`), `photo_metrics` (no model).
+- MCP server: `category_fields` (tree snapshot plus live fieldset) and `fields` on `search_listings`.
+- Hosted web search capped per run, Pydantic AI prompt caching, and a cost estimate per model in `ask` and Ask mode (H9).
+- Tests: 895 offline (775 before; 120 new), ruff clean.
+
+Live check: four `ask` runs on the owner's two motorcycle prompts with `openai:gpt-5.4-mini` and `openai:gpt-5.4-nano`, US$0.026 to US$0.039 and 5 to 14 Carousell requests each. Every tool worked; the planner model follows multi-step prompts only partly (follow-up T1 in NEXT_STEPS). Ask mode has still not been opened in a real browser.
