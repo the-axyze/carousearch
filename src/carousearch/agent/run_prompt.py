@@ -52,12 +52,14 @@ from carousearch.agent.web_search import (
 )
 from carousearch.agent.worker import WorkerJudge
 from carousearch.language_models import build_model
-from carousearch.mcp_server import McpServices, build_server
+from carousearch.mcp_server import SAMPLE_TOOL, McpServices, build_server
 
 logger = logging.getLogger(__name__)
 
 OUTPUT_TOOL_NAME = "final_answer"
 USAGE_NOTES_TOOL = "usage_notes"  # its text is already in the instructions
+# The planning phase's discovery tool; the execution phase reads listings with search_listings and the local tools.
+EXECUTION_HIDDEN_TOOLS = frozenset({USAGE_NOTES_TOOL, SAMPLE_TOOL})
 # The backstop for a model that ignores refusals: the run ends after this many model requests beyond the
 # tool-call budget. Parallel calls make the normal request count lower than the tool-call count.
 EXTRA_MODEL_REQUESTS = 5
@@ -219,7 +221,7 @@ def build_toolset(server: MCPServer, gate: ToolCallGate) -> AbstractToolset[Any]
     returns the same text, is left out. Tool errors (a refused photo URL, Carousell blocking) reach the model as
     failed results without using up its retries."""
     toolset = MCPToolset(server, include_instructions=True, tool_error_behavior="failed", process_tool_call=gate)
-    return toolset.filtered(lambda context, tool_definition: tool_definition.name != USAGE_NOTES_TOOL)
+    return toolset.filtered(lambda context, tool_definition: tool_definition.name not in EXECUTION_HIDDEN_TOOLS)
 
 
 def build_agent(

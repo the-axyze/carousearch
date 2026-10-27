@@ -113,3 +113,22 @@ def test_nothing_is_granted_once_a_cap_is_reached() -> None:
 
     assert (budget.grant_photos(2), budget.grant_detail_fetches(2)) == (0, 0)
     assert (budget.photos, budget.tool_calls) == (0, 1)
+
+
+def test_a_sample_counts_its_page_against_the_listing_cap_and_its_detail_fetches_as_tool_calls() -> None:
+    budget = ToolBudget(AgentBudget(max_tool_calls=4, max_listings=30))
+
+    admitted = budget.admit("sample_descriptions", {"request": {"query": "a"}, "n": 48, "max_detail_fetches": 5})
+
+    assert admitted["n"] == 30 and admitted["max_detail_fetches"] == 3  # 4 calls: the sample itself and 3 details
+    assert (budget.tool_calls, budget.listings) == (4, 30)
+    assert "2 listings left without details" in " ".join(budget.notes())
+
+
+def test_a_sample_without_detail_fetches_costs_one_call_and_its_default_page() -> None:
+    budget = ToolBudget(AgentBudget())
+
+    admitted = budget.admit("sample_descriptions", {"request": {"query": "a"}})
+
+    assert (admitted["n"], admitted["max_detail_fetches"]) == (20, 0)
+    assert (budget.tool_calls, budget.listings) == (1, 20)

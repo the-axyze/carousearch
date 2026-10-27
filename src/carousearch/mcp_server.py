@@ -9,6 +9,8 @@ own calls. This module only connects; each tool is one thin call into existing c
 - listing_photo: CarousellClient.get_photo, downsized by carousearch.photos
 - screening_tags: the title and description rules of carousearch.screening.rules, for one listing
 - category_fields: the category tree snapshot (carousell.categories) and CarousellClient.get_category_filters
+- sample_descriptions: one search page shown as short text (card snippets, cached details, a few fetched ones), so a
+  host can learn what sellers in a category actually state before planning a search
 - usage_notes: the recommended order, the request budget and the JSON shapes (mcp_instructions.md)
 
 `build_server(services)` wires the tools to injected services, so tests pass fakes and importing this module touches
@@ -17,7 +19,7 @@ database call at a time.
 """
 
 import threading
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -37,6 +39,7 @@ from carousearch.filters.schema import (
     MAX_PAGE_SIZE,
     RESERVED_FILTER_NAMES,
     CategoryFilter,
+    Listing,
     ListingDetail,
     SearchRequest,
     SearchResult,
@@ -54,6 +57,11 @@ DEFAULT_SEARCH_LIMIT = 20
 SEARCH_TOOL = "search_listings"
 DETAILS_TOOL = "listing_details"
 PHOTO_TOOL = "listing_photo"
+CATEGORY_TOOL = "category_fields"
+SAMPLE_TOOL = "sample_descriptions"
+DEFAULT_SAMPLE_SIZE = 20
+MAX_SAMPLE_DETAIL_FETCHES = 5
+SAMPLE_EXCERPT_CHARACTERS = 300
 DEFAULT_PHOTO_MAX_WIDTH = 800
 # Every tool only reads, from a site outside this machine. Hosts such as ChatGPT skip their confirmation prompt
 # for read-only tools.
@@ -89,11 +97,22 @@ ListingField = Literal[
     "listing_url",
     "posted_or_bumped_at",
     "posted_or_bumped_kind",
+    "description_snippet",
 ]
 ListingFields = Annotated[
     list[ListingField] | None,
     Field(description="Only these fields for each listing (id is always included), to keep the result short; omit "
           "for all of them."),
+]
+SampleSize = Annotated[int, Field(ge=1, le=MAX_PAGE_SIZE, description="Listings to sample, 1 to 48.")]
+SampleDetailFetches = Annotated[
+    int,
+    Field(
+        ge=0,
+        le=MAX_SAMPLE_DETAIL_FETCHES,
+        description=f"Full descriptions to fetch for sampled listings that have neither a card snippet nor a cached "
+        f"detail, 0 to {MAX_SAMPLE_DETAIL_FETCHES}; each is one Carousell request.",
+    ),
 ]
 CategoryIdArgument = Annotated[
     str | None,
@@ -145,7 +164,7 @@ class McpServices:
 
 
 def build_server(services: McpServices) -> MCPServer:
-    """The MCP server with its six tools. The usage notes double as the instructions hosts read on connecting."""
+    """The MCP server with its seven tools. The usage notes double as the instructions hosts read on connecting."""
     notes = load_usage_notes()
     server = MCPServer(SERVER_NAME, instructions=notes)
 
@@ -159,22 +178,22 @@ def build_server(services: McpServices) -> MCPServer:
         """Search Carousell Singapore. Call this first: it is cheap, one Carousell request per page.
 
         `request` takes Carousell's own server-side filters (the SearchRequest fields):
-        - query: keywords, e.g. "road bike". A query, a category, or both, is required.
-        - category: a numeric Carousell collection id, e.g. "5707" Mobile Phones, "1793" Laptops, "5755" Chairs,
-          "7100" Used Motorcycles. category_fields lists the categories and their filters.
+        - query: keywords. A query, a category, or both, is required.
+        - category: a numeric Carousell collection id; category_fields lists the categories and their filters.
         - price_min, price_max: in SGD.
         - conditions: any of brand_new, like_new, lightly_used, well_used, heavily_used; empty means any.
         - deal_methods: meetup and/or mailing; empty means either.
         - buyer_protection_only, free_delivery_only: true to require Buyer Protection or free delivery.
         - sort: best_match (default), recent, price_low_to_high or price_high_to_low.
-        - category_fields: category facets by Carousell field name, e.g. {"mobile_storage": "MOBILE_STORAGE_256_GB"};
-          the category_fields tool lists each category's names and values.
+        - category_fields: category facets by Carousell field name, {"<field_name>": "<value>"}; the
+          category_fields tool lists each category's field names and allowed values.
         Paging comes from `limit` and `page_token`; request.page_size and request.page_cursor are ignored.
         `fields` keeps only the listed fields of each listing, e.g. ["id", "title", "price"], for a shorter result.
 
         Returns {"listings": [...], "total": ..., "next_page": ...}. Each listing has id, title, price (SGD),
         price_display, condition, condition_label, like_count, seller_username, seller_id, thumbnail_url,
-        listing_url, posted_or_bumped_at and posted_or_bumped_kind. Carousell caps total (1000 means "1,000+").
+        listing_url, posted_or_bumped_at, posted_or_bumped_kind and description_snippet (the start of the
+        description, about 300 characters, as the card shows it). Carousell caps total (1000 means "1,000+").
         For the next page, call again with the same request and page_token set to next_page. Nothing is filtered
         or ranked here: match titles, prices and sellers yourself over this JSON.
         """
@@ -182,8 +201,9 @@ def build_server(services: McpServices) -> MCPServer:
 
     @server.tool(annotations=READ_ONLY_TOOL)
     def listing_details(listing_id: ListingId) -> dict:
-        """Everything about one listing: description, all photo URLs (image_urls), seller rating, review count,
-        join date and response rate, verification, meet-up points, mailing, and created / last-modified times.
+        """Everything about one listing: description, the seller-entered category fields (attributes), all photo
+        URLs (image_urls), seller rating, review count, join date and response rate, verification, meet-up points,
+        mailing, and created / last-modified times.
 
         One Carousell request unless the listing was fetched in the last 12 hours, so call it only on the listings
         you have shortlisted from search_listings, never on every result.
@@ -192,7 +212,7 @@ def build_server(services: McpServices) -> MCPServer:
 
     @server.tool(annotations=READ_ONLY_TOOL)
     def listing_photo(url: PhotoUrl, max_width: PhotoMaxWidth = DEFAULT_PHOTO_MAX_WIDTH) -> Image:
-        """Download one listing photo to look at, e.g. to judge photo quality or the item's visible condition.
+        """Download one listing photo to look at, e.g. to judge photo quality or the visible condition.
 
         `url` must be a listing's thumbnail_url (from search_listings: the small cover photo buyers see in the
         results) or an entry of image_urls (from listing_details: full-size photos). Other domains are refused.
@@ -223,14 +243,31 @@ def build_server(services: McpServices) -> MCPServer:
         With a category id: its path, its subcategories (same snapshot) and the filters Carousell offers there, read
         live (one Carousell request): each filter's field_name, label, type, allowed values, and `set_with`, the
         search_listings argument that applies it. Filters whose set_with is "request.category_fields" go into
-        request.category_fields by field_name, e.g. {"make": "Yamaha"}. Some categories split by subcategory
-        instead of by filter (for example motorcycles by licence class), so check subcategories first; a top-level
-        category often reports only the generic filters, while its subcategories report their own.
+        request.category_fields by field_name, {"<field_name>": "<value>"}. Some categories split by subcategory
+        instead of by filter, so check subcategories first; a top-level category often reports only the generic
+        filters, while its subcategories report their own.
         """
         if category is None:
             return top_level_categories_response(services.categories)
         filters = load_category_filters(services, category)
         return category_fields_response(services.categories, category, filters)
+
+    @server.tool(annotations=READ_ONLY_TOOL)
+    def sample_descriptions(
+        request: SearchRequest, n: SampleSize = DEFAULT_SAMPLE_SIZE, max_detail_fetches: SampleDetailFetches = 0
+    ) -> dict:
+        """Learn what sellers in a search actually write, before deciding how to search it: one search page,
+        shown as short text per listing. Use it to see which facts sellers state, how they phrase them, and which
+        structured fields they fill in.
+
+        `request` is the same as search_listings' (a query, a category, or both, plus any filters). Each sample has
+        id, title, price, description_excerpt (the first ~300 characters: from a cached detail when there is one,
+        else the search card's snippet), excerpt_source ("detail", "card" or "none") and structured_fields
+        (condition, the category name and the seller-entered category fields when the detail is known).
+        One Carousell request for the page; details come only from the 12-hour cache unless max_detail_fetches
+        allows a few requests for listings that have no excerpt at all.
+        """
+        return load_sample(services, request, n, max_detail_fetches)
 
     @server.tool(annotations=READ_ONLY_TOOL)
     def usage_notes() -> str:
@@ -274,6 +311,31 @@ def load_listing_detail(services: McpServices, listing_id: str) -> ListingDetail
         detail = services.carousell.get_listing(listing_id)
         services.detail_cache.save_detail(detail, now)
         return detail
+
+
+def load_sample(services: McpServices, request: SearchRequest, size: int, max_detail_fetches: int) -> dict:
+    """One search page, each listing with its cached detail when there is one, plus up to `max_detail_fetches`
+    details fetched for listings that would otherwise have no excerpt at all."""
+    paged_request = request.model_copy(update={"page_size": size, "page_cursor": None})
+    with carousell_call(services):
+        result = services.carousell.search(paged_request)
+    listings = result.listings[:size]
+    details = {listing.id: detail for listing in listings if (detail := find_cached_detail(services, listing.id))}
+    without_text = [
+        listing.id for listing in listings if listing.id not in details and not listing.description_snippet
+    ]
+    for listing_id in without_text[:max_detail_fetches]:
+        try:
+            details[listing_id] = load_listing_detail(services, listing_id)
+        except ToolError as error:  # one missing detail only leaves its excerpt empty; a block still stops the call
+            if isinstance(error.__cause__, CarousellBlockedError):
+                raise
+    return sample_response(listings, details, result.total)
+
+
+def find_cached_detail(services: McpServices, listing_id: str) -> ListingDetail | None:
+    with services.lock:
+        return services.detail_cache.load_detail(listing_id, services.clock())
 
 
 def load_category_filters(services: McpServices, category_id: str) -> list[CategoryFilter]:
@@ -334,6 +396,45 @@ def project_listing(listing: dict[str, Any], fields: Sequence[str]) -> dict[str,
 
 def detail_response(detail: ListingDetail) -> dict:
     return detail.model_dump(mode="json", exclude={"raw"})
+
+
+def sample_response(listings: Sequence[Listing], details: Mapping[str, ListingDetail], total: int | None) -> dict:
+    samples = [sample_entry(listing, details.get(listing.id)) for listing in listings]
+    return {
+        "samples": samples,
+        "total": total,
+        "with_full_description": sum(1 for sample in samples if sample["excerpt_source"] == "detail"),
+    }
+
+
+def sample_entry(listing: Listing, detail: ListingDetail | None) -> dict:
+    """One listing as compact text: the description's start (detail first, else the card's snippet) and the
+    structured fields known for it."""
+    if detail is not None and detail.description:
+        excerpt, source = detail.description, "detail"
+    elif listing.description_snippet:
+        excerpt, source = listing.description_snippet, "card"
+    else:
+        excerpt, source = "", "none"
+    structured: dict[str, str] = {"condition": listing.condition_label} if listing.condition_label else {}
+    if detail is not None:
+        if detail.category_name:
+            structured["category_name"] = detail.category_name
+        structured.update(detail.attributes)
+    return {
+        "id": listing.id,
+        "title": listing.title,
+        "price": listing.price,
+        "description_excerpt": cut_text(excerpt, SAMPLE_EXCERPT_CHARACTERS),
+        "excerpt_source": source,
+        "structured_fields": structured,
+    }
+
+
+def cut_text(text: str, max_characters: int) -> str:
+    """Whitespace collapsed, and cut with an ellipsis past `max_characters`."""
+    flat = " ".join(text.split())
+    return flat if len(flat) <= max_characters else flat[: max_characters - 1] + "…"
 
 
 def single_listing_tags(detail: ListingDetail, query: str | None) -> list[Tag]:
