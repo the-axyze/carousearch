@@ -493,8 +493,10 @@ state only in words. Each field spec: name (snake_case), type (str, int, float, 
 (what to read), optional pattern (a Python regex, tried first, case-insensitive; its first group or the whole \
 match is the value) and enum_values (for enum). Listings the pattern does not match, and specs without one, go to \
 a small model in batches, which answers null when the text does not state the value: unknown stays null, never \
-guessed. Values land in columns named x_<name> (INTEGER for int and bool as 0/1, REAL for float, TEXT for str, \
-enum and date as YYYY-MM-DD), and all of a listing's values also in the JSON column `extracted`. In run_python: \
+guessed. Ask for what the text states (a date, a number with its unit) and work out ages and time left from it \
+in run_python: the small model does not know today's date. Values land in columns named x_<name> (INTEGER for \
+int and bool as 0/1, REAL for float, TEXT for str, enum and date as YYYY-MM-DD), and all of a listing's values \
+also in the JSON column `extracted`. In run_python: \
 SELECT id, price, x_<name> FROM listings WHERE x_<name> IS NOT NULL. Returns rows of the values, the counts per \
 field (pattern, model, cached, unknown), which text was read and any problems. Answers are cached per listing \
 and spec. With fetch_details true, each listing without details costs one Carousell request, counted against \

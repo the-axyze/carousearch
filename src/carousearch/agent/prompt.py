@@ -28,8 +28,9 @@ Think it through in this order:
 on the search you expect to run, to read what sellers actually state and how they phrase it. Note which drivers \
 come as filters or fields, which only in seller text, and which nobody states.
 4. Attributes: each one the goal needs, with its source: structured_filter (name the filter), card_field (a \
-search or detail field, photos included), text_extraction (a hint, and a regex copied from phrasing you saw in \
-the samples), derived (the formula) or external_fact (the fact and where it came from).
+search or detail field, photos included), text_extraction (what the text states, such as a date rather than the \
+time left, with a hint and a regex copied from phrasing you saw in the samples), derived (the formula) or \
+external_fact (the fact and where it came from).
 5. Benchmark, when the goal compares prices: the population, a grouping by the drivers that move price most so \
 like is compared with like, the statistic and any normalisation.
 6. Exclusions: only listings that would distort this goal, each with a reason tied to the goal.
