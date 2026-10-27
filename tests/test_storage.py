@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from carousearch import storage
+from carousearch.agent.judge_cache import SqliteJudgementCache
 from carousearch.carousell.parse import parse_listing_detail_response, parse_search_response
 from carousearch.filters.schema import Condition, SearchRequest
 from carousearch.screening.models import PriceSource, ResolvedPrice
@@ -109,3 +110,21 @@ def test_price_resolution_cache_replaces_an_entry(connection) -> None:
 
     assert storage.load_price_resolution(connection, "1469923094", "iphone 15 pro") == second
     assert connection.execute("SELECT COUNT(*) FROM price_resolution_cache").fetchone() == (1,)
+
+
+def test_judgement_cache_is_keyed_by_kind_listing_criterion_and_model(connection) -> None:
+    cache = SqliteJudgementCache(connection)
+    verdict = {"verdict": "yes", "reason": "COE 2028"}
+    cache.save("listing", "1", "coe about 2 years", "openai:gpt-5.4-nano", verdict, NOON)
+
+    assert cache.load("listing", "1", "coe about 2 years", "openai:gpt-5.4-nano") == verdict
+    assert cache.load("photo", "1", "coe about 2 years", "openai:gpt-5.4-nano") is None
+    assert cache.load("listing", "1", "coe about 2 years", "openai:gpt-5.4-mini") is None
+    assert cache.load("listing", "1", "blurry photo", "openai:gpt-5.4-nano") is None
+
+
+def test_judgement_cache_replaces_an_entry(connection) -> None:
+    storage.save_judgement(connection, "photo", "1", "blurry", "m", '{"score_1_to_5": 2}', NOON)
+    storage.save_judgement(connection, "photo", "1", "blurry", "m", '{"score_1_to_5": 5}', NOON)
+
+    assert storage.load_judgement(connection, "photo", "1", "blurry", "m") == '{"score_1_to_5": 5}'

@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import re
+import tempfile
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -23,6 +24,7 @@ from carousearch.carousell.errors import CarousellBlockedError, CarousellSchemaE
 from carousearch.carousell.parse import parse_listing_detail_response, parse_search_response
 from carousearch.config import ScreeningSettings
 from carousearch.filters.schema import Listing, ListingDetail, SearchRequest, SearchResult
+from carousearch.language_models import ProviderKeys
 from carousearch.screening.models import PriceSource, ResolvedPrice
 from carousearch.screening.pipeline import ScreeningServices
 from carousearch.web.app import WebSettings, create_app
@@ -33,6 +35,13 @@ from fake_carousell import FakeCarousell as FakeCarousellSite
 from fake_mcp_services import jpeg_bytes
 from fixture_files import load_json_fixture
 from scripted_model import ScriptedModel, calls, final_answer
+
+
+@pytest.fixture(autouse=True)
+def temporary_folders_in_tmp_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ask runs without a data folder keep their files in a temporary folder: make that the test's own."""
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+
 
 START = datetime(2026, 10, 25, 12, 0, tzinfo=UTC)
 TEMPLATE_LISTING = parse_search_response(load_json_fixture("search_price_condition.json")).listings[0]
@@ -457,9 +466,10 @@ def test_work_for_a_browser_that_gave_up_is_skipped() -> None:
 # --- Ask mode -----------------------------------------------------------------------------------------------------
 #
 # A scripted FunctionModel drives the real agent loop and the real MCP tools over the fake Carousell above. The
-# provider key in KEYED is a dummy: the injected agent_model means no provider is ever built or called with it.
+# provider key in KEYED is a dummy: the injected agent_model means the planner is never built from it, and the worker
+# model built from it is never called (no script here uses a judge tool). Run folders go to a temporary folder.
 
-KEYED = AgentSettings(anthropic_api_key="test-key")
+KEYED = AgentSettings(keys=ProviderKeys(openai="test-key"))
 ASK_PROMPT = "A used iPhone 15 Pro 256GB under S$900, one phone per post"
 POLL_TIMEOUT_SECONDS = 10.0
 AGENT_SEARCH = ("search_listings", {"request": {"query": "iphone 15 pro 256gb"}, "limit": 8})
@@ -592,7 +602,8 @@ def test_ask_runs_in_the_background_and_answers_with_carousells_cards_dropped_no
     assert "<summary>Tool calls (1)</summary>" in page
     assert re.search(r'trace-row trace-ok">\s*<span class="trace-status">ok</span>\s*'
                      r'<span class="trace-call"><code>search_listings</code>', page)
-    assert "2 kept · 2 dropped · 1 tool call" in page
+    assert "2 kept · 2 dropped · 0 not shortlisted · 1 tool call" in page
+    assert "<li>Cost (estimate, list prices of " in page
     assert [request.query for request in carousell.search_requests] == ["iphone 15 pro 256gb"]
 
 
@@ -619,7 +630,7 @@ def test_polling_shows_a_tool_call_while_it_runs_with_the_budget_used() -> None:
 def test_a_budget_refusal_shows_as_refused_in_the_trace_and_the_notes() -> None:
     photo_call = ("listing_photo", {"url": TEMPLATE_LISTING.thumbnail_url})
     script = ScriptedModel(calls(photo_call), final_answer("No photos allowed."))
-    agent = AgentSettings(anthropic_api_key="test-key", budget=AgentBudget(max_photos=0))
+    agent = AgentSettings(keys=ProviderKeys(openai="test-key"), budget=AgentBudget(max_photos=0))
     carousell = GatedCarousell()
     with open_ask_client(script, carousell, agent) as client:
         page = poll_to_the_end(client, run_id_of(post_ask(client).text))
@@ -638,9 +649,9 @@ def test_without_the_provider_key_run_is_disabled_and_nothing_is_called() -> Non
         runs = services_of(client).prompt_runs
 
     assert re.search(r'<button id="ask-run-button"[^>]*disabled>Run</button>', page)
-    assert "ANTHROPIC_API_KEY is not set" in page and "Add it to .env and restart <code>carousearch web</code>" in page
+    assert "OPENAI_API_KEY is not set" in page and "Add it to .env and restart <code>carousearch web</code>" in page
     assert refused.status_code == 409
-    assert "ANTHROPIC_API_KEY is not set" in refused.text
+    assert "OPENAI_API_KEY is not set" in refused.text
     assert (script.requests, carousell.search_requests, runs.active()) == ([], [], None)
 
 
@@ -743,7 +754,7 @@ def test_a_carousell_block_during_a_run_fails_the_search_and_the_model_still_ans
 
     assert re.search(r'trace-row trace-failed">\s*<span class="trace-status">failed</span>', page)
     assert "<li>Carousell is blocking requests.</li>" in page
-    assert "0 kept · 0 dropped · 1 tool call" in page
+    assert "0 kept · 0 dropped · 0 not shortlisted · 1 tool call" in page
 
 
 @pytest.mark.parametrize(("prompt", "expected"), [("   ", "Type what you are looking for"), ("x" * 2001, "2,000 characters")])
@@ -772,7 +783,7 @@ def test_the_page_offers_both_modes_and_opens_the_one_the_url_asks_for() -> None
         assert 'id="search-form"' in page and 'id="ask-form"' in page
         assert 'hx-post="/ask" hx-target="#ask-run" hx-swap="innerHTML"' in page
         assert '<textarea id="prompt" class="ask-input" name="prompt"' in page
-        assert "Model: anthropic:claude-haiku-5-5, from AGENT_MODEL" in page
+        assert "Models: openai:gpt-5.4-mini plans, openai:gpt-5.4-nano judges" in page
         assert "test-key" not in page
         assert not re.search(r'<button id="ask-run-button"[^>]*disabled', page)
     assert re.search(r'id="mode-filters"[^>]*checked', filters) and not re.search(r'id="mode-ask"[^>]*checked', filters)

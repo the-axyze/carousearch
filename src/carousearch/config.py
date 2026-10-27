@@ -1,8 +1,8 @@
 """Default file locations, the Telegram bot settings and the screening settings.
 
 Set CAROUSEARCH_DATA_DIR to move all runtime data elsewhere. The bot reads TELEGRAM_BOT_TOKEN and
-TELEGRAM_OWNER_ID, and screening reads the optional ANTHROPIC_API_KEY, from the environment or from a
-`.env` file at the project root (environment wins).
+TELEGRAM_OWNER_ID, and screening's price lookup reads the worker model (AGENT_WORKER_MODEL, see language_models.py)
+and its provider's API key, from the environment or from a `.env` file at the project root (environment wins).
 """
 
 import os
@@ -12,6 +12,13 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 
+from carousearch.language_models import (
+    DEFAULT_WORKER_MODEL,
+    ProviderKeys,
+    choose_models,
+    load_provider_keys,
+)
+
 DATA_DIR_ENVIRONMENT_VARIABLE = "CAROUSEARCH_DATA_DIR"
 DATABASE_FILE_NAME = "carousearch.db"
 CANARY_LOG_FILE_NAME = "canary.log"
@@ -20,9 +27,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_ENV_FILE = PROJECT_ROOT / ".env"
 TELEGRAM_BOT_TOKEN_VARIABLE = "TELEGRAM_BOT_TOKEN"
 TELEGRAM_OWNER_ID_VARIABLE = "TELEGRAM_OWNER_ID"
-ANTHROPIC_API_KEY_VARIABLE = "ANTHROPIC_API_KEY"
-# The model that reads a multi-item listing's description for the searched variant's price.
-DEFAULT_PRICE_MODEL = "claude-haiku-5-5"
 # `carousearch mcp --transport http` listens here (the web app has 8765).
 DEFAULT_MCP_HTTP_PORT = 8766
 
@@ -67,16 +71,21 @@ def parse_owner_user_id(text: str) -> int | None:
 
 @dataclass(frozen=True)
 class ScreeningSettings:
-    anthropic_api_key: str | None = field(default=None, repr=False)  # optional; never printed
-    price_model: str = DEFAULT_PRICE_MODEL
+    # The model that reads a multi-item listing's description for the searched variant's price: the worker model.
+    price_model: str = DEFAULT_WORKER_MODEL
+    keys: ProviderKeys = field(default_factory=ProviderKeys)
+
+    def missing_key_variable(self) -> str | None:
+        """The variable to set before the price lookup can run, or None when its provider's key is there."""
+        return self.keys.missing_variable(self.price_model)
 
 
 def load_screening_settings(
     environment: Mapping[str, str] | None = None, env_file: Path = DEFAULT_ENV_FILE
 ) -> ScreeningSettings:
-    """Read the screening settings. Without ANTHROPIC_API_KEY, screening keeps listed prices."""
+    """Read the screening settings. Without the worker model's API key, screening keeps listed prices."""
     values = read_setting_values(environment, env_file)
-    return ScreeningSettings(anthropic_api_key=values.get(ANTHROPIC_API_KEY_VARIABLE, "").strip() or None)
+    return ScreeningSettings(price_model=choose_models(values).worker, keys=load_provider_keys(values))
 
 
 def read_setting_values(environment: Mapping[str, str] | None, env_file: Path) -> dict[str, str]:

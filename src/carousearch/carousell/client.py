@@ -12,17 +12,19 @@ import httpx
 from carousearch.carousell.errors import CarousellBlockedError, CarousellHTTPError, CarousellSchemaError
 from carousearch.carousell.parse import (
     extract_csrf_token,
+    parse_category_filters_response,
     parse_listing_detail_response,
     parse_search_response,
     raise_if_blocked,
 )
 from carousearch.carousell.rate_limit import RateLimiter
 from carousearch.filters.payload import SINGAPORE_COUNTRY_CODE, build_search_payload
-from carousearch.filters.schema import ListingDetail, SearchRequest, SearchResult
+from carousearch.filters.schema import CategoryFilter, ListingDetail, SearchRequest, SearchResult
 
 CAROUSELL_BASE_URL = "https://www.carousell.sg"
 BOOTSTRAP_PATH = "/"  # the home page (~370 KB) carries the CSRF token and sets the session cookies
 SEARCH_SERVICE = "/ds/search"
+FILTER_SERVICE = "/ds/filter"  # the same search, plus the category's filter definitions (access notes 4.4)
 SEARCH_ENDPOINT = "/cf/4.0/search/"
 LISTING_DETAIL_SERVICE = "/ds/listing-detail"
 
@@ -83,6 +85,13 @@ class CarousellClient:
     def search_raw(self, request: SearchRequest) -> Any:
         """The undecoded search response JSON (used to capture test fixtures)."""
         return self._call_api("POST", SEARCH_SERVICE, SEARCH_ENDPOINT, json_body=build_search_payload(request))
+
+    def get_category_filters(self, category_id: str) -> list[CategoryFilter]:
+        """The filters Carousell offers in a category (field names and allowed values): one search request of one
+        listing against the filter service, which also returns the category's fieldset."""
+        request = SearchRequest(category=category_id, page_size=1)
+        response_json = self._call_api("POST", FILTER_SERVICE, SEARCH_ENDPOINT, json_body=build_search_payload(request))
+        return parse_category_filters_response(response_json)
 
     def get_listing(self, listing_id: str) -> ListingDetail:
         return parse_listing_detail_response(self.get_listing_raw(listing_id))

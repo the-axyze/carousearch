@@ -281,6 +281,18 @@ Facets observed 2026-10-23 (values trimmed):
 
 **Used Cars (collection 1173):** `seller_badge`, `body_type`, `style_type`, `make`/`model` (SKU pickers), `vehicle_age`, registration date range, `depreciation`, `monthly_installment`, `propellant`, `transmission`, `doors`, `owner_count`, `seating_capacity`, plus car-specific sort values (`original_registration_date,descending`, depreciation).
 
+**Motorcycles (probed 2026-10-27, 7 requests plus one search page in HTML):** licence class is a **subcategory**, not a filter. Motorcycles (108) has Used Motorcycles (7100) with Class 2 (1593), Class 2A (1594), Class 2B (1595), and New Motorcycles (7200) with Class 2 (7101), Class 2A (7102), Class 2B (7103), plus Accessories (1596), Apparel (1603) and Rental (2146). Search cards report the cc_id (Class 2B used: 1997), which as a `collections` filter matches nothing (`formattedTotal` "0", generic fieldset). The fieldset of 7100 and 1595 (with or without keywords; "r15" gives 112 results in 1595), and of 108 with the keywords "r15" (auto-narrowed to 7103), has only the fields below. Without keywords, the top-level 108 returns the generic fieldset instead (`_deal_method`, `condition_v2` NEW / USED, price, `is_bp_enabled`, `shipping_offer_free_shipping`), so ask a subcategory for its own filters:
+
+| field_name | type | options |
+|---|---|---|
+| `sort_by` | radio | as above |
+| `vehicle_motorbike_type` | id_or_keyword | Adventure, Cruiser, Cub, Enduro, Road Bike, Motard, Scooter, Scrambler, Sports Bike, Sports Tourer, Vintage, Other (`MOTORBIKE_TYPE_*`) |
+| `make` | id_or_keyword | 48 makes, value = the name (`Yamaha`, `Honda`, `BMW`, ...) |
+| `price_start` / `price_end` | float_range_start / _end | S$ |
+| `deal_options` | id_or_keyword | Meet-up `MEETUP`, Mailing & Delivery `MAILING` (not `_deal_method`) |
+
+No COE expiry, registration year, mileage, engine capacity or model filter exists, and `layered_condition` is not offered here. The listing detail carries no structured COE either: the COE date is only in the seller's description ("COE till Mar 2030"). The detail's `collection` object names the listing's own category (`{"id": 1595, "cc_id": 1997, "name": "Class 2B"}`). Results are crowded with dealer catalogue posts ("2031 AEROX | NMAX | SNIPER | R15 | ...") and instalment prices (S$224 to S$310). `carousearch`'s `category_fields` tool reads the fieldset live (`/ds/filter/` with one listing) and the subcategories from `src/carousearch/carousell/category_tree.json`, a snapshot of `initialState.Collection.default` (725 categories) taken from one server-rendered search page the same day.
+
 **Not available as a server-side filter anywhere seen:** listing age / "posted within N days", seller rating, like count, seller join date. These must be applied client-side (sort by Recent and cut off on the card timestamp; rating and join date need the detail call).
 
 ### 4.5 Listing detail

@@ -34,6 +34,15 @@ def downsize_photo(image_bytes: bytes, max_width: int) -> Photo:
     return Photo(data=encode_image(image, output_format), format=output_format.lower())
 
 
+def downsize_to_longest_side(image_bytes: bytes, max_side: int) -> Photo:
+    """The photo scaled down so neither side is longer than `max_side` pixels (as downsize_photo does for width)."""
+    image = open_image(image_bytes)
+    longer_side = max(image.width, image.height)
+    if longer_side <= max_side:
+        return downsize_photo(image_bytes, image.width)
+    return downsize_photo(image_bytes, max(1, round(image.width * max_side / longer_side)))
+
+
 def open_image(image_bytes: bytes) -> Image.Image:
     try:
         image = Image.open(io.BytesIO(image_bytes))

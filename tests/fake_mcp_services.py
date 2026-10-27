@@ -6,14 +6,19 @@ from datetime import UTC, datetime
 
 from PIL import Image
 
-from carousearch.carousell.parse import parse_listing_detail_response, parse_search_response
-from carousearch.filters.schema import ListingDetail, SearchRequest, SearchResult
+from carousearch.carousell.parse import (
+    parse_category_filters_response,
+    parse_listing_detail_response,
+    parse_search_response,
+)
+from carousearch.filters.schema import CategoryFilter, ListingDetail, SearchRequest, SearchResult
 from carousearch.mcp_server import McpServices
 
 from fixture_files import load_json_fixture
 
 SEARCH_RESULT = parse_search_response(load_json_fixture("search_price_condition.json"))  # 5 listings
 DETAIL = parse_listing_detail_response(load_json_fixture("listing_detail.json"))
+CLASS_2B_FILTERS = parse_category_filters_response(load_json_fixture("category_filters_class_2b.json"))
 PHOTO_URL = "https://media.karousell.com/media/photos/products/2026/10/2/iphone_15_pro_1790934810_9e7fb979.jpg"
 NOW = datetime(2026, 10, 26, 12, 0, tzinfo=UTC)
 
@@ -32,13 +37,18 @@ class FakeCarousellSource:
         search_result: SearchResult | Exception = SEARCH_RESULT,
         detail: ListingDetail = DETAIL,
         photo: bytes = b"",
+        details: dict[str, ListingDetail] | None = None,
+        photos: dict[str, bytes] | None = None,
     ) -> None:
         self.search_result = search_result
-        self.detail = detail
-        self.photo = photo
+        self.detail = detail  # for any listing id not in `details`
+        self.photo = photo  # for any URL not in `photos`
+        self.details = details or {}
+        self.photos = photos or {}
         self.search_requests: list[SearchRequest] = []
         self.detail_requests: list[str] = []
         self.photo_requests: list[str] = []
+        self.category_filter_requests: list[str] = []
 
     def search(self, request: SearchRequest) -> SearchResult:
         self.search_requests.append(request)
@@ -48,11 +58,15 @@ class FakeCarousellSource:
 
     def get_listing(self, listing_id: str) -> ListingDetail:
         self.detail_requests.append(listing_id)
-        return self.detail
+        return self.details.get(listing_id, self.detail)
 
     def get_photo(self, url: str) -> bytes:
         self.photo_requests.append(url)
-        return self.photo
+        return self.photos.get(url, self.photo)
+
+    def get_category_filters(self, category_id: str) -> list[CategoryFilter]:
+        self.category_filter_requests.append(category_id)
+        return CLASS_2B_FILTERS
 
 
 class InMemoryDetailCache:

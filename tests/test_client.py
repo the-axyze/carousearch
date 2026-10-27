@@ -9,7 +9,7 @@ from carousearch.carousell.rate_limit import RateLimiter
 from carousearch.filters.payload import build_search_payload
 from carousearch.filters.schema import SearchRequest
 
-from fake_carousell import BOOTSTRAP_PATH, SEARCH_PATH, FakeCarousell, no_wait_rate_limiter
+from fake_carousell import BOOTSTRAP_PATH, FILTER_PATH, SEARCH_PATH, FakeCarousell, no_wait_rate_limiter
 from fixture_files import load_json_fixture
 
 REQUEST = SearchRequest(query="iphone 15", price_max=900)
@@ -140,6 +140,22 @@ def test_get_listing_calls_detail_endpoint() -> None:
     assert detail_request.headers["y-build-no"] == "1"
     assert detail_request.headers["csrf-token"] == "token-1"
     assert detail.description is not None
+
+
+def test_get_category_filters_asks_the_filter_service_for_one_listing_in_the_category() -> None:
+    carousell = FakeCarousell()
+
+    filters = carousell.client().get_category_filters("1595")
+
+    (filter_request,) = carousell.api_requests
+    body = json.loads(filter_request.content)
+    assert filter_request.url.path == FILTER_PATH
+    assert filter_request.url.params["_path"] == "/cf/4.0/search/"
+    assert body["count"] == 1
+    assert {"fieldName": "collections", "idsOrKeywords": {"value": ["1595"]}, "enforce": True} in body["filters"]
+    assert [category_filter.field_name for category_filter in filters] == [
+        "sort_by", "vehicle_motorbike_type", "make", "price_start", "price_end", "deal_options"
+    ]
 
 
 def test_listing_id_must_be_numeric() -> None:

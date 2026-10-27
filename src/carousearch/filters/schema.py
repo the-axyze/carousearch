@@ -182,6 +182,25 @@ class ListingDetail(Listing):
     meetup_available: bool | None
     mailing_available: bool | None
     meetup_locations: list[MeetupLocation]
+    # The listing's own category (collection id and name, e.g. "1595" "Class 2B"); None in details cached before
+    # 2026-10-27, when these fields were added.
+    category_id: str | None = None
+    category_name: str | None = None
+
+
+class CategoryFilterOption(BaseModel):
+    value: str  # what Carousell expects, e.g. "MOTORBIKE_TYPE_SPORTS_BIKE"
+    label: str | None  # what the site shows, e.g. "Sports Bike"
+
+
+class CategoryFilter(BaseModel):
+    """One filter Carousell offers in a category, from the category's filter definitions (access notes 4.4)."""
+
+    field_name: str  # e.g. "make", "price_start", "sort_by"
+    label: str | None  # e.g. "Make"
+    # id_or_keyword, float_range_start, float_range_end, float_range, boolean, or None (sort_by has none)
+    filter_type: str | None
+    options: list[CategoryFilterOption]
 
 
 class SearchResult(BaseModel):

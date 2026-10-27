@@ -2,13 +2,17 @@
 (in this process) over a fake Carousell. No network, no provider key."""
 
 import logging
+import tempfile
 from collections.abc import Callable
+from pathlib import Path
 
 import pytest
 from pydantic_ai import models
 from pydantic_ai.messages import BinaryContent
 from pydantic_ai.models.function import FunctionModel
 
+from carousearch.agent.judge_cache import MemoryJudgementCache
+from carousearch.agent.local_tools import LocalToolServices
 from carousearch.agent.progress import ToolCallEvent
 from carousearch.agent.result import AgentAnswer
 from carousearch.agent.run_prompt import OUTPUT_TOOL_NAME, run_prompt_sync
@@ -21,9 +25,16 @@ from scripted_model import ScriptedModel, Turn, calls, final_answer
 
 models.ALLOW_MODEL_REQUESTS = False  # a test that reaches a real provider fails instead of spending money
 
-MCP_TOOLS = {"search_listings", "listing_details", "listing_photo", "screening_tags", "usage_notes"}
+# usage_notes is left out: its text is already in the instructions.
+MCP_TOOLS = {"search_listings", "listing_details", "listing_photo", "screening_tags", "category_fields"}
+LOCAL_TOOLS = {"run_python", "judge_listings", "judge_photos", "photo_metrics"}
 FIRST_LISTING = SEARCH_RESULT.listings[0]
 SECOND_PHOTO_URL = PHOTO_URL.replace(".jpg", "_2.jpg")
+
+
+@pytest.fixture(autouse=True)
+def temporary_folders_in_tmp_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
 
 
 def ask(
@@ -32,10 +43,17 @@ def ask(
     budget: AgentBudget | None = None,
     observer: Callable[[ToolCallEvent], None] | None = None,
 ) -> AgentAnswer:
-    settings = AgentSettings(budget=budget or AgentBudget())  # no API key: the scripted model needs none
+    settings = AgentSettings(budget=budget or AgentBudget())  # no API key: scripted models need none
     services = fake_services(carousell or FakeCarousellSource())
+    local = LocalToolServices(
+        run_directory=Path(tempfile.mkdtemp()),
+        judgement_cache=MemoryJudgementCache(),
+        worker_model=FunctionModel(ScriptedModel(final_answer())),  # these tests never call a judge tool
+        network_prefix=(),
+    )
     return run_prompt_sync(
-        "Find a used iPhone 15 under S$700.", services, settings, model=FunctionModel(script), observer=observer
+        "Find a used iPhone 15 under S$700.", services, settings, model=FunctionModel(script), local=local,
+        observer=observer,
     )
 
 
@@ -52,13 +70,13 @@ KEPT = {
 DROPPED = {"listing_id": SEARCH_RESULT.listings[1].id, "title": SEARCH_RESULT.listings[1].title, "reason": "over S$700"}
 
 
-def test_the_agent_offers_exactly_the_five_mcp_tools_and_reads_the_usage_notes_as_instructions() -> None:
+def test_the_agent_offers_the_mcp_tools_and_the_local_tools_and_reads_the_usage_notes_as_instructions() -> None:
     script = ScriptedModel(final_answer())
 
     ask(script)
 
     (_, info) = script.requests[0]
-    assert {tool.name for tool in info.function_tools} == MCP_TOOLS
+    assert {tool.name for tool in info.function_tools} == MCP_TOOLS | LOCAL_TOOLS
     assert [tool.name for tool in info.output_tools] == [OUTPUT_TOOL_NAME]
     assert "shopping assistant for Carousell Singapore" in info.instructions
     assert "40 tool calls in total, 200 listings from search pages, 15 photos" in info.instructions

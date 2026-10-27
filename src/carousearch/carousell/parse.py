@@ -1,7 +1,7 @@
 """Turn Carousell responses (already-decoded JSON, HTML text, status and headers) into models.
 
 Pure functions only: no network, no files. Shapes are documented in
-CAROUSELL_ACCESS_NOTES.md sections 4.3 (search) and 4.5 (listing detail).
+CAROUSELL_ACCESS_NOTES.md sections 4.3 (search), 4.4 (a category's filter definitions) and 4.5 (listing detail).
 """
 
 import json
@@ -15,6 +15,8 @@ from pydantic import ValidationError
 from carousearch.carousell.errors import CarousellBlockedError, CarousellSchemaError
 from carousearch.filters.payload import condition_from_code
 from carousearch.filters.schema import (
+    CategoryFilter,
+    CategoryFilterOption,
     Listing,
     ListingDetail,
     MeetupLocation,
@@ -211,6 +213,7 @@ def parse_listing_detail(listing_json: dict) -> ListingDetail:
     seller = require_key(listing_json, "seller", location, dict)
     photos = listing_json.get("photos") if isinstance(listing_json.get("photos"), list) else []
     meetups = listing_json.get("meetups") if isinstance(listing_json.get("meetups"), list) else []
+    collection = listing_json.get("collection") if isinstance(listing_json.get("collection"), dict) else {}
     return _build_model(
         ListingDetail,
         location,
@@ -241,6 +244,8 @@ def parse_listing_detail(listing_json: dict) -> ListingDetail:
         meetup_available=listing_json.get("meetup"),
         mailing_available=listing_json.get("mailing"),
         meetup_locations=[parse_meetup_location(meetup) for meetup in meetups if isinstance(meetup, dict)],
+        category_id=_optional_string(collection.get("id")),
+        category_name=collection.get("name") or collection.get("display_name"),
     )
 
 
@@ -270,6 +275,47 @@ def parse_meetup_location(meetup: dict) -> MeetupLocation:
         address=meetup.get("address") or None,
         latitude=meetup.get("latitude"),
         longitude=meetup.get("longitude"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# A category's filter definitions (the /ds/filter/ variant of search)
+# ---------------------------------------------------------------------------
+
+
+def parse_category_filters_response(response_json: Any) -> list[CategoryFilter]:
+    """The filters in `data.filters.screens[].groups[].fields[]`, in the site's order. A field without a
+    `meta.field_name` is skipped; a response without the fieldset is a schema error."""
+    data = require_key(response_json, "data", "", dict)
+    fieldset = require_key(data, "filters", "data", dict)
+    screens = require_key(fieldset, "screens", "data.filters", list)
+    return [
+        category_filter
+        for screen in screens
+        if isinstance(screen, dict)
+        for group in screen.get("groups") or []
+        if isinstance(group, dict)
+        for field in group.get("fields") or []
+        if (category_filter := parse_category_filter(field)) is not None
+    ]
+
+
+def parse_category_filter(field: Any) -> CategoryFilter | None:
+    meta = field.get("meta") if isinstance(field, dict) else None
+    field_name = meta.get("field_name") if isinstance(meta, dict) else None
+    if not isinstance(field_name, str) or not field_name:
+        return None
+    ui_rules = field.get("ui_rules") if isinstance(field.get("ui_rules"), dict) else {}
+    options = ui_rules.get("options") if isinstance(ui_rules.get("options"), list) else []
+    return CategoryFilter(
+        field_name=field_name,
+        label=ui_rules.get("label"),
+        filter_type=meta.get("filter_type"),
+        options=[
+            CategoryFilterOption(value=str(option["value"]), label=option.get("display_name"))
+            for option in options
+            if isinstance(option, dict) and option.get("value") is not None
+        ],
     )
 
 

@@ -31,10 +31,9 @@ dev = [
     "pytest>=8",
     "ruff>=0.17",
 ]
-# Screening's price resolver (Claude). Without it, and without ANTHROPIC_API_KEY, screening keeps listed prices.
-llm = [
-    "anthropic>=2.3",
-]
+# Kept so older install commands still work: screening's price lookup now runs on the worker model through
+# pydantic-ai-slim, which already brings the anthropic and openai SDKs.
+llm = []
 
 [project.scripts]
 carousearch = "carousearch.cli:main"
@@ -55,4 +54,4 @@ line-length = 120
 [tool.ruff.lint.isort]
 known-first-party = ["carousearch"]
 # Helper modules that pytest imports from the tests/ folder.
-known-local-folder = ["fake_carousell", "fake_mcp_services", "fixture_files", "scripted_model"]
+known-local-folder = ["fake_carousell", "fake_mcp_services", "fixture_files", "scripted_model", "scripted_worker"]

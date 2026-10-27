@@ -84,3 +84,32 @@ def test_count_of_uses_singular_and_plural_forms() -> None:
     assert count_of(1, "call") == "1 call"
     assert count_of(0, "page") == "0 pages"
     assert count_of(2, "search", "searches") == "2 searches"
+
+
+# --- what local tools fetch inside one call ---------------------------------------------------------------------
+
+
+def test_detail_fetches_inside_a_tool_are_granted_up_to_the_tool_call_cap() -> None:
+    budget = ToolBudget(AgentBudget(max_tool_calls=5))
+    budget.admit("judge_listings", {})
+
+    assert budget.grant_detail_fetches(3) == 3
+    assert budget.grant_detail_fetches(3) == 1
+    assert budget.tool_calls == 5
+    assert budget.notes() == ["Tool-call budget reached inside a tool: 2 listings left without details."]
+
+
+def test_photos_inside_a_tool_count_as_photos_and_tool_calls() -> None:
+    budget = ToolBudget(AgentBudget(max_tool_calls=40, max_photos=2))
+
+    assert budget.grant_photos(3) == 2
+    assert (budget.photos, budget.tool_calls) == (2, 2)
+    assert budget.notes() == ["Photo budget reached: 2 photos judged, 1 more refused."]
+
+
+def test_nothing_is_granted_once_a_cap_is_reached() -> None:
+    budget = ToolBudget(AgentBudget(max_tool_calls=1, max_photos=5))
+    budget.admit("judge_photos", {})
+
+    assert (budget.grant_photos(2), budget.grant_detail_fetches(2)) == (0, 0)
+    assert (budget.photos, budget.tool_calls) == (0, 1)

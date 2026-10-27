@@ -5,9 +5,11 @@ from datetime import UTC, datetime
 import pytest
 from pydantic_ai import models
 
+from carousearch.agent.cost import ModelUsage
 from carousearch.agent.progress import BudgetUsed, ToolCallEvent
 from carousearch.agent.result import AgentAnswer, DroppedListing, KeptListing, ToolCall
 from carousearch.agent.settings import AgentBudget, AgentSettings
+from carousearch.language_models import ProviderKeys
 from carousearch.web.prompt_runs import PromptRun, TraceLine
 from carousearch.web.prompt_view_models import (
     EMPTY_PROMPT_MESSAGE,
@@ -66,9 +68,9 @@ def run_with_search() -> PromptRun:
 # --- the form -----------------------------------------------------------------------------------------------------
 
 
-def test_the_form_names_the_model_and_where_it_comes_from() -> None:
-    form = ask_form_view(AgentSettings(anthropic_api_key="sk-ant-secret"))
-    assert form.model_line == "Model: anthropic:claude-haiku-5-5, from AGENT_MODEL"
+def test_the_form_names_the_planner_and_the_worker() -> None:
+    form = ask_form_view(AgentSettings(keys=ProviderKeys(openai="sk-ant-secret")))
+    assert form.model_line == "Models: openai:gpt-5.4-mini plans, openai:gpt-5.4-nano judges"
     assert form.budget_line == "Up to 40 tool calls, 15 photos and 200 listings per run"
     assert (form.missing_key, form.run_disabled, form.max_prompt_length) == (None, False, MAX_PROMPT_LENGTH)
     assert "sk-ant-secret" not in repr(form)
@@ -78,7 +80,7 @@ def test_the_form_names_the_model_and_where_it_comes_from() -> None:
     ("model", "variable"), [("anthropic:claude-haiku-5-5", "ANTHROPIC_API_KEY"), ("openai:gpt-5", "OPENAI_API_KEY")]
 )
 def test_without_the_provider_key_the_form_names_the_variable_and_disables_run(model: str, variable: str) -> None:
-    form = ask_form_view(AgentSettings(model=model))
+    form = ask_form_view(AgentSettings(planner_model=model, worker_model=model))
     assert form.run_disabled
     assert form.missing_key == ErrorMessage(
         f"{variable} is not set; the model {model} needs it. Add it to .env and restart", "carousearch web"
@@ -86,7 +88,8 @@ def test_without_the_provider_key_the_form_names_the_variable_and_disables_run(m
 
 
 def test_a_provider_without_a_known_key_variable_is_not_disabled() -> None:
-    assert not ask_form_view(AgentSettings(model="google-gla:gemini-3-flash")).run_disabled
+    settings = AgentSettings(planner_model="google-gla:gemini-3-flash", worker_model="google-gla:gemini-3-flash")
+    assert not ask_form_view(settings).run_disabled
 
 
 def test_prompt_problems() -> None:
@@ -213,17 +216,21 @@ def test_the_answer_view_puts_it_all_together() -> None:
         kept=[kept(), kept("999")],
         dropped=[DroppedListing(listing_id=SECOND.id, title=SECOND.title, reason="a Pro")],
         notes="Checked one page.\nPhoto budget reached: 0 photos judged, 1 more refused.",
+        not_shortlisted=17,
         tool_trace=[
             ToolCall(tool_name="search_listings", arguments='query="iphone 15"', duration_seconds=1.24, status="ok"),
             ToolCall(tool_name="listing_photo", arguments="url=a.jpg", duration_seconds=0.0, status="refused"),
         ],
+        usage=[ModelUsage(role="planner", model="openai:gpt-5.4-mini", requests=2, input_tokens=5000,
+                          output_tokens=300, estimated_cost_usd=0.0051)],
     )
 
     view = answer_view(run, answer, BUDGET, elapsed_seconds=14.2)
 
-    assert view.summary == "2 kept · 1 dropped · 2 tool calls · 14 s"
+    assert view.summary == "2 kept · 1 dropped · 17 not shortlisted · 2 tool calls · 14 s"
     assert view.budget_line == "calls 1 of 40 · photos 0 of 15 · listings 20 of 200"
-    assert view.notes == ["Checked one page.", "Photo budget reached: 0 photos judged, 1 more refused."]
+    assert view.notes[:2] == ["Checked one page.", "Photo budget reached: 0 photos judged, 1 more refused."]
+    assert view.notes[2].startswith("Cost (estimate, list prices of 2026-10-27): about US$0.0051. planner")
     assert [(card.listing_id, card.warning is None) for card in view.kept] == [(FIRST.id, True), ("999", False)]
     assert [(row.listing_id, row.price) for row in view.dropped] == [(SECOND.id, SECOND.price_display)]
     assert [(row.tool_name, row.status, row.duration) for row in view.trace] == [

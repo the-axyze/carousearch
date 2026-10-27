@@ -13,10 +13,11 @@ from typing import Any, Literal, Protocol
 
 from pydantic import ValidationError
 
-from carousearch.agent.budget import SEARCH_TOOL, ToolBudget
+from carousearch.agent.budget import ToolBudget
 from carousearch.agent.result import ToolCallStatus
 from carousearch.agent.trace import summarise_arguments
 from carousearch.filters.schema import Listing
+from carousearch.mcp_server import SEARCH_TOOL
 
 logger = logging.getLogger(__name__)
 

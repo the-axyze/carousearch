@@ -9,7 +9,8 @@ per Carousell listing, overwritten in place, plus a log of content changes and o
 (docs/ANALYSIS_AND_SCREENING_PLAN.md section 3.1).
 
 `price_resolution_cache` holds the price the screening resolver found for a listing and a search, so a listing
-is never resolved twice for the same search.
+is never resolved twice for the same search. `judgement_cache` holds the agent's judge-tool verdicts per listing,
+criterion and worker model, so the same question is never asked of the model twice.
 """
 
 import sqlite3
@@ -98,6 +99,15 @@ CREATE TABLE IF NOT EXISTS price_resolution_cache (
     resolved_json TEXT NOT NULL,              -- screening.models.ResolvedPrice
     resolved_at   TEXT NOT NULL,
     PRIMARY KEY (listing_id, query)
+);
+CREATE TABLE IF NOT EXISTS judgement_cache (
+    kind       TEXT NOT NULL,                 -- "listing" (judge_listings) or "photo" (judge_photos)
+    listing_id TEXT NOT NULL,
+    criterion  TEXT NOT NULL,                 -- normalised (agent.judging.normalise_criterion)
+    model      TEXT NOT NULL,                 -- the worker model string
+    json       TEXT NOT NULL,                 -- the verdict or score as the tool returned it
+    judged_at  TEXT NOT NULL,
+    PRIMARY KEY (kind, listing_id, criterion, model)
 );
 """
 
@@ -272,6 +282,37 @@ def load_price_resolution(connection: sqlite3.Connection, listing_id: str, query
         "SELECT resolved_json FROM price_resolution_cache WHERE listing_id = ? AND query = ?", (listing_id, query)
     ).fetchone()
     return ResolvedPrice.model_validate_json(row[0]) if row is not None else None
+
+
+# --- judgement_cache -------------------------------------------------------
+
+
+def save_judgement(
+    connection: sqlite3.Connection,
+    kind: str,
+    listing_id: str,
+    criterion: str,
+    model: str,
+    judgement_json: str,
+    judged_at: datetime,
+) -> None:
+    with connection:
+        connection.execute(
+            """
+            INSERT OR REPLACE INTO judgement_cache (kind, listing_id, criterion, model, json, judged_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (kind, listing_id, criterion, model, judgement_json, to_text(judged_at)),
+        )
+
+
+def load_judgement(connection: sqlite3.Connection, kind: str, listing_id: str, criterion: str, model: str) -> str | None:
+    """The stored judgement's JSON text, or None."""
+    row = connection.execute(
+        "SELECT json FROM judgement_cache WHERE kind = ? AND listing_id = ? AND criterion = ? AND model = ?",
+        (kind, listing_id, criterion, model),
+    ).fetchone()
+    return row[0] if row is not None else None
 
 
 # --- listings --------------------------------------------------------------

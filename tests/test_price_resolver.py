@@ -1,197 +1,200 @@
-import json
+"""The price resolver over a scripted Pydantic AI model: no provider, no network."""
+
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
+from pydantic_ai import models
+from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, UserPromptPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from carousearch.config import DEFAULT_PRICE_MODEL, ScreeningSettings, load_screening_settings
+from carousearch.config import ScreeningSettings, load_screening_settings
+from carousearch.language_models import ProviderKeys
 from carousearch.screening.models import PriceSource, ResolvedPrice
 from carousearch.screening.price_resolver import (
     MAX_DESCRIPTION_CHARACTERS,
-    MAX_RESPONSE_TOKENS,
-    PRICE_ANSWER_SCHEMA,
-    ClaudePriceResolver,
+    ModelPriceResolver,
     NoopPriceResolver,
+    PriceAnswer,
     PriceResolutionError,
     build_price_resolver,
-    estimate_cost_usd,
-    parse_price_answer,
+    resolved_price_from_answer,
 )
+
+models.ALLOW_MODEL_REQUESTS = False  # a test that reaches a real provider fails instead of spending money
 
 QUERY = "iphone 15 pro 256gb"
 TITLE = "iPhone 15 / 15 Pro / 15 Pro Max all storage"
 DESCRIPTION = "iPhone 15 128GB - $579\niPhone 15 Pro 256GB - $850\niPhone 15 Pro Max 256GB - $1,050"
-UNREADABLE = "the model's answer could not be read"
 
 
-def text_response(text: str, stop_reason: str = "end_turn") -> SimpleNamespace:
-    return SimpleNamespace(
-        content=[SimpleNamespace(type="text", text=text)],
-        stop_reason=stop_reason,
-        usage=SimpleNamespace(input_tokens=420, output_tokens=40),
-    )
+class PriceScript:
+    """A FunctionModel function that answers with `answer` (the price tool's arguments) and keeps each request."""
 
-
-def answer(amount: float | None, source: str, note: str = "") -> SimpleNamespace:
-    return text_response(json.dumps({"amount": amount, "source": source, "note": note}))
-
-
-class FakeMessages:
-    def __init__(self, response: object = None, error: Exception | None = None) -> None:
-        self.response = response
+    def __init__(self, answer: dict | None = None, error: Exception | None = None) -> None:
+        self.answer = answer
         self.error = error
-        self.calls: list[dict] = []
+        self.requests: list[tuple[list[ModelMessage], AgentInfo]] = []
 
-    def create(self, **request: object) -> object:
-        self.calls.append(request)
+    def __call__(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        self.requests.append((messages, info))
         if self.error is not None:
             raise self.error
-        return self.response
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, self.answer)])
+
+    def prompt(self) -> str:
+        first_request = self.requests[0][0][0]
+        assert isinstance(first_request, ModelRequest)
+        return next(part.content for part in first_request.parts if isinstance(part, UserPromptPart))
 
 
-class FakeAnthropicClient:
-    """Stands in for anthropic.Anthropic: only `messages.create` is used."""
-
-    def __init__(self, response: object = None, error: Exception | None = None) -> None:
-        self.messages = FakeMessages(response, error)
+def resolver_for(script: PriceScript) -> ModelPriceResolver:
+    return ModelPriceResolver(lambda: FunctionModel(script), "openai:gpt-5.4-nano")
 
 
-def resolve_with(response: object) -> tuple[ResolvedPrice, FakeAnthropicClient]:
-    client = FakeAnthropicClient(response)
-    resolved = ClaudePriceResolver(client, DEFAULT_PRICE_MODEL).resolve(QUERY, TITLE, DESCRIPTION, 579)
-    return resolved, client
+def answer(amount: float | None, source: str, note: str = "") -> dict:
+    return {"amount": amount, "source": source, "note": note}
 
 
-def test_request_carries_the_search_title_and_description() -> None:
-    _, client = resolve_with(answer(850, "description", "iPhone 15 Pro 256GB - $850"))
+def test_the_prompt_carries_the_search_title_price_and_description() -> None:
+    script = PriceScript(answer(850, "description", "iPhone 15 Pro 256GB - $850"))
 
-    [request] = client.messages.calls
-    prompt = request["messages"][0]["content"]
-    assert request["model"] == "claude-haiku-5-5"
-    assert request["max_tokens"] == MAX_RESPONSE_TOKENS
-    assert MAX_RESPONSE_TOKENS <= 512
+    resolver_for(script).resolve(QUERY, TITLE, DESCRIPTION, 579)
+
+    prompt = script.prompt()
     assert f"Search: {QUERY}" in prompt
     assert f"Title: {TITLE}" in prompt
     assert DESCRIPTION in prompt
     assert "Listed price: S$579" in prompt
-    assert "not_stated" in request["system"] and "Never guess" in request["system"]
-    assert request["output_config"]["format"] == {"type": "json_schema", "schema": PRICE_ANSWER_SCHEMA}
-    assert request["thinking"] == {"type": "disabled"}
+    instructions = script.requests[0][1].instructions
+    assert "not_stated" in instructions and "Never guess" in instructions
 
 
-def test_description_price_is_returned_with_its_note() -> None:
-    resolved, _ = resolve_with(answer(850, "description", "iPhone 15 Pro 256GB - $850"))
+def test_a_description_price_is_returned_with_its_note() -> None:
+    resolved = resolver_for(PriceScript(answer(850, "description", "iPhone 15 Pro 256GB - $850"))).resolve(
+        QUERY, TITLE, DESCRIPTION, 579
+    )
 
     assert resolved == ResolvedPrice(amount=850, source=PriceSource.DESCRIPTION, note="iPhone 15 Pro 256GB - $850")
 
 
-def test_not_stated_answer() -> None:
-    resolved, _ = resolve_with(answer(None, "not_stated", "only 128GB is priced"))
+def test_a_not_stated_answer() -> None:
+    resolved = resolver_for(PriceScript(answer(None, "not_stated", "only 128GB is priced"))).resolve(
+        QUERY, TITLE, DESCRIPTION, 579
+    )
 
     assert resolved == ResolvedPrice(amount=None, source=PriceSource.NOT_STATED, note="only 128GB is priced")
 
 
-@pytest.mark.parametrize(
-    ("response", "note"),
-    [
-        (text_response("not json at all"), UNREADABLE),
-        (text_response('{"amount": 850}'), UNREADABLE),
-        (text_response('{"amount": "lots", "source": "description", "note": ""}'), UNREADABLE),
-        (answer(None, "description"), "the model named no usable amount"),
-        (text_response('{"amount": 8', stop_reason="max_tokens"), "the model's answer was cut off"),
-        (text_response("", stop_reason="refusal"), "the model declined to answer"),
-        (SimpleNamespace(content=[], stop_reason="end_turn", usage=None), "the model returned no answer"),
-    ],
-)
-def test_unusable_responses_become_not_stated_with_a_note(response: object, note: str) -> None:
-    resolved, _ = resolve_with(response)
+@pytest.mark.parametrize("amount", [None, 0, -5])
+def test_an_unusable_amount_becomes_not_stated(amount: float | None) -> None:
+    resolved = resolved_price_from_answer(PriceAnswer(amount=amount, source="description", note="x"))
 
-    assert resolved == ResolvedPrice(amount=None, source=PriceSource.NOT_STATED, note=note)
+    assert resolved == ResolvedPrice(amount=None, source=PriceSource.NOT_STATED, note="the model named no usable amount")
 
 
-def test_long_descriptions_are_truncated() -> None:
-    client = FakeAnthropicClient(answer(None, "not_stated", "no price"))
-    description = "a" * MAX_DESCRIPTION_CHARACTERS + "TAIL-THAT-IS-NOT-SENT"
-
-    ClaudePriceResolver(client, DEFAULT_PRICE_MODEL).resolve(QUERY, TITLE, description, 579)
-
-    prompt = client.messages.calls[0]["messages"][0]["content"]
-    assert "a" * MAX_DESCRIPTION_CHARACTERS in prompt
-    assert "TAIL-THAT-IS-NOT-SENT" not in prompt
-    assert "[cut]" in prompt
-
-
-def test_blank_description_needs_no_call() -> None:
-    client = FakeAnthropicClient(answer(850, "description"))
-
-    resolved = ClaudePriceResolver(client, DEFAULT_PRICE_MODEL).resolve(QUERY, TITLE, "  \n", 579)
-
-    assert resolved.source == PriceSource.NOT_STATED
-    assert client.messages.calls == []
-
-
-def test_api_failures_raise_price_resolution_error() -> None:
-    anthropic = pytest.importorskip("anthropic")
-    import httpx2
-
-    request = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
-    connection_error = anthropic.APIConnectionError(message="connection reset", request=request)
-    rate_limited = anthropic.RateLimitError(
-        "rate limited", response=httpx2.Response(429, request=request), body=None
-    )
-
-    for error, message in [(connection_error, "could not reach"), (rate_limited, "HTTP 429")]:
-        resolver = ClaudePriceResolver(FakeAnthropicClient(error=error), DEFAULT_PRICE_MODEL)
-        with pytest.raises(PriceResolutionError, match=message):
-            resolver.resolve(QUERY, TITLE, DESCRIPTION, 579)
-
-
-def test_parse_price_answer_trims_an_empty_note() -> None:
-    assert parse_price_answer('{"amount": 850, "source": "description", "note": " "}') == ResolvedPrice(
+def test_an_empty_note_becomes_none() -> None:
+    assert resolved_price_from_answer(PriceAnswer(amount=850, source="description", note=" ")) == ResolvedPrice(
         amount=850, source=PriceSource.DESCRIPTION, note=None
     )
 
 
-def test_cost_estimate_uses_haiku_prices() -> None:
-    assert estimate_cost_usd(1_000_000, 0) == pytest.approx(0.10)
-    assert estimate_cost_usd(0, 1_000_000) == pytest.approx(0.50)
+def test_long_descriptions_are_truncated() -> None:
+    script = PriceScript(answer(None, "not_stated", "no price"))
+    description = "a" * MAX_DESCRIPTION_CHARACTERS + "TAIL-THAT-IS-NOT-SENT"
+
+    resolver_for(script).resolve(QUERY, TITLE, description, 579)
+
+    assert "a" * MAX_DESCRIPTION_CHARACTERS in script.prompt()
+    assert "TAIL-THAT-IS-NOT-SENT" not in script.prompt()
+    assert "[cut]" in script.prompt()
 
 
-def test_noop_resolver_keeps_the_listed_price() -> None:
+def test_a_blank_description_needs_no_call() -> None:
+    script = PriceScript(answer(850, "description"))
+
+    resolved = resolver_for(script).resolve(QUERY, TITLE, "  \n", 579)
+
+    assert resolved.source == PriceSource.NOT_STATED
+    assert script.requests == []
+
+
+def test_a_provider_error_raises_price_resolution_error() -> None:
+    script = PriceScript(error=ModelHTTPError(429, "openai:gpt-5.4-nano", body="rate limited"))
+
+    with pytest.raises(PriceResolutionError, match="openai:gpt-5.4-nano"):
+        resolver_for(script).resolve(QUERY, TITLE, DESCRIPTION, 579)
+
+
+def test_answers_that_never_validate_raise_price_resolution_error() -> None:
+    script = PriceScript({"amount": "lots", "source": "description", "note": ""})
+
+    with pytest.raises(PriceResolutionError):
+        resolver_for(script).resolve(QUERY, TITLE, DESCRIPTION, 579)
+    assert len(script.requests) == 2  # the first answer and one retry
+
+
+def test_each_lookup_builds_a_fresh_model() -> None:
+    built: list[FunctionModel] = []
+    script = PriceScript(answer(850, "description"))
+
+    def create_model() -> FunctionModel:
+        built.append(FunctionModel(script))
+        return built[-1]
+
+    resolver = ModelPriceResolver(create_model, "openai:gpt-5.4-nano")
+    resolver.resolve(QUERY, TITLE, DESCRIPTION, 579)
+    resolver.resolve(QUERY, TITLE, DESCRIPTION, 579)
+
+    assert len(built) == 2 and built[0] is not built[1]
+
+
+def test_the_noop_resolver_keeps_the_listed_price() -> None:
     resolved = NoopPriceResolver().resolve(QUERY, TITLE, DESCRIPTION, 579)
 
     assert resolved == ResolvedPrice(amount=579, source=PriceSource.LISTED)
 
 
-def test_factory_picks_noop_without_a_key() -> None:
-    def must_not_be_called(api_key: str) -> object:
-        raise AssertionError("no client without a key")
+def test_the_factory_picks_noop_without_the_worker_models_key() -> None:
+    settings = ScreeningSettings(price_model="openai:gpt-5.4-nano", keys=ProviderKeys(anthropic="sk-ant"))
 
-    resolver = build_price_resolver(ScreeningSettings(anthropic_api_key=None), create_client=must_not_be_called)
-
-    assert isinstance(resolver, NoopPriceResolver)
+    assert isinstance(build_price_resolver(settings), NoopPriceResolver)
 
 
-def test_factory_picks_claude_with_a_key() -> None:
-    keys_used: list[str] = []
+def test_the_factory_picks_the_worker_model_with_its_key() -> None:
+    settings = ScreeningSettings(price_model="anthropic:claude-haiku-5-5", keys=ProviderKeys(anthropic="sk-ant"))
 
-    def create_client(api_key: str) -> FakeAnthropicClient:
-        keys_used.append(api_key)
-        return FakeAnthropicClient(answer(850, "description"))
+    resolver = build_price_resolver(settings)
 
-    resolver = build_price_resolver(ScreeningSettings(anthropic_api_key="sk-test"), create_client=create_client)
+    assert isinstance(resolver, ModelPriceResolver)
+    assert resolver.model_name == "anthropic:claude-haiku-5-5"
 
-    assert isinstance(resolver, ClaudePriceResolver)
-    assert keys_used == ["sk-test"]
+
+def test_the_factory_uses_an_injected_model() -> None:
+    script = PriceScript(answer(850, "description"))
+
+    resolver = build_price_resolver(ScreeningSettings(), create_model=lambda: FunctionModel(script))
+
     assert resolver.resolve(QUERY, TITLE, DESCRIPTION, 579).amount == 850
 
 
-def test_screening_settings_read_the_optional_key(tmp_path: Path) -> None:
+def test_screening_settings_use_the_worker_model_and_its_key(tmp_path: Path) -> None:
     env_file = tmp_path / ".env"
-    env_file.write_text("TELEGRAM_BOT_TOKEN=123:abc\nANTHROPIC_API_KEY= sk-from-file \n")
+    env_file.write_text("TELEGRAM_BOT_TOKEN=123:abc\nOPENAI_API_KEY= sk-from-file \nAGENT_WORKER_MODEL=openai:gpt-5-nano\n")
 
-    assert load_screening_settings(environment={}, env_file=env_file).anthropic_api_key == "sk-from-file"
-    assert load_screening_settings(environment={"ANTHROPIC_API_KEY": ""}, env_file=env_file).anthropic_api_key is None
+    settings = load_screening_settings(environment={}, env_file=env_file)
+
+    assert settings.price_model == "openai:gpt-5-nano"
+    assert settings.keys.openai == "sk-from-file"
+    assert settings.missing_key_variable() is None
+    assert "sk-" not in repr(settings)
     missing = load_screening_settings(environment={}, env_file=tmp_path / "missing.env")
-    assert missing == ScreeningSettings(anthropic_api_key=None, price_model="claude-haiku-5-5")
-    assert "sk-" not in repr(load_screening_settings(environment={}, env_file=env_file))
+    assert missing == ScreeningSettings(price_model="openai:gpt-5.4-nano", keys=ProviderKeys())
+    assert missing.missing_key_variable() == "OPENAI_API_KEY"
+
+
+def test_screening_settings_follow_the_deprecated_agent_model(tmp_path: Path) -> None:
+    settings = load_screening_settings(environment={"AGENT_MODEL": "anthropic:claude-haiku-5-5"},
+                                       env_file=tmp_path / "missing.env")
+
+    assert settings.price_model == "anthropic:claude-haiku-5-5"

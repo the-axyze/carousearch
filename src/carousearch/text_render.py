@@ -2,7 +2,8 @@
 
 from datetime import datetime, timedelta, timezone
 
-from carousearch.agent.result import AgentAnswer, DroppedListing, KeptListing, ToolCall
+from carousearch.agent.cost import format_cost_line
+from carousearch.agent.result import AgentAnswer, DroppedListing, KeptListing, ToolCall, tool_call_counts
 from carousearch.filters.schema import Listing, ListingDetail, SearchResult, SellerVerification
 from carousearch.screening.models import PriceSource, ResolvedPrice, ScreenedListing, format_sgd
 
@@ -96,19 +97,24 @@ def render_listing_detail(detail: ListingDetail) -> str:
 
 
 def render_agent_answer(answer: AgentAnswer) -> str:
-    """`carousearch ask`: the tool trace, the kept listings as a table, the dropped ones with reasons, the notes."""
+    """`carousearch ask`: the tool trace, the kept listings as a table, the dropped ones with reasons, how many more
+    were seen, the notes and the estimated cost."""
     sections = [
         render_tool_trace(answer.tool_trace),
         render_kept_listings(answer.kept),
         render_dropped_listings(answer.dropped),
+        f"Not shortlisted: {answer.not_shortlisted} more listings seen.",
         render_notes(answer.notes),
+        format_cost_line(answer.usage),
     ]
     return "\n\n".join(sections)
 
 
 def render_tool_trace(tool_trace: list[ToolCall]) -> str:
-    """One line per call: '  1.   1.3 s  search_listings  query="nintendo switch" limit=48', plus any non-ok status."""
-    lines = [f"Tool calls ({len(tool_trace)}):"]
+    """A count per tool, then one line per call: '  1.   1.3 s  search_listings  query="nintendo switch" limit=48',
+    plus any non-ok status."""
+    counts = ", ".join(f"{name} {count}" for name, count in tool_call_counts(tool_trace))
+    lines = [f"Tool calls ({len(tool_trace)}){': ' + counts if counts else ''}:"]
     for number, call in enumerate(tool_trace, start=1):
         status = "" if call.status == "ok" else f"  [{call.status}]"
         lines.append(f"{number:>3}. {call.duration_seconds:>5.1f} s  {call.tool_name:<16} {call.arguments}{status}")

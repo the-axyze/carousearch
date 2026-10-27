@@ -3,15 +3,17 @@
 Three caps: tool calls in total, photos (listing_photo calls) and listings asked for from search pages. A search
 that would pass the listing cap is cut to what is left; any other call over a cap is refused. Refused calls
 never reach Carousell and do not count.
+
+The local tools (agent/local_tools.py) fetch details and photos for several listings in one call. Each such
+Carousell request counts as one more tool call, and each photo also as a photo, as if the model had called
+listing_details or listing_photo itself: grant_detail_fetches and grant_photos say how many of those may go ahead.
+The hosted web search has its own cap, counted from the run's messages (agent/web_search.py).
 """
 
 from typing import Any
 
 from carousearch.agent.settings import AgentBudget
-from carousearch.mcp_server import DEFAULT_SEARCH_LIMIT
-
-SEARCH_TOOL = "search_listings"
-PHOTO_TOOL = "listing_photo"
+from carousearch.mcp_server import DEFAULT_SEARCH_LIMIT, PHOTO_TOOL, SEARCH_TOOL
 
 
 class BudgetExhausted(Exception):
@@ -28,6 +30,8 @@ class ToolBudget:
         self.refused_photos = 0
         self.refused_searches = 0
         self.shortened_searches = 0
+        self.withheld_detail_fetches = 0  # asked for by a local tool, not granted
+        self.withheld_photos = 0
 
     def admit(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Count the call and return the arguments to make it with (a search's limit may be lowered).
@@ -51,6 +55,22 @@ class ToolBudget:
             self.photos += 1
         return arguments
 
+    def grant_detail_fetches(self, wanted: int) -> int:
+        """How many of `wanted` listing-detail requests a local tool may make; each granted one is a tool call."""
+        granted = max(0, min(wanted, self.budget.max_tool_calls - self.tool_calls))
+        self.tool_calls += granted
+        self.withheld_detail_fetches += wanted - granted
+        return granted
+
+    def grant_photos(self, wanted: int) -> int:
+        """How many of `wanted` photo downloads a local tool may make; each granted one is a photo and a tool call."""
+        remaining = min(self.budget.max_photos - self.photos, self.budget.max_tool_calls - self.tool_calls)
+        granted = max(0, min(wanted, remaining))
+        self.photos += granted
+        self.tool_calls += granted
+        self.withheld_photos += wanted - granted
+        return granted
+
     def notes(self) -> list[str]:
         """One line per cap that stopped or shortened something, for the answer's notes."""
         lines = []
@@ -59,10 +79,15 @@ class ToolBudget:
                 f"Tool-call budget reached: {count_of(self.budget.max_tool_calls, 'call')} used, "
                 f"{self.refused_tool_calls} more refused."
             )
-        if self.refused_photos:
+        if self.refused_photos or self.withheld_photos:
             lines.append(
-                f"Photo budget reached: {count_of(self.budget.max_photos, 'photo')} judged, "
-                f"{self.refused_photos} more refused."
+                f"Photo budget reached: {count_of(self.photos, 'photo')} judged, "
+                f"{self.refused_photos + self.withheld_photos} more refused."
+            )
+        if self.withheld_detail_fetches:
+            lines.append(
+                f"Tool-call budget reached inside a tool: {count_of(self.withheld_detail_fetches, 'listing')} "
+                "left without details."
             )
         if self.refused_searches or self.shortened_searches:
             lines.append(
