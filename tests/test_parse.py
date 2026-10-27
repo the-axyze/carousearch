@@ -8,6 +8,7 @@ from carousearch.carousell.parse import (
     extract_csrf_token,
     long_to_int,
     parse_card_timestamp,
+    parse_category_filters_response,
     parse_display_price,
     parse_listing_card,
     parse_listing_detail_response,
@@ -15,7 +16,7 @@ from carousearch.carousell.parse import (
     raise_if_blocked,
 )
 from carousearch.filters.payload import condition_from_code
-from carousearch.filters.schema import Condition, PostedOrBumpedKind
+from carousearch.filters.schema import CategoryFilter, CategoryFilterOption, Condition, PostedOrBumpedKind
 
 from fixture_files import listing_cards, load_json_fixture, load_text_fixture
 
@@ -189,6 +190,12 @@ def test_listing_detail() -> None:
     assert [meetup.name for meetup in detail.meetup_locations] == [m["name"] for m in raw_listing["meetups"]]
 
 
+def test_listing_detail_names_its_category() -> None:
+    detail = parse_listing_detail_response(load_json_fixture("listing_detail.json"))
+
+    assert (detail.category_id, detail.category_name) == ("6359", "iPhone 15 Series")
+
+
 def test_listing_detail_leaves_unprovided_fields_empty() -> None:
     response = load_json_fixture("listing_detail.json")
     raw_listing = response["data"]["screens"][0]["meta"]["default_value"]
@@ -288,3 +295,41 @@ def test_card_timestamp_ignores_unknown_components() -> None:
 
     assert parse_card_timestamp(above_fold) == (PostedOrBumpedKind.BUMPED, datetime.fromtimestamp(1792734669, UTC))
     assert parse_card_timestamp(None) == (None, None)
+
+
+# --- category filters --------------------------------------------------------
+
+
+def test_category_filters_are_read_in_the_sites_order_with_their_values() -> None:
+    filters = parse_category_filters_response(load_json_fixture("category_filters_class_2b.json"))
+
+    assert [(item.field_name, item.filter_type, len(item.options)) for item in filters] == [
+        ("sort_by", None, 5),
+        ("vehicle_motorbike_type", "id_or_keyword", 12),
+        ("make", "id_or_keyword", 48),
+        ("price_start", "float_range_start", 0),
+        ("price_end", "float_range_end", 0),
+        ("deal_options", "id_or_keyword", 2),
+    ]
+    assert filters[1].label == "Body"
+    assert filters[5].options == [
+        CategoryFilterOption(value="MEETUP", label="Meet-up"), CategoryFilterOption(value="MAILING", label="Mailing & Delivery")
+    ]
+
+
+def test_category_fields_without_a_field_name_or_a_value_are_skipped() -> None:
+    response = {"data": {"filters": {"screens": [{"groups": [{"fields": [
+        {"meta": {}, "ui_rules": {}},
+        {"meta": {"field_name": "make", "filter_type": "id_or_keyword"},
+         "ui_rules": {"label": "Make", "options": [{"display_name": "Honda"}, {"display_name": "BMW", "value": "BMW"}]}},
+    ]}]}]}}}
+
+    assert parse_category_filters_response(response) == [
+        CategoryFilter(field_name="make", label="Make", filter_type="id_or_keyword",
+                       options=[CategoryFilterOption(value="BMW", label="BMW")])
+    ]
+
+
+def test_a_response_without_the_fieldset_raises_schema_error() -> None:
+    with pytest.raises(CarousellSchemaError, match="data.filters"):
+        parse_category_filters_response(load_json_fixture("search_price_condition.json"))

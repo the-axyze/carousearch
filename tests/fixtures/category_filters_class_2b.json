@@ -1,0 +1,418 @@
+{
+ "data": {
+  "appliedContext": {
+   "ccId": "1997",
+   "filters": [
+    {
+     "fieldName": "collections",
+     "idsOrKeywords": {
+      "value": [
+       "1595"
+      ]
+     },
+     "enforce": true
+    }
+   ],
+   "query": "r15"
+  },
+  "filterBubbles": [
+   {
+    "label": "In",
+    "displayValue": "Class 2B",
+    "fieldName": "collection_text"
+   },
+   {
+    "label": "Sort",
+    "displayValue": "Best Match",
+    "fieldName": "sort_by"
+   },
+   {
+    "label": "Body",
+    "fieldName": "vehicle_motorbike_type"
+   },
+   {
+    "label": "Make",
+    "fieldName": "make"
+   },
+   {
+    "label": "Price",
+    "fieldName": "price_start"
+   },
+   {
+    "label": "Deal Option",
+    "fieldName": "deal_options"
+   }
+  ],
+  "formattedTotal": "112",
+  "sfContext": {
+   "collectionId": "1997"
+  },
+  "results": [],
+  "filters": {
+   "id": "8e62ee66-026c-48f2-9bbd-02c214d93590",
+   "screens": [
+    {
+     "id": "screen_0",
+     "groups": [
+      {
+       "fields": [
+        {
+         "id": "field_sort_by",
+         "meta": {
+          "field_name": "sort_by",
+          "component": "radio"
+         },
+         "ui_rules": {
+          "options": [
+           {
+            "display_name": "Best Match",
+            "value": "1"
+           },
+           {
+            "display_name": "Recent",
+            "value": "3"
+           },
+           {
+            "display_name": "Price - High to Low",
+            "value": "5"
+           },
+           {
+            "display_name": "Price - Low to High",
+            "value": "4"
+           },
+           {
+            "display_name": "Nearby",
+            "value": "6"
+           }
+          ]
+         }
+        }
+       ]
+      },
+      {
+       "fields": [
+        {
+         "id": "field_vehicle_motorbike_type",
+         "meta": {
+          "field_name": "vehicle_motorbike_type",
+          "component": "horizontal_picker",
+          "filter_type": "id_or_keyword"
+         },
+         "ui_rules": {
+          "label": "Body",
+          "options": [
+           {
+            "display_name": "Adventure",
+            "value": "MOTORBIKE_TYPE_ADVENTURE"
+           },
+           {
+            "display_name": "Cruiser",
+            "value": "MOTORBIKE_TYPE_CRUISER"
+           },
+           {
+            "display_name": "Cub",
+            "value": "MOTORBIKE_TYPE_CUB"
+           },
+           {
+            "display_name": "Enduro",
+            "value": "MOTORBIKE_TYPE_ENDURO"
+           },
+           {
+            "display_name": "Road Bike",
+            "value": "MOTORBIKE_TYPE_ROAD_BIKE"
+           },
+           {
+            "display_name": "Motard",
+            "value": "MOTORBIKE_TYPE_MOTARD"
+           },
+           {
+            "display_name": "Scooter",
+            "value": "MOTORBIKE_TYPE_SCOOTER"
+           },
+           {
+            "display_name": "Scrambler",
+            "value": "MOTORBIKE_TYPE_SCRAMBLER"
+           },
+           {
+            "display_name": "Sports Bike",
+            "value": "MOTORBIKE_TYPE_SPORTS_BIKE"
+           },
+           {
+            "display_name": "Sports Tourer",
+            "value": "MOTORBIKE_TYPE_SPORTS_TOURER"
+           },
+           {
+            "display_name": "Vintage",
+            "value": "MOTORBIKE_TYPE_VINTAGE"
+           },
+           {
+            "display_name": "Other",
+            "value": "MOTORBIKE_TYPE_OTHER"
+           }
+          ]
+         }
+        },
+        {
+         "id": "field_make",
+         "meta": {
+          "field_name": "make",
+          "component": "multi_picker",
+          "filter_type": "id_or_keyword"
+         },
+         "ui_rules": {
+          "label": "Make",
+          "options": [
+           {
+            "display_name": "Aprilia",
+            "value": "Aprilia"
+           },
+           {
+            "display_name": "Bajaj",
+            "value": "Bajaj"
+           },
+           {
+            "display_name": "Benda",
+            "value": "Benda"
+           },
+           {
+            "display_name": "Benelli",
+            "value": "Benelli"
+           },
+           {
+            "display_name": "BMW",
+            "value": "BMW"
+           },
+           {
+            "display_name": "Cagiva",
+            "value": "Cagiva"
+           },
+           {
+            "display_name": "Can-Am",
+            "value": "Can-Am"
+           },
+           {
+            "display_name": "CFMoto",
+            "value": "CFMoto"
+           },
+           {
+            "display_name": "Daelim",
+            "value": "Daelim"
+           },
+           {
+            "display_name": "Ducati",
+            "value": "Ducati"
+           },
+           {
+            "display_name": "Felo",
+            "value": "Felo"
+           },
+           {
+            "display_name": "Gas Gas",
+            "value": "Gas Gas"
+           },
+           {
+            "display_name": "Gilera",
+            "value": "Gilera"
+           },
+           {
+            "display_name": "Harley Davidson",
+            "value": "Harley Davidson"
+           },
+           {
+            "display_name": "Honda",
+            "value": "Honda"
+           },
+           {
+            "display_name": "Husqvarna",
+            "value": "Husqvarna"
+           },
+           {
+            "display_name": "Hyosung",
+            "value": "Hyosung"
+           },
+           {
+            "display_name": "Indian",
+            "value": "Indian"
+           },
+           {
+            "display_name": "Italjet",
+            "value": "Italjet"
+           },
+           {
+            "display_name": "Kawasaki",
+            "value": "Kawasaki"
+           },
+           {
+            "display_name": "KTM",
+            "value": "KTM"
+           },
+           {
+            "display_name": "Kymco",
+            "value": "Kymco"
+           },
+           {
+            "display_name": "Lambretta",
+            "value": "Lambretta"
+           },
+           {
+            "display_name": "Morris Motors",
+            "value": "Morris Motors"
+           },
+           {
+            "display_name": "Motomorini",
+            "value": "Motomorini"
+           },
+           {
+            "display_name": "Moto Guzzi",
+            "value": "Moto Guzzi"
+           },
+           {
+            "display_name": "Mutt",
+            "value": "Mutt"
+           },
+           {
+            "display_name": "MV Agusta",
+            "value": "MV Agusta"
+           },
+           {
+            "display_name": "Others",
+            "value": "Others"
+           },
+           {
+            "display_name": "Peugeot",
+            "value": "Peugeot"
+           },
+           {
+            "display_name": "PGO",
+            "value": "PGO"
+           },
+           {
+            "display_name": "Piaggio",
+            "value": "Piaggio"
+           },
+           {
+            "display_name": "Royal Alloy",
+            "value": "Royal Alloy"
+           },
+           {
+            "display_name": "Royal Enfield",
+            "value": "Royal Enfield"
+           },
+           {
+            "display_name": "Suzuki",
+            "value": "Suzuki"
+           },
+           {
+            "display_name": "SYM",
+            "value": "SYM"
+           },
+           {
+            "display_name": "Tiger",
+            "value": "Tiger"
+           },
+           {
+            "display_name": "Triumph",
+            "value": "Triumph"
+           },
+           {
+            "display_name": "Vespa",
+            "value": "Vespa"
+           },
+           {
+            "display_name": "Yamaha",
+            "value": "Yamaha"
+           },
+           {
+            "display_name": "Zongshen",
+            "value": "Zongshen"
+           },
+           {
+            "display_name": "Zontes",
+            "value": "Zontes"
+           },
+           {
+            "display_name": "Rieju",
+            "value": "Rieju"
+           },
+           {
+            "display_name": "QJMotor",
+            "value": "QJMotor"
+           },
+           {
+            "display_name": "Sherco",
+            "value": "Sherco"
+           },
+           {
+            "display_name": "Cyclone",
+            "value": "Cyclone"
+           },
+           {
+            "display_name": "VOGE",
+            "value": "VOGE"
+           },
+           {
+            "display_name": "ZXMOTO",
+            "value": "ZXMOTO"
+           }
+          ]
+         }
+        }
+       ]
+      },
+      {
+       "fields": [
+        {
+         "id": "field_price_start",
+         "meta": {
+          "field_name": "price_start",
+          "component": "short_text",
+          "filter_type": "float_range_start"
+         },
+         "ui_rules": {
+          "label": "Minimum"
+         }
+        },
+        {
+         "id": "field_price_end",
+         "meta": {
+          "field_name": "price_end",
+          "component": "short_text",
+          "filter_type": "float_range_end"
+         },
+         "ui_rules": {
+          "label": "Maximum"
+         }
+        }
+       ]
+      },
+      {
+       "fields": [
+        {
+         "id": "field_deal_options",
+         "meta": {
+          "field_name": "deal_options",
+          "component": "multi_picker",
+          "filter_type": "id_or_keyword"
+         },
+         "ui_rules": {
+          "label": "Deal Option",
+          "options": [
+           {
+            "display_name": "Meet-up",
+            "value": "MEETUP"
+           },
+           {
+            "display_name": "Mailing & Delivery",
+            "value": "MAILING"
+           }
+          ]
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ }
+}
