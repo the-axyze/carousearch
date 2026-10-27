@@ -3,6 +3,7 @@ import io
 import json
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import anyio
@@ -26,6 +27,7 @@ from carousearch.screening.price_resolver import NoopPriceResolver, PriceResolve
 
 from fake_carousell import FakeCarousell
 from fixture_files import load_json_fixture
+from scripted_model import PlanFirst
 
 NO_WAIT = ["--min-interval", "0", "--jitter", "0"]
 
@@ -542,11 +544,13 @@ def unused_worker(messages: list[ModelMessage], info: AgentInfo) -> ModelRespons
 
 
 def run_ask(
-    carousell: FakeCarousell, data_dir: Path, as_json: bool, model: FunctionModel, settings: AgentSettings | None = None
+    carousell: FakeCarousell, data_dir: Path, as_json: bool, script: Callable, settings: AgentSettings | None = None
 ) -> int:
+    """`ask` with the planning phase answered by PlanFirst and the execution phase by `script`."""
     return cli.run_ask_command(
         "Find an iPhone 15 under S$600.", settings or AgentSettings(), data_dir, carousell.client, RateLimiter(0, 0),
-        as_json, sys.stdout, sys.stderr, model=model, worker_model=FunctionModel(unused_worker),
+        as_json, sys.stdout, sys.stderr, model=FunctionModel(PlanFirst(script)),
+        worker_model=FunctionModel(unused_worker),
     )
 
 
@@ -588,7 +592,7 @@ def test_ask_without_the_models_provider_key_exits_with_a_clear_message(
 def test_ask_json_output_parses_back_into_an_agent_answer(tmp_path: Path, capsys) -> None:
     carousell = FakeCarousell()
 
-    exit_code = run_ask(carousell, tmp_path, as_json=True, model=FunctionModel(search_then_details_twice_then_answer))
+    exit_code = run_ask(carousell, tmp_path, as_json=True, script=search_then_details_twice_then_answer)
 
     answer = AgentAnswer.model_validate_json(capsys.readouterr().out)
     assert exit_code == 0
@@ -604,7 +608,7 @@ def test_ask_json_output_parses_back_into_an_agent_answer(tmp_path: Path, capsys
 
 
 def test_ask_prints_the_trace_then_kept_dropped_and_notes(tmp_path: Path, capsys) -> None:
-    exit_code = run_ask(FakeCarousell(), tmp_path, as_json=False, model=FunctionModel(search_then_details_twice_then_answer))
+    exit_code = run_ask(FakeCarousell(), tmp_path, as_json=False, script=search_then_details_twice_then_answer)
 
     output = capsys.readouterr().out
     assert exit_code == 0
@@ -619,7 +623,7 @@ def test_ask_reports_a_failed_model_request_and_exits_with_failure(tmp_path: Pat
     def refused_key(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         raise ModelHTTPError(status_code=401, model_name="claude-haiku-5-5", body="invalid x-api-key")
 
-    exit_code = run_ask(FakeCarousell(), tmp_path, as_json=False, model=FunctionModel(refused_key))
+    exit_code = run_ask(FakeCarousell(), tmp_path, as_json=False, script=refused_key)
 
     captured = capsys.readouterr()
     assert exit_code == 1

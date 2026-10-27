@@ -2,7 +2,7 @@
 
 They are Pydantic AI function tools, not MCP tools, because they need this process's state for one run: the run
 directory (listings.db, downloaded photos, snippets), the worker model and the run's budget. Every call still goes
-through the run's ToolCallGate (run_prompt.GatedToolset), so it is counted, timed and traced like the MCP tools,
+through the run's ToolCallGate (toolsets.GatedToolset), so it is counted, timed and traced like the MCP tools,
 and the Carousell requests a tool makes inside (details, photos) are counted through ToolBudget.grant_*.
 
 I/O: the sandbox subprocess, Carousell and the shared database (through McpServices, under its lock, in worker
@@ -503,11 +503,11 @@ call."""
 
 JUDGE_LISTINGS_DESCRIPTION = f"""\
 Ask a small, cheap model to check listings against one criterion, from each listing's title, price and \
-description, for a yes/no question no field captures, for example "the post sells one item rather than parts, \
-a rental or a wanted ad". Returns [{{id, verdict, reason}}] in the order given; verdict is yes, no or unsure. Listings \
-whose details this run has not fetched yet cost one Carousell request each, counted against the tool-call budget. \
-Answers are cached: asking the same criterion about the same listing again is free. Use this instead of reading \
-many descriptions yourself. At most {MAX_LISTINGS_PER_JUDGE_CALL} listings per call."""
+description, for a yes/no question no field captures, for example "the post offers one item for sale, not a \
+wanted ad or a list of several items". Returns [{{id, verdict, reason}}] in the order given; verdict is yes, no \
+or unsure. Listings whose details this run has not fetched yet cost one Carousell request each, counted against \
+the tool-call budget. Answers are cached: asking the same criterion about the same listing again is free. Use \
+this instead of reading many descriptions yourself. At most {MAX_LISTINGS_PER_JUDGE_CALL} listings per call."""
 
 JUDGE_PHOTOS_DESCRIPTION = f"""\
 Ask a small model to score each listing's main photo against one criterion, from 1 (does not match at all) to 5 \

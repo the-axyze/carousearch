@@ -34,7 +34,7 @@ from carousearch.web.services import WebServices
 from fake_carousell import FakeCarousell as FakeCarousellSite
 from fake_mcp_services import jpeg_bytes
 from fixture_files import load_json_fixture
-from scripted_model import ScriptedModel, calls, final_answer
+from scripted_model import PlanFirst, ScriptedModel, calls, final_answer
 
 
 @pytest.fixture(autouse=True)
@@ -527,7 +527,7 @@ class GatedCarousell(FakeCarousell):
 def open_ask_client(
     script: ScriptedModel, carousell: FakeCarousell | None = None, agent: AgentSettings = KEYED
 ) -> TestClient:
-    return open_client(carousell or GatedCarousell(), agent=agent, agent_model=FunctionModel(script))
+    return open_client(carousell or GatedCarousell(), agent=agent, agent_model=FunctionModel(PlanFirst(script)))
 
 
 def post_ask(client: TestClient, prompt: str = ASK_PROMPT) -> Response:

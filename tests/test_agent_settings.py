@@ -148,3 +148,13 @@ def test_prices_are_looked_up_by_model_name_whatever_the_provider_prefix() -> No
     assert price_for("gpt-5.4-nano") == ModelPrice(0.20, 0.02, 1.25)
     assert price_for("anthropic:claude-haiku-5-5") == ModelPrice(0.10, 0.01, 0.50)
     assert price_for("function:scripted") is None
+
+
+def test_the_planning_phase_has_its_own_small_budget(tmp_path: Path) -> None:
+    default = load({}, tmp_path).planning_budget
+    narrowed = load({"AGENT_PLAN_MAX_TOOL_CALLS": "3"}, tmp_path).planning_budget
+
+    assert default == AgentBudget(max_tool_calls=6, max_photos=0, max_listings=96, max_web_searches=2)
+    assert narrowed.max_tool_calls == 3 and narrowed.max_photos == 0
+    with pytest.raises(ValueError, match="AGENT_PLAN_MAX_TOOL_CALLS"):
+        load({"AGENT_PLAN_MAX_TOOL_CALLS": "0"}, tmp_path)

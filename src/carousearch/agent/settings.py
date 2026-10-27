@@ -1,5 +1,5 @@
-"""The agent's settings: the planner and worker models, the budgets that cap one run, the provider API keys, and the
-price table behind the run's cost estimate.
+"""The agent's settings: the planner and worker models, the budgets that cap one run (and its planning phase), the
+provider API keys, and the price table behind the run's cost estimate.
 
 Models are Pydantic AI model strings, "<provider>:<model>" (carousearch.language_models): AGENT_PLANNER_MODEL runs
 the agent loop, AGENT_WORKER_MODEL the judge tools; AGENT_MODEL is a deprecated alias for both. Everything is read
@@ -8,7 +8,7 @@ from the environment or the project's `.env` (environment wins).
 
 import logging
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from carousearch.config import DEFAULT_ENV_FILE, read_setting_values
@@ -29,11 +29,16 @@ AGENT_MAX_TOOL_CALLS_VARIABLE = "AGENT_MAX_TOOL_CALLS"
 AGENT_MAX_PHOTOS_VARIABLE = "AGENT_MAX_PHOTOS"
 AGENT_MAX_LISTINGS_VARIABLE = "AGENT_MAX_LISTINGS"
 AGENT_MAX_WEB_SEARCHES_VARIABLE = "AGENT_MAX_WEB_SEARCHES"
+AGENT_PLAN_MAX_TOOL_CALLS_VARIABLE = "AGENT_PLAN_MAX_TOOL_CALLS"
 
 DEFAULT_MAX_TOOL_CALLS = 40  # matches the "about 40 Carousell requests per task" of the MCP usage notes
 DEFAULT_MAX_PHOTOS = 15
 DEFAULT_MAX_LISTINGS = 200  # about four search pages of 48
 DEFAULT_MAX_WEB_SEARCHES = 3
+# The planning phase only discovers: a few samples and filters, no photos, before the owner sees the plan.
+DEFAULT_PLAN_MAX_TOOL_CALLS = 6
+DEFAULT_PLAN_MAX_LISTINGS = 96  # two pages of 48
+DEFAULT_PLAN_MAX_WEB_SEARCHES = 2
 
 
 @dataclass(frozen=True)
@@ -44,6 +49,15 @@ class AgentBudget:
     max_photos: int = DEFAULT_MAX_PHOTOS
     max_listings: int = DEFAULT_MAX_LISTINGS  # listings asked for across all search pages
     max_web_searches: int = DEFAULT_MAX_WEB_SEARCHES  # the provider's hosted web search, where it has one
+
+
+def default_planning_budget() -> AgentBudget:
+    return AgentBudget(
+        max_tool_calls=DEFAULT_PLAN_MAX_TOOL_CALLS,
+        max_photos=0,
+        max_listings=DEFAULT_PLAN_MAX_LISTINGS,
+        max_web_searches=DEFAULT_PLAN_MAX_WEB_SEARCHES,
+    )
 
 
 @dataclass(frozen=True)
@@ -79,7 +93,8 @@ def price_for(model_name: str, prices: Mapping[str, ModelPrice] = MODEL_PRICES) 
 class AgentSettings:
     planner_model: str = DEFAULT_PLANNER_MODEL
     worker_model: str = DEFAULT_WORKER_MODEL
-    budget: AgentBudget = field(default_factory=AgentBudget)
+    budget: AgentBudget = field(default_factory=AgentBudget)  # the execution phase
+    planning_budget: AgentBudget = field(default_factory=default_planning_budget)
     keys: ProviderKeys = field(default_factory=ProviderKeys)  # never printed
 
     def missing_key_variable(self) -> str | None:
@@ -103,6 +118,10 @@ def load_agent_settings(environment: Mapping[str, str] | None = None, env_file: 
         max_listings=parse_budget(values, AGENT_MAX_LISTINGS_VARIABLE, DEFAULT_MAX_LISTINGS, minimum=1),
         max_web_searches=parse_budget(values, AGENT_MAX_WEB_SEARCHES_VARIABLE, DEFAULT_MAX_WEB_SEARCHES, minimum=0),
     )
+    planning_tool_calls = parse_budget(
+        values, AGENT_PLAN_MAX_TOOL_CALLS_VARIABLE, DEFAULT_PLAN_MAX_TOOL_CALLS, minimum=1
+    )
+    planning_budget = replace(default_planning_budget(), max_tool_calls=planning_tool_calls)
     models = choose_models(values)
     if models.from_deprecated_alias:
         logger.warning(
@@ -112,7 +131,11 @@ def load_agent_settings(environment: Mapping[str, str] | None = None, env_file: 
             AGENT_WORKER_MODEL_VARIABLE,
         )
     return AgentSettings(
-        planner_model=models.planner, worker_model=models.worker, budget=budget, keys=load_provider_keys(values)
+        planner_model=models.planner,
+        worker_model=models.worker,
+        budget=budget,
+        planning_budget=planning_budget,
+        keys=load_provider_keys(values),
     )
 
 

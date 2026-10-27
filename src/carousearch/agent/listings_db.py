@@ -1,6 +1,6 @@
 """listings.db: every listing one agent run has seen, in its run directory, for run_python to query.
 
-The run's tool hook (run_prompt.ToolCallGate) hands each search_listings page and listing_details result to
+The run's tool hook (toolsets.ToolCallGate) hands each search_listings page and listing_details result to
 RunListingsStore, and the judge tools hand it the details they fetch. A listing is one row, updated in place: a
 search fills the card columns, details fill the detail columns, and neither erases the other's. listings.json next
 to it holds the same rows, rewritten after every change. extract_fields adds one typed column per field it reads,

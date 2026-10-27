@@ -57,6 +57,7 @@ DEFAULT_SEARCH_LIMIT = 20
 SEARCH_TOOL = "search_listings"
 DETAILS_TOOL = "listing_details"
 PHOTO_TOOL = "listing_photo"
+SCREENING_TOOL = "screening_tags"
 CATEGORY_TOOL = "category_fields"
 SAMPLE_TOOL = "sample_descriptions"
 DEFAULT_SAMPLE_SIZE = 20

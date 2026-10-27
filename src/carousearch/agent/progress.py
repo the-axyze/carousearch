@@ -1,6 +1,6 @@
 """Progress of a run while it is in flight: one event when a tool call starts and one when it finishes.
 
-The run's tool hook (run_prompt.ToolCallGate) builds these events and hands them to an injected ProgressObserver,
+The run's tool hook (toolsets.ToolCallGate) builds these events and hands them to an injected ProgressObserver,
 for example the web app's prompt mode. A finished search_listings event carries the listings Carousell returned,
 rebuilt from the tool result, so a caller can show them as cards from Carousell's data, not the model's text.
 
