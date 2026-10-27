@@ -683,7 +683,11 @@ def test_ask_plan_only_prints_the_plan_and_spends_nothing_on_execution(tmp_path:
     assert "  size_cm (cm) [text_extraction]: stated in titles" in output
     assert "Benchmark:      median over single-item sale listings with a plain price, grouped by size_cm" in output
     assert "  1. posts offering several items at one price. Why: their price is not the price of one item" in output
-    assert output.rstrip().splitlines()[-1].startswith("Cost (estimate, list prices of ")
+    assert "Cost (estimate, list prices of " in output
+    (run_directory,) = (tmp_path / "runs").iterdir()
+    assert output.rstrip().endswith(f"Plan saved to {run_directory / 'plan.json'}; edit it if you like, then run it "
+                                    "with --plan-file.")
+    assert cli.read_plan_file(run_directory / "plan.json") == EXAMPLE_PLAN
     assert carousell.api_requests == []
 
 

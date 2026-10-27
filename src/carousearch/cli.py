@@ -106,6 +106,8 @@ CONDITION_GROUPS: dict[str, list[Condition]] = {
     "used": [Condition.LIKE_NEW, Condition.LIGHTLY_USED, Condition.WELL_USED, Condition.HEAVILY_USED],
 }
 
+PLAN_FILE_NAME = "plan.json"  # what `ask --plan-only` saves in its run folder
+
 EXIT_OK = 0
 EXIT_FAILURE = 1
 EXIT_USAGE_ERROR = 2
@@ -659,8 +661,8 @@ def run_ask_command(
     knowledge_dir: Path | None = DEFAULT_KNOWLEDGE_DIR,
 ) -> int:
     """Plan the request and carry the plan out, then print the trace, plan, kept, dropped, review, notes and cost
-    (or the AgentAnswer JSON). `plan_only` stops after planning and prints the plan (JSON: the SearchPlan alone, to
-    edit and pass back); `saved_plan` skips planning. The owner's notes come from `knowledge_dir`. `model` and
+    (or the AgentAnswer JSON). `plan_only` stops after planning, prints the plan (JSON: the SearchPlan alone) and
+    saves it as plan.json in the run folder, to edit and pass back; `saved_plan` skips planning. The owner's notes come from `knowledge_dir`. `model` and
     `worker_model` replace the planner and worker the settings name (tests); without them, the providers' API keys
     must be set. The run's files go to <data dir>/runs/<time>-<id>/."""
     missing_key = settings.missing_key_variable()
@@ -700,10 +702,14 @@ def run_ask_command(
                 planning = plan_prompt_sync(
                     prompt, services, settings, model, run_directory=local.run_directory, knowledge=knowledge
                 )
-                text = planning.plan.model_dump_json(indent=2) if as_json else render_planned_search(
-                    planning.plan, planning.tool_trace, planning.usage
-                )
-                print(text, file=output)
+                plan_file = local.run_directory / PLAN_FILE_NAME
+                plan_file.write_text(planning.plan.model_dump_json(indent=2), encoding="utf-8")
+                if as_json:
+                    print(planning.plan.model_dump_json(indent=2), file=output)
+                else:
+                    print(render_planned_search(planning.plan, planning.tool_trace, planning.usage), file=output)
+                    saved_line = f"\nPlan saved to {plan_file}; edit it if you like, then run it with --plan-file."
+                    print(saved_line, file=output)
                 return EXIT_OK
             if saved_plan is not None:
                 planning = PlanningOutcome.from_plan(saved_plan)
