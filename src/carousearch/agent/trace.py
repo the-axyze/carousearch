@@ -2,7 +2,8 @@
 
 The calls and their order come from the run's message history. How long each took, whether it ran and the
 arguments it was finally made with (the budget may lower a search's limit) come from the records the tool hook
-keeps by tool-call id, because the history only stamps when a tool returned.
+keeps by tool-call id, because the history only stamps when a tool returned. The provider's hosted web searches
+appear too, as "web_search" with the query; the provider runs them, so they have no duration.
 """
 
 import json
@@ -10,7 +11,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, NativeToolCallPart, ToolCallPart
 
 from carousearch.agent.result import ToolCall, ToolCallStatus
 
@@ -28,13 +29,23 @@ def build_tool_trace(
     messages: Sequence[ModelMessage], records: Mapping[str, CallRecord], output_tool_name: str
 ) -> list[ToolCall]:
     """Every tool call in the model's responses except the final-answer tool, in the order the model made them."""
-    return [
-        trace_entry(part, records.get(part.tool_call_id))
-        for message in messages
-        if isinstance(message, ModelResponse)
-        for part in message.parts
-        if isinstance(part, ToolCallPart) and part.tool_name != output_tool_name
-    ]
+    trace = []
+    for message in messages:
+        if not isinstance(message, ModelResponse):
+            continue
+        for part in message.parts:
+            if isinstance(part, NativeToolCallPart):
+                trace.append(native_trace_entry(part))
+            elif isinstance(part, ToolCallPart) and part.tool_name != output_tool_name:
+                trace.append(trace_entry(part, records.get(part.tool_call_id)))
+    return trace
+
+
+def native_trace_entry(part: NativeToolCallPart) -> ToolCall:
+    """A call the provider ran itself (hosted web search): it ran, and took no time on our side."""
+    return ToolCall(
+        tool_name=part.tool_name, arguments=summarise_arguments(part.args_as_dict()), duration_seconds=0.0, status="ok"
+    )
 
 
 def trace_entry(part: ToolCallPart, record: CallRecord | None) -> ToolCall:

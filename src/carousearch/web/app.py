@@ -11,6 +11,7 @@ from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
 from carousearch import storage
+from carousearch.agent.judge_cache import SqliteJudgementCache
 from carousearch.agent.settings import AgentSettings
 from carousearch.carousell.client import CarousellClient, create_carousell_client
 from carousearch.config import DATABASE_FILE_NAME, ScreeningSettings
@@ -86,6 +87,8 @@ def build_web_services(settings: WebSettings, carousell_client: CarousellClient)
         price_lookup_enabled=not isinstance(resolver, NoopPriceResolver),
         close=close,
         agent=settings.agent,
+        judgement_cache=SqliteJudgementCache(database),
+        runs_root=settings.data_dir,
     )
 
 

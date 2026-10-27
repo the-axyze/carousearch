@@ -11,10 +11,12 @@ from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
+from carousearch.agent.judge_cache import JudgementCache, MemoryJudgementCache
 from carousearch.agent.settings import AgentSettings
-from carousearch.filters.schema import ListingDetail, SearchRequest, SearchResult
+from carousearch.filters.schema import CategoryFilter, ListingDetail, SearchRequest, SearchResult
 from carousearch.screening.models import ScreenedListing
 from carousearch.screening.pipeline import ScreeningServices, screen_listings
 from carousearch.web.prompt_runs import PromptRunRegistry
@@ -33,14 +35,16 @@ RECENT_SCREENING_LIMIT = 2000
 
 
 class CarousellSource(Protocol):
-    """What the web app needs from Carousell (CarousellClient satisfies it). get_photo is for the Ask agent's
-    listing_photo tool."""
+    """What the web app needs from Carousell (CarousellClient satisfies it). get_photo and get_category_filters are
+    for the Ask agent's tools."""
 
     def search(self, request: SearchRequest) -> SearchResult: ...
 
     def get_listing(self, listing_id: str) -> ListingDetail: ...
 
     def get_photo(self, url: str) -> bytes: ...
+
+    def get_category_filters(self, category_id: str) -> list[CategoryFilter]: ...
 
 
 class RecentSearches:
@@ -91,14 +95,17 @@ class WebServices:
 
     carousell: CarousellSource
     screening: ScreeningServices  # its client is the same Carousell client; its clock is the app's clock
-    price_lookup_enabled: bool  # False when no ANTHROPIC_API_KEY is set (NoopPriceResolver)
+    price_lookup_enabled: bool  # False when the worker model's API key is not set (NoopPriceResolver)
     close: Callable[[], None] = field(default=lambda: None)
     recent_searches: RecentSearches = field(default_factory=RecentSearches)
     recent_screenings: RecentScreenings = field(default_factory=RecentScreenings)
     # Held around every call into the functions below, and for the whole of an Ask run; see the module docstring.
     turn: asyncio.Lock = field(default_factory=asyncio.Lock)
-    agent: AgentSettings = field(default_factory=AgentSettings)  # Ask mode: AGENT_MODEL, budgets, provider keys
-    agent_model: "Model | None" = None  # replaces the model AGENT_MODEL names; tests inject a scripted one
+    agent: AgentSettings = field(default_factory=AgentSettings)  # Ask mode: models, budgets, provider keys
+    agent_model: "Model | None" = None  # replaces the planner model the settings name; tests inject a scripted one
+    agent_worker_model: "Model | None" = None  # replaces the worker model, likewise
+    judgement_cache: JudgementCache = field(default_factory=MemoryJudgementCache)  # the database's, from web.app
+    runs_root: Path | None = None  # Ask runs keep their files in <runs_root>/runs/...; None: a temporary folder
     prompt_runs: PromptRunRegistry = field(default_factory=PromptRunRegistry)  # Ask mode's recent runs
 
 

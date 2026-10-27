@@ -1,6 +1,15 @@
 """The agent's answer: result shaping and the `carousearch ask` text output (pure)."""
 
-from carousearch.agent.result import AgentAnswer, DroppedListing, KeptListing, ModelAnswer, ToolCall, build_agent_answer
+from carousearch.agent.cost import ModelUsage
+from carousearch.agent.result import (
+    AgentAnswer,
+    DroppedListing,
+    KeptListing,
+    ModelAnswer,
+    ToolCall,
+    build_agent_answer,
+    tool_call_counts,
+)
 from carousearch.text_render import render_agent_answer
 
 KEPT = KeptListing(
@@ -18,13 +27,20 @@ TRACE = [
 ]
 
 
-def test_budget_notes_are_appended_to_the_models_notes() -> None:
-    model_answer = ModelAnswer(kept=[KEPT], dropped=[DROPPED], notes="Assumed V2 means the 2019 model. ")
+USAGE = [ModelUsage(role="planner", model="openai:gpt-5.4-mini", requests=3, input_tokens=12_000,
+                    cached_input_tokens=8_000, output_tokens=900, estimated_cost_usd=0.0076)]
 
-    answer = build_agent_answer(model_answer, TRACE, ["Photo budget reached: 15 photos judged, 1 more refused."])
+
+def test_budget_notes_are_appended_to_the_models_notes() -> None:
+    model_answer = ModelAnswer(kept=[KEPT], dropped=[DROPPED], not_shortlisted=9, notes="Assumed V2 means the 2019 model. ")
+
+    answer = build_agent_answer(
+        model_answer, TRACE, ["Photo budget reached: 15 photos judged, 1 more refused."], USAGE
+    )
 
     assert answer.notes == "Assumed V2 means the 2019 model.\nPhoto budget reached: 15 photos judged, 1 more refused."
     assert (answer.kept, answer.dropped, answer.tool_trace) == ([KEPT], [DROPPED], TRACE)
+    assert (answer.not_shortlisted, answer.usage) == (9, USAGE)
 
 
 def test_empty_model_notes_leave_only_the_budget_notes() -> None:
@@ -34,11 +50,14 @@ def test_empty_model_notes_leave_only_the_budget_notes() -> None:
 
 
 def test_text_output_has_the_trace_then_kept_then_dropped_then_notes() -> None:
-    answer = AgentAnswer(kept=[KEPT], dropped=[DROPPED], notes="Check the dock in person.", tool_trace=TRACE)
+    answer = AgentAnswer(
+        kept=[KEPT], dropped=[DROPPED], not_shortlisted=12, notes="Check the dock in person.", tool_trace=TRACE,
+        usage=USAGE,
+    )
 
     lines = render_agent_answer(answer).splitlines()
 
-    assert lines[0] == "Tool calls (2):"
+    assert lines[0] == "Tool calls (2): search_listings 1, listing_photo 1:"
     assert lines[1] == '  1.   1.3 s  search_listings  query="nintendo switch" limit=48'
     assert lines[2] == "  2.   0.0 s  listing_photo    url=a.jpg  [refused]"
     assert lines[4] == "Kept (1):"
@@ -49,10 +68,21 @@ def test_text_output_has_the_trace_then_kept_then_dropped_then_notes() -> None:
     assert lines[8] == "Dropped (1):"
     assert lines[9].startswith("  1463757293  Switch Lite / Switch OLED / Switch V2")
     assert lines[9].endswith("names three models")
-    assert lines[11:] == ["Notes:", "  Check the dock in person."]
+    assert lines[11] == "Not shortlisted: 12 more listings seen."
+    assert lines[13:15] == ["Notes:", "  Check the dock in person."]
+    assert lines[16].startswith("Cost (estimate, list prices of 2026-10-27): about US$0.0076. planner")
 
 
 def test_text_output_for_an_empty_answer() -> None:
     text = render_agent_answer(AgentAnswer(kept=[], dropped=[], notes="", tool_trace=[]))
 
-    assert text == "Tool calls (0):\n\nKept: none.\n\nDropped: none.\n\nNotes: none."
+    assert text == (
+        "Tool calls (0):\n\nKept: none.\n\nDropped: none.\n\nNot shortlisted: 0 more listings seen.\n\n"
+        "Notes: none.\n\nCost (estimate): no model requests were made."
+    )
+
+
+def test_tool_call_counts_put_the_busiest_tool_first() -> None:
+    trace = [TRACE[0], TRACE[1], TRACE[0]]
+
+    assert tool_call_counts(trace) == [("search_listings", 2), ("listing_photo", 1)]

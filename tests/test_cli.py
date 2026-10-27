@@ -20,6 +20,7 @@ from carousearch.agent.settings import AgentBudget, AgentSettings
 from carousearch.carousell.rate_limit import RateLimiter
 from carousearch.config import TelegramSettings
 from carousearch.filters.schema import Condition, DealMethod, SortOrder
+from carousearch.language_models import ProviderKeys
 from carousearch.screening.models import PriceSource, ResolvedPrice
 from carousearch.screening.price_resolver import NoopPriceResolver, PriceResolver
 
@@ -358,7 +359,7 @@ def test_screen_adds_your_price_and_flags_columns(tmp_path: Path, capsys) -> Non
     assert len(detail_requests(carousell)) == 1
     assert lines[-1] == (
         "Screening: 1 of 5 multi-item; 1 description checked (detail budget 10); "
-        "price resolution off (ANTHROPIC_API_KEY not set), so YOUR PRICE is the listed price."
+        "price resolution off (no API key for the worker model), so YOUR PRICE is the listed price."
     )
 
 
@@ -373,7 +374,7 @@ def test_screen_shows_the_resolved_price(tmp_path: Path, capsys) -> None:
     output = capsys.readouterr().out
     catalogue_row = next(line for line in output.splitlines() if line.startswith("1463757293"))
     assert "S$850 (desc)" in catalogue_row
-    assert "read from the description by Claude" in output
+    assert "read from the description by the price resolver" in output
 
 
 def test_screen_json_has_the_screened_listing_fields(tmp_path: Path, capsys) -> None:
@@ -429,7 +430,7 @@ def test_web_serves_the_app_on_the_given_port_with_services_built_at_startup(tmp
     def fake_serve(app, host: str, port: int) -> None:
         served.update(app=app, host=host, port=port)
 
-    agent = AgentSettings(model="openai:gpt-5", openai_api_key="sk-test")
+    agent = AgentSettings(planner_model="openai:gpt-5", keys=ProviderKeys(openai="sk-test"))
     settings = WebSettings(data_dir=tmp_path, screening=ScreeningSettings(), agent=agent)
     exit_code = cli.run_web_command(settings, carousell.client, RateLimiter(0, 0), "127.0.0.1", 9000, serve=fake_serve)
 
@@ -451,7 +452,8 @@ def test_web_loads_the_agent_settings_for_ask_mode(tmp_path: Path, monkeypatch) 
         return 0
 
     monkeypatch.setattr(cli, "run_web_command", fake_run_web_command)
-    monkeypatch.setenv("AGENT_MODEL", "openai:gpt-5")
+    monkeypatch.setenv("AGENT_PLANNER_MODEL", "openai:gpt-5")
+    monkeypatch.setenv("AGENT_WORKER_MODEL", "openai:gpt-5-nano")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("AGENT_MAX_PHOTOS", "3")
 
@@ -459,7 +461,8 @@ def test_web_loads_the_agent_settings_for_ask_mode(tmp_path: Path, monkeypatch) 
 
     agent = passed["settings"].agent
     assert exit_code == 0
-    assert (agent.model, agent.budget.max_photos, agent.missing_key_variable()) == ("openai:gpt-5", 3, None)
+    assert (agent.planner_model, agent.worker_model) == ("openai:gpt-5", "openai:gpt-5-nano")
+    assert (agent.budget.max_photos, agent.missing_key_variable()) == (3, None)
 
 
 def test_web_with_a_malformed_agent_setting_is_a_usage_error(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -534,12 +537,16 @@ def client_factory_that_must_not_run(rate_limiter: RateLimiter) -> None:
     raise AssertionError("no Carousell client should be created")
 
 
+def unused_worker(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    raise AssertionError("no judge tool is called in these tests")
+
+
 def run_ask(
     carousell: FakeCarousell, data_dir: Path, as_json: bool, model: FunctionModel, settings: AgentSettings | None = None
 ) -> int:
     return cli.run_ask_command(
         "Find an iPhone 15 under S$600.", settings or AgentSettings(), data_dir, carousell.client, RateLimiter(0, 0),
-        as_json, sys.stdout, sys.stderr, model=model,
+        as_json, sys.stdout, sys.stderr, model=model, worker_model=FunctionModel(unused_worker),
     )
 
 
@@ -567,15 +574,15 @@ def test_ask_without_the_models_provider_key_exits_with_a_clear_message(
     tmp_path: Path, capsys, model: str, variable: str
 ) -> None:
     exit_code = cli.run_ask_command(
-        "find a switch", AgentSettings(model=model), tmp_path, client_factory_that_must_not_run, RateLimiter(0, 0),
-        False, sys.stdout, sys.stderr,
+        "find a switch", AgentSettings(planner_model=model, worker_model=model), tmp_path,
+        client_factory_that_must_not_run, RateLimiter(0, 0), False, sys.stdout, sys.stderr,
     )
 
     captured = capsys.readouterr()
     assert exit_code == 2
     assert captured.out == ""
     assert f"error: {variable} not set; the model {model} needs it." in captured.err
-    assert ".env" in captured.err and "--model" in captured.err
+    assert ".env" in captured.err and "--model" in captured.err and "AGENT_PLANNER_MODEL" in captured.err
 
 
 def test_ask_json_output_parses_back_into_an_agent_answer(tmp_path: Path, capsys) -> None:
@@ -591,6 +598,9 @@ def test_ask_json_output_parses_back_into_an_agent_answer(tmp_path: Path, capsys
     assert [call.tool_name for call in answer.tool_trace] == ["search_listings", "listing_details", "listing_details"]
     assert {call.status for call in answer.tool_trace} == {"ok"}
     assert len(carousell.api_requests) == 2  # the search and one detail; the repeat came from the SQLite cache
+    (run_directory,) = (tmp_path / "runs").iterdir()
+    assert (run_directory / "listings.db").exists() and (run_directory / "listings.json").exists()
+    assert [usage.role for usage in answer.usage] == ["planner"]
 
 
 def test_ask_prints_the_trace_then_kept_dropped_and_notes(tmp_path: Path, capsys) -> None:
@@ -598,8 +608,10 @@ def test_ask_prints_the_trace_then_kept_dropped_and_notes(tmp_path: Path, capsys
 
     output = capsys.readouterr().out
     assert exit_code == 0
-    assert output.startswith("Tool calls (3):\n")
+    assert output.startswith("Tool calls (3): listing_details 2, search_listings 1:\n")
     assert output.index("Kept (1):") < output.index("Dropped (1):") < output.index("Notes:\n  One page only.")
+    assert output.index("Not shortlisted: 0 more listings seen.") < output.index("Notes:")
+    assert output.rstrip().splitlines()[-1].startswith("Cost (estimate, list prices of ")
     assert "https://www.carousell.sg/p/1469923094/  under S$600, one phone" in output
 
 
@@ -615,16 +627,26 @@ def test_ask_reports_a_failed_model_request_and_exits_with_failure(tmp_path: Pat
     assert "error: the agent run failed: ModelHTTPError" in captured.err
 
 
-def test_ask_options_override_the_model_and_the_photo_budget() -> None:
+def test_ask_options_override_the_models_and_the_photo_budget() -> None:
     arguments = cli.build_argument_parser().parse_args(
-        ["ask", "find a bike", "--model", "openai:gpt-5", "--max-photos", "3", "--json"]
+        ["ask", "find a bike", "--model", "openai:gpt-5", "--worker-model", "openai:gpt-5-nano", "--max-photos", "3",
+         "--json"]
     )
 
     settings = cli.agent_settings_from_arguments(AgentSettings(budget=AgentBudget(max_tool_calls=10)), arguments)
 
     assert (arguments.prompt, arguments.json) == ("find a bike", True)
-    assert settings.model == "openai:gpt-5"
+    assert (settings.planner_model, settings.worker_model) == ("openai:gpt-5", "openai:gpt-5-nano")
     assert settings.budget == AgentBudget(max_tool_calls=10, max_photos=3)
+
+
+def test_ask_without_model_options_keeps_the_settings_models() -> None:
+    arguments = cli.build_argument_parser().parse_args(["ask", "find a bike"])
+    configured = AgentSettings(planner_model="anthropic:a", worker_model="anthropic:b")
+
+    settings = cli.agent_settings_from_arguments(configured, arguments)
+
+    assert (settings.planner_model, settings.worker_model) == ("anthropic:a", "anthropic:b")
 
 
 def test_ask_options_are_checked_before_anything_runs() -> None:
