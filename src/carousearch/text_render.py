@@ -2,7 +2,8 @@
 
 from datetime import datetime, timedelta, timezone
 
-from carousearch.agent.cost import format_cost_line
+from carousearch.agent.cost import ModelUsage, format_cost_line
+from carousearch.agent.plan import PlanItemStatus, SearchPlan, review_item_label
 from carousearch.agent.result import AgentAnswer, DroppedListing, KeptListing, ToolCall, tool_call_counts
 from carousearch.filters.schema import Listing, ListingDetail, SearchResult, SellerVerification
 from carousearch.screening.models import PriceSource, ResolvedPrice, ScreenedListing, format_sgd
@@ -97,17 +98,84 @@ def render_listing_detail(detail: ListingDetail) -> str:
 
 
 def render_agent_answer(answer: AgentAnswer) -> str:
-    """`carousearch ask`: the tool trace, the kept listings as a table, the dropped ones with reasons, how many more
-    were seen, the notes and the estimated cost."""
-    sections = [
-        render_tool_trace(answer.tool_trace),
+    """`carousearch ask`: the execution's tool trace, the plan (with the planning calls), the kept listings as a
+    table, the dropped ones with reasons, how many more were seen, the plan review, the notes, a suggested knowledge
+    note and the estimated cost of both phases."""
+    sections = [render_tool_trace(answer.tool_trace)]
+    if answer.plan is not None:
+        sections.append(render_plan(answer.plan, answer.planning_trace))
+    sections += [
         render_kept_listings(answer.kept),
         render_dropped_listings(answer.dropped),
         f"Not shortlisted: {answer.not_shortlisted} more listings seen.",
-        render_notes(answer.notes),
-        format_cost_line(answer.usage),
     ]
+    if answer.plan_review:
+        sections.append(render_plan_review(answer.plan_review, answer.plan))
+    sections.append(render_notes(answer.notes))
+    if answer.suggested_knowledge:
+        sections.append("Suggested knowledge note:\n" + _indent(answer.suggested_knowledge))
+    sections.append(format_cost_line(answer.usage))
     return "\n\n".join(sections)
+
+
+def render_planned_search(plan: SearchPlan, planning_trace: list[ToolCall], usage: list[ModelUsage]) -> str:
+    """`carousearch ask --plan-only`: the plan, the planning calls and what planning cost."""
+    return "\n\n".join([render_plan(plan, planning_trace), format_cost_line(usage)])
+
+
+def render_plan(plan: SearchPlan, planning_trace: list[ToolCall] | None = None) -> str:
+    """The plan in readable sections, headed by a count of the planning tool calls."""
+    lines = [f"Plan ({render_tool_counts('planning tool call', planning_trace or [])}):"]
+    lines.append(_field("Goal", plan.goal))
+    lines.append(_field("Item class", plan.item_class))
+    lines.append(_field("Value drivers", "; ".join(plan.value_drivers) or "-"))
+    lines.append(f"Attributes ({len(plan.attributes)}):")
+    for attribute in plan.attributes:
+        unit = f" ({attribute.unit})" if attribute.unit else ""
+        source = attribute.source.value
+        lines.append(f"  {attribute.name}{unit} [{source}]: {attribute.detail}. For: {attribute.purpose}")
+    lines.append(_field("Benchmark", describe_benchmark(plan)))
+    lines.append(f"Exclusions ({len(plan.exclusions)}):")
+    lines += [f"  {number}. {exclusion.rule}. Why: {exclusion.reason}"
+              for number, exclusion in enumerate(plan.exclusions, start=1)]
+    lines.append(_field("Ranking", plan.ranking))
+    lines.append(_field("Template", plan.template or "none"))
+    estimate = plan.budget_estimate
+    lines.append(_field("Estimate", f"{estimate.searches} searches, {estimate.details} details, "
+                                    f"{estimate.photos} photos, {estimate.judgements} worker calls"))
+    lines.append("Assumptions:")
+    lines += [f"  - {assumption}" for assumption in plan.assumptions] or ["  - none"]
+    return "\n".join(lines)
+
+
+def describe_benchmark(plan: SearchPlan) -> str:
+    """ "median over <population>, grouped by a, b, normalised as <formula>", or "none"."""
+    benchmark = plan.benchmark
+    if benchmark is None:
+        return "none"
+    text = f"{benchmark.statistic} over {benchmark.population}"
+    if benchmark.grouping:
+        text += f", grouped by {', '.join(benchmark.grouping)}"
+    if benchmark.normalisation:
+        text += f", normalised as {benchmark.normalisation}"
+    return text
+
+
+def render_plan_review(review: list[PlanItemStatus], plan: SearchPlan | None) -> str:
+    lines = ["Plan review:"]
+    lines += [f"  {status.status:<8}  {review_item_label(plan, status.item)}: {status.note}" for status in review]
+    return "\n".join(lines)
+
+
+def render_tool_counts(noun: str, tool_trace: list[ToolCall]) -> str:
+    """ "3 planning tool calls: category_fields 1, sample_descriptions 2" or "0 planning tool calls"."""
+    counts = ", ".join(f"{name} {count}" for name, count in tool_call_counts(tool_trace))
+    label = f"{len(tool_trace)} {noun}{'' if len(tool_trace) == 1 else 's'}"
+    return f"{label}: {counts}" if counts else label
+
+
+def _indent(text: str) -> str:
+    return "\n".join(f"  {line}" for line in text.strip().splitlines())
 
 
 def render_tool_trace(tool_trace: list[ToolCall]) -> str:

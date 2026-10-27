@@ -10,7 +10,9 @@ from carousearch.agent.result import (
     build_agent_answer,
     tool_call_counts,
 )
-from carousearch.text_render import render_agent_answer
+from carousearch.text_render import describe_benchmark, render_agent_answer, render_plan
+
+from plan_examples import EXAMPLE_PLAN, example_plan
 
 KEPT = KeptListing(
     listing_id="1469923094",
@@ -86,3 +88,31 @@ def test_tool_call_counts_put_the_busiest_tool_first() -> None:
     trace = [TRACE[0], TRACE[1], TRACE[0]]
 
     assert tool_call_counts(trace) == [("search_listings", 2), ("listing_photo", 1)]
+
+
+def test_a_plan_without_benchmark_exclusions_or_assumptions_still_reads_well() -> None:
+    plan = example_plan(benchmark=None, exclusions=[], assumptions=[], template=None)
+    trace = [ToolCall(tool_name="sample_descriptions", arguments="query=x", duration_seconds=1.0, status="ok")]
+
+    text = render_plan(plan, trace)
+
+    assert text.startswith("Plan (1 planning tool call: sample_descriptions 1):")
+    assert "Benchmark:      none" in text and "Template:       none" in text
+    assert "Exclusions (0):" in text and "  - none" in text
+    assert describe_benchmark(EXAMPLE_PLAN) == (
+        "median over single-item sale listings with a plain price, grouped by size_cm"
+    )
+
+
+def test_the_answer_shows_the_review_and_the_suggested_note() -> None:
+    answer = build_agent_answer(
+        ModelAnswer(kept=[], dropped=[], notes="", suggested_knowledge="applies_to: table\nSizes are in titles.",
+                    plan_review=[{"item": "ranking", "status": "done", "note": "by percent below"}]),
+        [], [], plan=EXAMPLE_PLAN,
+    )
+
+    text = render_agent_answer(answer)
+
+    assert "  done      Ranking: by percent below" in text
+    assert "  not_done  Exclusion 1: posts offering several items at one price: The agent did not report" in text
+    assert "Suggested knowledge note:\n  applies_to: table\n  Sizes are in titles." in text
