@@ -131,16 +131,23 @@ async def plan_prompt(
     ledger = UsageLedger()
     searches_used = count_web_searches(messages)
     add_planner_usage(ledger, planner_label, messages, searches_used)
-    notes = [f"Planning: {note}" for note in gate.budget.notes()] + web_search_notes(
-        planner_label, supports_hosted_web_search(planner), searches_used, budget.max_web_searches
-    )
     return PlanningOutcome(
         plan=result.output,
         tool_trace=build_tool_trace(messages, gate.records, PLAN_OUTPUT_TOOL_NAME),
         usage=ledger.report(),
-        notes=notes,
+        notes=planning_notes(gate, planner, planner_label, searches_used, budget.max_web_searches),
         knowledge_files=[note.file_name for note in notes_shown],
     )
+
+
+def planning_notes(
+    gate: ToolCallGate, planner: Model, planner_label: str, searches_used: int, max_web_searches: int
+) -> list[str]:
+    """The planning budget's notes and a reached web search cap, marked as planning's. A planner without hosted web
+    search gets no note here: the execution phase's notes say so once."""
+    supported = supports_hosted_web_search(planner)
+    web_notes = web_search_notes(planner_label, supported, searches_used, max_web_searches) if supported else []
+    return [f"Planning: {note}" for note in [*gate.budget.notes(), *web_notes]]
 
 
 def plan_prompt_sync(

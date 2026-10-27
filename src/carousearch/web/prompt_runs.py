@@ -33,7 +33,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from carousearch.agent.knowledge import note_file_text, note_slug, save_note, split_suggestion
+from carousearch.agent.knowledge import load_notes, note_file_text, note_slug, save_note, split_suggestion
 from carousearch.agent.result import AgentAnswer, ToolCallStatus
 from carousearch.carousell.errors import CarousellError
 from carousearch.filters.schema import Listing
@@ -243,7 +243,6 @@ def mcp_services_for(services: "WebServices") -> "McpServices":
 async def plan_prompt_run(run: PromptRun, services: "WebServices", amendment: "PlanAmendment | None" = None) -> None:
     """Plan (or revise the plan of) a run over the web app's client, holding the turn; the run ends planned, or
     failed with a calm message."""
-    from carousearch.agent.knowledge import load_notes
     from carousearch.agent.planning import plan_prompt
 
     async def plan() -> "PlanningOutcome":
@@ -264,7 +263,6 @@ async def plan_prompt_run(run: PromptRun, services: "WebServices", amendment: "P
 async def execute_prompt_run(run: PromptRun, services: "WebServices") -> None:
     """Execute a run's plan over the web app's own client and detail cache, holding the turn throughout. Every
     outcome ends the run: done with the answer, or failed with a calm message (the details go to the log)."""
-    from carousearch.agent.knowledge import load_notes
     from carousearch.agent.local_tools import LocalToolServices
     from carousearch.agent.run_prompt import execute_plan
 
