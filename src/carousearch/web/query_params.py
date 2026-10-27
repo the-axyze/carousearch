@@ -1,8 +1,8 @@
 """The page's query string, to and from a SearchRequest. Pure functions: one tested mapping in both directions.
 
 Names: q, price_min, price_max, condition (repeated), delivery (repeated), sort, category and cursor are the
-search; hide_multi_item is a display option; shown, multi_item, hidden and screened carry the running counts
-from one "Load more" page to the next. A malformed value is dropped rather than rejected, so a hand-edited or
+search; hide_multi_item is a display option; mode picks the page's Filters or Ask mode; shown, multi_item,
+hidden and screened carry the running counts from one "Load more" page to the next. A malformed value is dropped rather than rejected, so a hand-edited or
 stale URL still gives a search.
 """
 
@@ -31,11 +31,17 @@ SORT = "sort"
 CATEGORY = "category"
 CURSOR = "cursor"
 HIDE_MULTI_ITEM = "hide_multi_item"
+MODE = "mode"
 
 TRUE_WORDS = frozenset({"1", "on", "true", "yes"})
 # After "S$" and commas are stripped: "1200", "99.50"; no signs, exponents, non-ASCII digits or 3+ decimals.
 PRICE_PATTERN = re.compile(r"[0-9]+(\.[0-9]{1,2})?")
 WHOLE_NUMBER_PATTERN = re.compile(r"[0-9]+")
+
+
+class PageMode(StrEnum):
+    FILTERS = "filters"  # the search form and its results
+    ASK = "ask"  # a plain-English prompt for the agent; opening it never starts a run
 
 
 @dataclass(frozen=True)
@@ -97,6 +103,12 @@ def params_from_search_request(request: SearchRequest) -> dict[str, list[str]]:
 
 def hide_multi_item_from_params(params: QueryParams) -> bool:
     return first_value(params, HIDE_MULTI_ITEM).strip().lower() in TRUE_WORDS
+
+
+def mode_from_params(params: QueryParams) -> PageMode:
+    """Ask when the URL says so; anything else is Filters."""
+    text = first_value(params, MODE).strip().lower()
+    return PageMode.ASK if text == PageMode.ASK else PageMode.FILTERS
 
 
 def tally_from_params(params: QueryParams) -> ResultsTally:

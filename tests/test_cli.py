@@ -1,6 +1,7 @@
 import copy
 import io
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -428,7 +429,8 @@ def test_web_serves_the_app_on_the_given_port_with_services_built_at_startup(tmp
     def fake_serve(app, host: str, port: int) -> None:
         served.update(app=app, host=host, port=port)
 
-    settings = WebSettings(data_dir=tmp_path, screening=ScreeningSettings())
+    agent = AgentSettings(model="openai:gpt-5", openai_api_key="sk-test")
+    settings = WebSettings(data_dir=tmp_path, screening=ScreeningSettings(), agent=agent)
     exit_code = cli.run_web_command(settings, carousell.client, RateLimiter(0, 0), "127.0.0.1", 9000, serve=fake_serve)
 
     assert exit_code == 0
@@ -436,8 +438,45 @@ def test_web_serves_the_app_on_the_given_port_with_services_built_at_startup(tmp
     assert carousell.requests == []  # nothing is opened until the server starts
     with TestClient(served["app"]) as client:
         page = client.get("/results?q=iphone+15").text
+        assert served["app"].state.services.agent == agent
     assert page.count('class="card"') == 5
     assert (tmp_path / "carousearch.db").exists()
+
+
+def test_web_loads_the_agent_settings_for_ask_mode(tmp_path: Path, monkeypatch) -> None:
+    passed = {}
+
+    def fake_run_web_command(settings, client_factory, rate_limiter, host: str, port: int) -> int:
+        passed["settings"] = settings
+        return 0
+
+    monkeypatch.setattr(cli, "run_web_command", fake_run_web_command)
+    monkeypatch.setenv("AGENT_MODEL", "openai:gpt-5")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("AGENT_MAX_PHOTOS", "3")
+
+    exit_code = cli.main(["--data-dir", str(tmp_path), "web"])
+
+    agent = passed["settings"].agent
+    assert exit_code == 0
+    assert (agent.model, agent.budget.max_photos, agent.missing_key_variable()) == ("openai:gpt-5", 3, None)
+
+
+def test_web_with_a_malformed_agent_setting_is_a_usage_error(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli, "run_web_command", lambda *arguments: pytest.fail("the server must not start"))
+    monkeypatch.setenv("AGENT_MAX_PHOTOS", "-1")
+
+    exit_code = cli.main(["--data-dir", str(tmp_path), "web"])
+
+    assert exit_code == 2
+    assert "AGENT_MAX_PHOTOS" in capsys.readouterr().err
+
+
+def test_importing_the_cli_leaves_pydantic_ai_and_the_mcp_sdk_unloaded() -> None:
+    """Every command imports the web app, so Ask mode must import Pydantic AI and the MCP SDK only when a run starts."""
+    check = "import sys, carousearch.cli; print('pydantic_ai' in sys.modules, 'mcp' in sys.modules)"
+    completed = subprocess.run([sys.executable, "-c", check], capture_output=True, text=True, check=True)
+    assert completed.stdout.strip() == "False False"
 
 
 def test_web_defaults_to_port_8765_on_this_machine_only() -> None:

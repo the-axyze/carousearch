@@ -1,7 +1,8 @@
 """What the templates show, worked out from search requests and screening results. Pure functions, no I/O.
 
 Templates only print these fields and pick CSS classes from them. Every decision (which price to show, which
-badges, what the results line says, how a date reads) is made here, so it can be tested without HTML.
+badges, what the results line says, which posts "Hide multi-item posts" hid and why, how a date reads) is made here,
+so it can be tested without HTML.
 """
 
 from collections.abc import Sequence
@@ -159,16 +160,25 @@ def badges_for(screened: ScreenedListing) -> list[Badge]:
     """Multi-item (amber) when any warn tag is present, then Low price (grey) for the below-market tag."""
     badges = []
     if screened.is_multi_item:
-        warnings = [tag for tag in screened.tags if tag.severity == Severity.WARN]
-        badges.append(Badge("Multi-item", BadgeTone.AMBER, describe_tags(warnings)))
+        badges.append(Badge("Multi-item", BadgeTone.AMBER, describe_tags(warning_tags(screened))))
     below_market = [tag for tag in screened.tags if tag.code == TagCode.PRICE_BELOW_MARKET]
     if below_market:
         badges.append(Badge("Low price", BadgeTone.GREY, describe_tags(below_market)))
     return badges
 
 
+def warning_tags(screened: ScreenedListing) -> list[Tag]:
+    """The warn-severity tags: the ones that make a listing multi-item."""
+    return [tag for tag in screened.tags if tag.severity == Severity.WARN]
+
+
 def describe_tags(tags: Sequence[Tag]) -> str:
-    return "\n".join(f"{tag.label}: {tag.reason}" for tag in tags)
+    return "\n".join(describe_tag(tag) for tag in tags)
+
+
+def describe_tag(tag: Tag) -> str:
+    """ "Multi-item title: title names 3 variants"."""
+    return f"{tag.label}: {tag.reason}"
 
 
 def meta_line(listing: Listing) -> str:
@@ -190,11 +200,25 @@ class ScreenedPage:
 
 
 @dataclass(frozen=True)
+class HiddenRowView:
+    """A post "Hide multi-item posts" took out of the grid, with the reasons it was taken out."""
+
+    listing_id: str
+    title: str
+    url: str
+    price: str  # the listed price, as Carousell shows it
+    reasons: list[str]  # one "Label: reason" per warn tag, the lines of the card's Multi-item tooltip
+
+
+@dataclass(frozen=True)
 class ResultsView:
     cards: list[CardView]
     summary: str
     load_more_url: str | None
     nothing_found: bool  # Carousell returned no listings at all for this search
+    hide_multi_item: bool  # draw the "Hidden (n)" section, even when nothing was hidden
+    hidden: list[HiddenRowView]  # this page's hidden posts
+    hidden_summary: str  # "Hidden (n)", n counted over every page shown so far
 
 
 def results_view(
@@ -211,11 +235,32 @@ def results_view(
         summary=results_summary(tally, page.total_display, page.next_page is not None, price_lookup_enabled),
         load_more_url=more_url,
         nothing_found=tally.shown + tally.hidden == 0,
+        hide_multi_item=hide_multi_item,
+        hidden=hidden_rows(page.listings, hide_multi_item),
+        hidden_summary=f"Hidden ({tally.hidden:,})",
     )
 
 
 def visible_listings(screened: Sequence[ScreenedListing], hide_multi_item: bool) -> list[ScreenedListing]:
     return [item for item in screened if not (hide_multi_item and item.is_multi_item)]
+
+
+def hidden_rows(screened: Sequence[ScreenedListing], hide_multi_item: bool) -> list[HiddenRowView]:
+    """The posts visible_listings leaves out, each with its warn-tag reasons; none when the switch is off."""
+    if not hide_multi_item:
+        return []
+    return [hidden_row(item) for item in screened if item.is_multi_item]
+
+
+def hidden_row(screened: ScreenedListing) -> HiddenRowView:
+    listing = screened.listing
+    return HiddenRowView(
+        listing_id=listing.id,
+        title=listing.title,
+        url=listing.listing_url,
+        price=listing.price_display,
+        reasons=[describe_tag(tag) for tag in warning_tags(screened)],
+    )
 
 
 def tally_page(screened: Sequence[ScreenedListing], hide_multi_item: bool) -> ResultsTally:

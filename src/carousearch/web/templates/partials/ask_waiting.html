@@ -1,0 +1,4 @@
+{#- A search or a listing's details while an Ask run holds the Carousell client: asks again every 2 s and is replaced
+    by the real answer once the run has ended. -#}
+<div{% if waiting.element_id %} id="{{ waiting.element_id }}"{% endif %} class="ask-waiting" role="status"
+     hx-get="{{ waiting.url }}" hx-trigger="every 2s" hx-swap="outerHTML" hx-target="this">{{ waiting.text }}</div>

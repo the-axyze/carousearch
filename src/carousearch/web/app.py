@@ -2,7 +2,7 @@
 
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -11,6 +11,7 @@ from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
 from carousearch import storage
+from carousearch.agent.settings import AgentSettings
 from carousearch.carousell.client import CarousellClient, create_carousell_client
 from carousearch.config import DATABASE_FILE_NAME, ScreeningSettings
 from carousearch.screening.pipeline import DEFAULT_MAX_DETAIL_FETCHES, ScreeningServices
@@ -31,6 +32,7 @@ class WebSettings:
     data_dir: Path
     screening: ScreeningSettings
     max_detail_fetches: int = DEFAULT_MAX_DETAIL_FETCHES
+    agent: AgentSettings = field(default_factory=AgentSettings)  # Ask mode's model, budgets and provider keys
 
 
 def create_app(settings: WebSettings, services_factory: ServicesFactory | None = None) -> FastAPI:
@@ -47,6 +49,7 @@ def create_app(settings: WebSettings, services_factory: ServicesFactory | None =
         try:
             yield
         finally:
+            await services.prompt_runs.stop()  # an Ask run in flight must not outlive the client it uses
             services.close()
 
     app = FastAPI(title="Carousearch", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
@@ -82,6 +85,7 @@ def build_web_services(settings: WebSettings, carousell_client: CarousellClient)
         screening=screening,
         price_lookup_enabled=not isinstance(resolver, NoopPriceResolver),
         close=close,
+        agent=settings.agent,
     )
 
 

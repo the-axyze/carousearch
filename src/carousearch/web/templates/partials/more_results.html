@@ -1,4 +1,6 @@
-{#- A "Load more" answer: cards appended to the grid, and the results line and button replaced out of band. -#}
+{#- A "Load more" answer: cards appended to the grid, and the results line and button replaced out of band. With
+    "Hide multi-item posts" on, this page's hidden posts are appended to the Hidden list (an out-of-band beforeend
+    swap inserts the wrapper's children, not the wrapper) and its "Hidden (n)" count is replaced. -#}
 {% if error %}
 <div id="load-more" class="load-more" hx-swap-oob="true">
   {% include "partials/error.html" %}
@@ -8,5 +10,11 @@
 {% else %}
 {%- for card in results.cards %}{% include "partials/card.html" %}{% endfor %}
 <p id="results-summary" class="results-summary" hx-swap-oob="true">{{ results.summary }}</p>
+{%- if results.hide_multi_item %}
+<summary id="hidden-summary" hx-swap-oob="true">{{ results.hidden_summary }}</summary>
+<ul hx-swap-oob="beforeend:#hidden-list">
+  {%- for row in results.hidden %}{% include "partials/hidden_row.html" %}{% endfor -%}
+</ul>
+{%- endif %}
 {% with out_of_band = true %}{% include "partials/load_more.html" %}{% endwith %}
 {% endif %}

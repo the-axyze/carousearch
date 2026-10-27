@@ -1,6 +1,6 @@
 # carousearch
 
-Carousearch is a planned personal Telegram bot for searching [Carousell Singapore](https://www.carousell.sg) in plain English. A cheap LLM turns a prompt like "lightly used Aeron chair under $600, meet-up near Tampines, newest first" into Carousell's own search filters (Level 1). It then fills the search keywords and category-specific fields such as phone model, storage or shoe size (Level 2). Finally it screens the listings it finds: plain rules for seller rating, account age, price outliers and keyword blocklists, plus a vision model for subjective calls like low-effort photos or reseller-template descriptions (Level 3). It ranks results and shows them in Telegram with editable filter buttons. **Phase 1 is built** (2026-10-24): a tested Python client and command line for structured Carousell searches, listing details and a breakage canary. **Phase 2 task 1** adds a single-user Telegram bot that builds a search one question at a time with buttons (see [Running the Telegram bot](#running-the-telegram-bot)). **Phase 3a** adds [screening](#screening) for multi-item "catalogue" posts, with optional Claude Haiku price lookup; prompt-to-filters has no LLM yet. **Phase 3b** adds a local [web app](#web-app) for searching with filters and reading screened results in a card grid; the Telegram bot stays for quick lookups and future alerts. An [MCP server](#mcp-server) lets agent hosts such as Claude Code search Carousell through the same client. **Phase B** adds [`carousearch ask`](#ask-the-agent): carousearch's own agent, which answers a plain-English shopping prompt by calling that server's tools with a model of your choice (Claude Haiku by default).
+Carousearch is a planned personal Telegram bot for searching [Carousell Singapore](https://www.carousell.sg) in plain English. A cheap LLM turns a prompt like "lightly used Aeron chair under $600, meet-up near Tampines, newest first" into Carousell's own search filters (Level 1). It then fills the search keywords and category-specific fields such as phone model, storage or shoe size (Level 2). Finally it screens the listings it finds: plain rules for seller rating, account age, price outliers and keyword blocklists, plus a vision model for subjective calls like low-effort photos or reseller-template descriptions (Level 3). It ranks results and shows them in Telegram with editable filter buttons. **Phase 1 is built** (2026-10-24): a tested Python client and command line for structured Carousell searches, listing details and a breakage canary. **Phase 2 task 1** adds a single-user Telegram bot that builds a search one question at a time with buttons (see [Running the Telegram bot](#running-the-telegram-bot)). **Phase 3a** adds [screening](#screening) for multi-item "catalogue" posts, with optional Claude Haiku price lookup; prompt-to-filters has no LLM yet. **Phase 3b** adds a local [web app](#web-app) for searching with filters and reading screened results in a card grid; the Telegram bot stays for quick lookups and future alerts. An [MCP server](#mcp-server) lets agent hosts such as Claude Code search Carousell through the same client. **Phase B** adds [`carousearch ask`](#ask-the-agent): carousearch's own agent, which answers a plain-English shopping prompt by calling that server's tools with a model of your choice (Claude Haiku by default). **Phase C** adds the same agent to the web app as [Ask mode](#ask-mode), with live progress and the answer as cards, and lists the posts "Hide multi-item posts" hides, with their reasons.
 
 - [docs/FEASIBILITY.md](docs/FEASIBILITY.md): full feasibility study: verdict, recommended stack, costs, risks, architecture
 - [docs/CAROUSELL_ACCESS_NOTES.md](docs/CAROUSELL_ACCESS_NOTES.md): raw technical findings on Carousell's endpoints, filters, response shapes and anti-bot behaviour
@@ -44,9 +44,12 @@ src/carousearch/
   bot/handlers.py        python-telegram-bot handlers, BotServices, owner check (Telegram and Carousell I/O)
   bot/app.py             builds the Application, runs polling, and the `whoami` helper
   web/app.py             create_app(settings): FastAPI app, services built once at startup, static files
-  web/routes.py          the page (/), the results partial (/results) and the detail partial (/listing/{id})
-  web/query_params.py    URL query string <-> SearchRequest, Load-more counts (pure)
-  web/view_models.py     price row, badges, meta line, results line, form and detail views (pure)
+  web/routes.py          the page (/), the results partial (/results), the detail partial (/listing/{id}),
+                         and Ask mode's POST /ask and GET /ask/{run_id}
+  web/query_params.py    URL query string <-> SearchRequest, Load-more counts, the page mode (pure)
+  web/view_models.py     price row, badges, meta line, results line, hidden posts, form and detail views (pure)
+  web/prompt_view_models.py  Ask mode's form, progress, answer, failure and waiting views (pure)
+  web/prompt_runs.py     PromptRun and the in-memory registry of Ask runs; runs the agent as a background task
   web/services.py        WebServices; the screened search and listing detail (blocking, run one at a time)
   web/templates/, web/static/  Jinja2 templates; app.css, app.js, htmx.min.js (2.0.11, vendored)
   mcp_server.py          build_server(services): the MCP tools (search, details, photo, screening tags, usage notes)
@@ -56,6 +59,7 @@ src/carousearch/
   agent/result.py        AgentAnswer: kept, dropped, notes and tool_trace (the contract for `ask --json`)
   agent/budget.py        ToolBudget: counts a run's tool calls, photos and listings against the caps (pure)
   agent/trace.py         the tool trace, from a run's message history (pure)
+  agent/progress.py      ToolCallEvent: what an observer is told as each tool call starts and finishes (pure)
   agent/run_prompt.py    run_prompt: a Pydantic AI agent over the in-process MCP server, with the budget hook
   canary.py              the health check behind `carousearch canary`
   fixture_capture.py     the dev command behind `carousearch capture-fixtures`
@@ -298,7 +302,7 @@ The controls (all optional; after the first search, changing any of them searche
 | Delivery chips | Meet-up, Mailing. None means either. |
 | Sort | Best match, Recent, Price ↑ (low to high), Price ↓ (high to low). |
 | Category | Any, or one of the common categories (Mobile Phones, Laptops, Tablets, Furniture, Video Gaming, Audio). A URL with any other collection id, e.g. `category=5755`, also works. |
-| Hide multi-item posts | Leaves out listings that screening flags as multi-item; the results line says how many were hidden. |
+| Hide multi-item posts | Leaves out listings that screening flags as multi-item; the results line says how many were hidden. A collapsed **Hidden (n)** section under the grid lists each one: its title (opens Carousell in a new tab), the listed price, and one line per reason, the same text as the Multi-item badge's tooltip. With the switch on and nothing hidden it reads "Hidden (0)"; with the switch off there is no section. |
 
 The address bar follows the search (`/?q=iphone+15+pro&price_max=1200&condition=like_new`), so a search can be bookmarked and Back and Forward step through earlier searches.
 
@@ -314,11 +318,32 @@ The price row:
 
 Badges on the photo: **Multi-item** (amber) means a screening rule thinks the price does not apply to your item; hover over it for the reasons. **Low price** (grey) means the price is under 60% of the median of the other results on the page (often a placeholder such as S$1 or S$8.88).
 
-The line above the grid reads like `20 of 10,000+ results · 3 multi-item hidden · screened 6 descriptions`. "Screened" counts listings whose description was checked; "price lookup off" appears when there are multi-item posts but no `ANTHROPIC_API_KEY`, so their listed price is kept. **Load more** at the bottom appends the next page.
+The line above the grid reads like `20 of 10,000+ results · 3 multi-item hidden · screened 6 descriptions`. "Screened" counts listings whose description was checked; "price lookup off" appears when there are multi-item posts but no `ANTHROPIC_API_KEY`, so their listed price is kept. **Load more** at the bottom appends the next page; with "Hide multi-item posts" on, that page's hidden posts join the Hidden list and its count goes up.
 
 Keyboard: `/` puts the cursor in the search box from anywhere on the page; Esc leaves a field.
 
 Requests: a search costs one Carousell search plus, for flagged listings, up to 10 detail requests (cached for 12 hours, shared with the CLI and the bot), all through one rate limiter and one call at a time. The same search again within 2 minutes (toggling the switch, going Back) is answered from memory, and a search the browser has already replaced is skipped. If Carousell blocks the client the page says "Carousell is rate-limiting us, try again in a minute"; if its response changed shape it says to run `carousearch canary` (see [When Carousell changes](#when-carousell-changes)). Details of any error go to the terminal running `carousearch web`, never to the page.
+
+### Ask mode
+
+**Ask**, next to **Filters** above the search box, switches the page to a plain-English prompt for the same agent `carousearch ask` runs ([Ask the agent](#ask-the-agent)): the same five MCP tools, the same budgets, the same answer. The address becomes `/?mode=ask`, and switching back to Filters brings back the filter search you had. Opening or reloading `/?mode=ask` never runs anything; only **Run** does.
+
+Settings are the ones `carousearch ask` reads, from `.env` or the environment: `AGENT_MODEL`, `AGENT_MAX_TOOL_CALLS`, `AGENT_MAX_PHOTOS`, `AGENT_MAX_LISTINGS`, and the model provider's key (`ANTHROPIC_API_KEY` for the default model, `OPENAI_API_KEY` for an `openai:` one). There are no `--model` or `--max-photos` overrides here. Under the prompt box the page shows the model and where it came from ("Model: anthropic:claude-haiku-5-5, from AGENT_MODEL") and the budgets. Without the provider's key it names the missing variable, says to add it to `.env` and restart `carousearch web`, and **Run** is disabled. `carousearch web` reads `.env` once at start-up, so restart it after any change; a malformed `AGENT_*` value stops it from starting (exit code 2), as it does for `ask`.
+
+A prompt can be up to 2,000 characters. **Run** starts the agent in the background of the web process, and the page asks for its progress every second:
+
+- While it runs: "Running · 12 s · 2 tool calls", the budget used so far ("calls 2 of 40 · photos 0 of 15 · listings 48 of 200"), and one line per tool call with its status (`running`, `ok`, `failed` or `refused`) and duration.
+- When it ends, the answer replaces the progress: a summary line ("2 kept · 5 dropped · 6 tool calls · 14 s"), the agent's **Notes**, a card for each kept listing, then two collapsed sections, **Dropped (n)** and **Tool calls (n)**.
+
+A kept card is built from what Carousell's search returned, not from the model's text: the thumbnail, the listed price and condition · likes · seller, plus the agent's reason and a **Details** button that opens the same panel as in Filters mode. A kept listing that no search in the run returned gets an **Unverified** badge and a warning that its title, price and link are the model's. **Dropped** lists every listing the agent left out: the title (linked to Carousell), the price when a search returned the listing, and the reason. When Carousell blocks a tool call, that call shows as `failed`; the agent is told and can still answer with what it has. When the run itself fails (the model's API refuses the key or errors, or `AGENT_MODEL` is unusable), the page says so calmly and lists the calls made before it stopped; the details go to the terminal running `carousearch web`.
+
+One run at a time. A second **Run** while one is in progress is refused with a message, and the first run's progress keeps showing. A run holds the web app's Carousell client from start to end, so meanwhile a filter search shows "An Ask run is in progress; your search will run when it finishes." (a **Details** panel says the same of its details) and asks again every 2 seconds, then shows the real results once the run has ended. It never overlaps an agent tool call. Only the page itself can start a run: `POST /ask` is refused without the `HX-Request` header the page's HTMX form sends, so another website cannot post a form to your localhost and spend your API budget. Runs are kept in memory, the last 10, until `carousearch web` restarts, and stopping the web app stops a run in flight. After a reload, Ask mode shows a run that is still in progress, but not the answer of a finished one.
+
+Keyboard: `/` puts the cursor in the current mode's box (the search box or the prompt box); Ctrl+Enter (Cmd+Enter on a Mac) in the prompt box runs it.
+
+Requests and cost are as for `carousearch ask`: every Carousell request goes through the rate limiter (1.0 s ± 0.3 s apart), so a run with 20 tool calls takes at least 20 seconds plus the model's time, and with Claude Haiku 5.5 a run should cost a few US cents. That is an estimate, never measured; neither the page nor `ask` reports token usage yet, so read the cost from the provider's console.
+
+Status (2026-10-26): Ask mode is tested with scripted models only. It has not been run against a real model, or opened in a real browser; the screenshot above predates the Filters | Ask switch.
 
 ## MCP server
 
@@ -332,7 +357,7 @@ claude mcp add --scope user carousearch -- /home/moses/carousearch/.venv/bin/car
 
 ## Ask the agent
 
-`carousearch ask` answers a shopping prompt in plain English. It runs an agent built with [Pydantic AI](https://pydantic.dev/docs/ai/) whose tools are the [MCP server](#mcp-server)'s five tools, nothing else. The server runs inside the same process, so a run starts no second interpreter. The agent searches first, filters the results itself, fetches details for a shortlist only and looks at photos last, then reports what it kept, everything it dropped with the reason, and notes.
+`carousearch ask` answers a shopping prompt in plain English. It runs an agent built with [Pydantic AI](https://pydantic.dev/docs/ai/) whose tools are the [MCP server](#mcp-server)'s five tools, nothing else. The server runs inside the same process, so a run starts no second interpreter. The agent searches first, filters the results itself, fetches details for a shortlist only and looks at photos last, then reports what it kept, everything it dropped with the reason, and notes. The web app's [Ask mode](#ask-mode) runs the same agent from the browser.
 
 ```bash
 .venv/bin/carousearch ask "Find Nintendo Switch consoles under S\$200 with meet-up. Drop listings whose title mentions more than one console model. For the top 3 by likes, look at the main photo and say whether it looks like a real used unit or a stock/catalogue image."

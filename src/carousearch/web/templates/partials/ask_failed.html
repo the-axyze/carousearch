@@ -1,0 +1,13 @@
+{#- A run that ended without an answer: the calm message, then the calls it made. No polling. -#}
+<div class="ask-answer ask-failed">
+  <p class="ask-prompt">{{ failed.prompt }}</p>
+  {% with error = failed.error %}{% include "partials/error.html" %}{% endwith %}
+  {%- if failed.trace %}
+  <details class="ask-section">
+    <summary>Tool calls before it stopped ({{ failed.trace | length }}) · {{ failed.budget_line }}</summary>
+    <ol class="trace">
+      {%- for row in failed.trace %}{% include "partials/ask_trace_row.html" %}{% endfor %}
+    </ol>
+  </details>
+  {%- endif %}
+</div>

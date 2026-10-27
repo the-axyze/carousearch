@@ -1,0 +1,5 @@
+{#- A refused POST /ask: why, and (when another run is in flight) that run's progress, which goes on polling. -#}
+{% include "partials/error.html" %}
+{%- if progress %}
+{% include "partials/ask_progress.html" %}
+{%- endif %}

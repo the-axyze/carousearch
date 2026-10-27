@@ -1,0 +1,7 @@
+<li class="hidden-row" data-listing-id="{{ row.listing_id }}">
+  <a class="hidden-title" href="{{ row.url }}" target="_blank" rel="noopener noreferrer">{{ row.title }}</a>
+  <span class="hidden-price">{{ row.price }}</span>
+  <ul class="hidden-reasons">
+    {%- for reason in row.reasons %}<li>{{ reason }}</li>{% endfor -%}
+  </ul>
+</li>

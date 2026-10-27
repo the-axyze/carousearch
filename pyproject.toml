@@ -20,6 +20,8 @@ dependencies = [
     # The `carousearch ask` agent: model-neutral (Anthropic or OpenAI by AGENT_MODEL), tools from our MCP server.
     "pydantic-ai-slim[anthropic,mcp,openai]>=2.61,<3",
     "python-dotenv>=1.0",
+    # Form parsing for the web app's POST /ask (FastAPI's Form); already installed with mcp, named here as we use it.
+    "python-multipart>=0.0.20",
     "python-telegram-bot>=22,<23",
     "uvicorn>=0.50",
 ]
@@ -53,4 +55,4 @@ line-length = 120
 [tool.ruff.lint.isort]
 known-first-party = ["carousearch"]
 # Helper modules that pytest imports from the tests/ folder.
-known-local-folder = ["fake_carousell", "fake_mcp_services", "fixture_files"]
+known-local-folder = ["fake_carousell", "fake_mcp_services", "fixture_files", "scripted_model"]
