@@ -5,7 +5,13 @@ import sqlite3
 import statistics
 from pathlib import Path
 
-from carousearch.agent.listings_db import RunListingsStore, detail_row, search_listing_row, upsert_statement
+from carousearch.agent.listings_db import (
+    RunListingsStore,
+    detail_row,
+    merge_extracted,
+    search_listing_row,
+    upsert_statement,
+)
 from carousearch.agent.sandbox import SandboxLimits, run_python_in_sandbox
 from carousearch.mcp_server import detail_response, search_response
 
@@ -109,3 +115,28 @@ def test_run_python_can_query_the_listings(tmp_path: Path) -> None:
 
     prices = [listing["price"] for listing in SEARCH_PAGE["listings"] if listing["price"] is not None]
     assert result.stdout.split() == [str(len(prices)), str(statistics.median(prices))]
+
+
+def test_merging_extracted_values_keeps_older_fields_and_lets_newer_ones_win() -> None:
+    assert json.loads(merge_extracted(None, {"a": 1})) == {"a": 1}
+    assert json.loads(merge_extracted('{"a": 1, "b": 2}', {"b": None, "c": "x"})) == {"a": 1, "b": None, "c": "x"}
+
+
+def test_extracted_values_get_typed_columns_that_run_python_can_query(tmp_path: Path) -> None:
+    store = RunListingsStore(tmp_path)
+    store.record_search_page(SEARCH_PAGE["listings"], None)
+    first_id, second_id = SEARCH_PAGE["listings"][0]["id"], SEARCH_PAGE["listings"][1]["id"]
+    columns = {"size_cm": ("x_size_cm", "INTEGER")}
+    store.record_extracted({first_id: {"size_cm": 140}, second_id: {"size_cm": None}, "999": {"size_cm": 1}}, columns)
+    store.record_extracted({first_id: {"size_cm": 150}}, columns)  # the column exists now; the value is replaced
+    store.close()
+
+    output = run_python_in_sandbox(
+        "import sqlite3\n"
+        "rows = sqlite3.connect('listings.db').execute("
+        "'SELECT id, x_size_cm FROM listings WHERE x_size_cm IS NOT NULL').fetchall()\n"
+        "print(rows)",
+        tmp_path, SandboxLimits(), network_prefix=(),
+    )
+    assert output.stdout.strip() == str([(first_id, 150)])
+    assert json.loads(rows(tmp_path)[second_id]["extracted"]) == {"size_cm": None}

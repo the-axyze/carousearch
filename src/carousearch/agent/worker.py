@@ -1,17 +1,25 @@
-"""The worker model's jobs for the judge tools: one structured Pydantic AI call per batch of listings or photos.
+"""The worker model's jobs for the judge tools and extract_fields: one structured Pydantic AI call per batch of
+listings or photos.
 
 I/O: the model provider, through the injected Pydantic AI Model (tests pass a scripted FunctionModel). Every call's
 token usage goes into the run's UsageLedger under the worker's model name. Prompts and answer shapes are in
-agent/judging.py.
+agent/judging.py and agent/extraction.py.
 """
 
 from collections.abc import Sequence
+from typing import Any
 
 from pydantic_ai import Agent, ToolOutput, UsageLimits
 from pydantic_ai.capabilities import Caching
 from pydantic_ai.models import Model
 
 from carousearch.agent.cost import UsageLedger
+from carousearch.agent.extraction import (
+    EXTRACTION_INSTRUCTIONS,
+    FieldSpec,
+    build_extraction_prompt,
+    extraction_answer_model,
+)
 from carousearch.agent.judging import (
     LISTING_JUDGE_INSTRUCTIONS,
     PHOTO_JUDGE_INSTRUCTIONS,
@@ -48,6 +56,10 @@ class WorkerJudge:
             retries=WORKER_RETRIES,
             capabilities=[Caching()],
         )
+        # Its answer shape depends on the fields asked for, so the output type is given per call.
+        self._extraction_agent = Agent(
+            model, instructions=EXTRACTION_INSTRUCTIONS, retries=WORKER_RETRIES, capabilities=[Caching()]
+        )
 
     async def judge_listings(self, criterion: str, listings: Sequence[ListingText]) -> list[ListingVerdict]:
         """The model's verdicts for one batch (it may leave some out; judging.complete_verdicts fills them)."""
@@ -64,3 +76,14 @@ class WorkerJudge:
         )
         self._ledger.add_usage("worker", self.model_name, result.usage, requests=result.usage.requests)
         return result.output.scores
+
+    async def extract_fields(self, specs: Sequence[FieldSpec], listing_blocks: Sequence[str]) -> list[dict[str, Any]]:
+        """The model's rows for one batch, {"listing_id": ..., <field>: value or None}; it may leave listings out."""
+        answer_model = extraction_answer_model(specs)
+        result = await self._extraction_agent.run(
+            build_extraction_prompt(specs, listing_blocks),
+            output_type=ToolOutput(answer_model, name="extracted", strict=True),
+            usage_limits=UsageLimits(request_limit=WORKER_REQUEST_LIMIT),
+        )
+        self._ledger.add_usage("worker", self.model_name, result.usage, requests=result.usage.requests)
+        return [row.model_dump() for row in result.output.rows]

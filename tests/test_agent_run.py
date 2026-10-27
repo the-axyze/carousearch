@@ -27,7 +27,7 @@ models.ALLOW_MODEL_REQUESTS = False  # a test that reaches a real provider fails
 
 # usage_notes is left out: its text is already in the instructions.
 MCP_TOOLS = {"search_listings", "listing_details", "listing_photo", "screening_tags", "category_fields"}
-LOCAL_TOOLS = {"run_python", "judge_listings", "judge_photos", "photo_metrics"}
+LOCAL_TOOLS = {"run_python", "extract_fields", "judge_listings", "judge_photos", "photo_metrics"}
 FIRST_LISTING = SEARCH_RESULT.listings[0]
 SECOND_PHOTO_URL = PHOTO_URL.replace(".jpg", "_2.jpg")
 

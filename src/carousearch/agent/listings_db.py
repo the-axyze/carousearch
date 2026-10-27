@@ -3,10 +3,11 @@
 The run's tool hook (run_prompt.ToolCallGate) hands each search_listings page and listing_details result to
 RunListingsStore, and the judge tools hand it the details they fetch. A listing is one row, updated in place: a
 search fills the card columns, details fill the detail columns, and neither erases the other's. listings.json next
-to it holds the same rows, rewritten after every change.
+to it holds the same rows, rewritten after every change. extract_fields adds one typed column per field it reads,
+named x_<field name>, and keeps every extracted value in the JSON column `extracted` too.
 
-Pure: the row builders (search_listing_row, detail_row). I/O: RunListingsStore, which owns the SQLite file and the
-JSON file. Only the run's event loop thread uses a store.
+Pure: the row builders (search_listing_row, detail_row) and merge_extracted. I/O: RunListingsStore, which owns the
+SQLite file and the JSON file. Only the run's event loop thread uses a store.
 """
 
 import json
@@ -131,6 +132,12 @@ def detail_row(detail: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def merge_extracted(current_json: str | None, values: Mapping[str, Any]) -> str:
+    """The `extracted` column's JSON with `values` merged in; a newer value, null included, replaces an older one."""
+    current = json.loads(current_json) if current_json else {}
+    return json.dumps({**current, **values}, ensure_ascii=False, sort_keys=True)
+
+
 def upsert_statement(row: Mapping[str, Any], update_columns: Sequence[str]) -> str:
     """INSERT the row; on a known id, overwrite `update_columns` and fill KEEP_IF_UNKNOWN_COLUMNS when known."""
     columns = list(row)
@@ -185,6 +192,32 @@ class RunListingsStore:
 
     def record_detail(self, detail: Mapping[str, Any]) -> None:
         self._upsert([detail_row(detail)], DETAIL_COLUMNS)
+
+    def record_extracted(
+        self, values_by_listing: Mapping[str, Mapping[str, Any]], columns: Mapping[str, tuple[str, str]]
+    ) -> None:
+        """Store extracted values ({listing id: {field name: value}}) in `extracted` and in typed columns, given as
+        {field name: (column name, SQLite type)} from validated field specs; missing columns are added first."""
+        self._add_columns(dict(columns.values()))
+        with self._connection:
+            for listing_id, values in values_by_listing.items():
+                row = self._connection.execute("SELECT extracted FROM listings WHERE id = ?", (listing_id,)).fetchone()
+                if row is None:
+                    continue
+                assignments = "".join(f", {columns[name][0]} = :value_{name}" for name in values)
+                parameters = {f"value_{name}": value for name, value in values.items()}
+                parameters |= {"listing_id": listing_id, "extracted": merge_extracted(row["extracted"], values)}
+                self._connection.execute(
+                    f"UPDATE listings SET extracted = :extracted{assignments} WHERE id = :listing_id", parameters
+                )
+        self._write_json()
+
+    def _add_columns(self, columns: Mapping[str, str]) -> None:
+        existing = {row["name"] for row in self._connection.execute("PRAGMA table_info(listings)")}
+        with self._connection:
+            for name, sqlite_type in columns.items():
+                if name not in existing:
+                    self._connection.execute(f"ALTER TABLE listings ADD COLUMN {name} {sqlite_type}")
 
     def listings(self, listing_ids: Sequence[str]) -> dict[str, dict[str, Any]]:
         """The known rows among `listing_ids`, decoded, by id."""

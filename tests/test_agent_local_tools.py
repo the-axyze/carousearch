@@ -3,16 +3,19 @@ caching, budget accounting and the photo tools. Async tool methods are driven wi
 
 import asyncio
 import io
+import json
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 from PIL import Image, ImageDraw, ImageFilter
-from pydantic_ai.exceptions import ToolFailed
+from pydantic_ai.exceptions import ModelHTTPError, ToolFailed
 from pydantic_ai.models.function import FunctionModel
 
 from carousearch.agent.budget import ToolBudget
 from carousearch.agent.cost import UsageLedger
+from carousearch.agent.extraction import FieldSpec
 from carousearch.agent.judge_cache import MemoryJudgementCache
 from carousearch.agent.listings_db import RunListingsStore
 from carousearch.agent.local_tools import (
@@ -344,10 +347,11 @@ def test_run_python_reads_the_runs_listings(tmp_path: Path) -> None:
     assert output == "3000.0"
 
 
-def test_the_toolset_offers_the_four_local_tools_with_model_facing_descriptions(tmp_path: Path) -> None:
+def test_the_toolset_offers_the_five_local_tools_with_model_facing_descriptions(tmp_path: Path) -> None:
     toolset = build_local_toolset(harness(tmp_path, []).tools)
 
-    assert set(toolset.tools) == {"run_python", "judge_listings", "judge_photos", "photo_metrics"}
+    assert set(toolset.tools) == {"run_python", "extract_fields", "judge_listings", "judge_photos", "photo_metrics"}
+    assert "x_<name>" in toolset.tools["extract_fields"].description
     assert "listings.db" in toolset.tools["run_python"].description
     assert "score_1_to_5" in toolset.tools["judge_photos"].description
 
@@ -355,3 +359,119 @@ def test_the_toolset_offers_the_four_local_tools_with_model_facing_descriptions(
 def test_the_run_python_description_names_the_optional_libraries() -> None:
     assert "(pandas)" in run_python_description(["pandas"])
     assert "no pandas or numpy" in run_python_description([])
+
+
+# --- extract_fields -----------------------------------------------------------------------------------------------
+
+
+SIZE = FieldSpec(name="size_cm", type="int", unit="cm", hint="the width in centimetres", pattern=r"(\d+)\s*cm")
+COLOUR = FieldSpec(name="colour", type="enum", hint="the frame colour", enum_values=["Black", "Oak"])
+
+
+def snippet_card(listing_id: str, title: str, snippet: str | None) -> dict:
+    return {**card(listing_id, title), "description_snippet": snippet}
+
+
+def read_rows(tmp_path: Path) -> dict[str, dict]:
+    connection = sqlite3.connect(tmp_path / "run" / "listings.db")
+    connection.row_factory = sqlite3.Row
+    return {row["id"]: dict(row) for row in connection.execute("SELECT * FROM listings")}
+
+
+def colour_from_text(listing_id: str, block: str, field_name: str) -> object:
+    if field_name == "colour":
+        return "Oak" if "oak" in block.lower() else None
+    return 120 if "120" in block else None
+
+
+def test_extract_fields_tries_the_pattern_first_and_asks_the_model_only_for_the_rest(tmp_path: Path) -> None:
+    worker = ScriptedWorker(field_answer=colour_from_text)
+    cards = [snippet_card("100", "Desk 140cm", "Oak top, lightly used"), snippet_card("101", "Desk", "width 120")]
+    run = harness(tmp_path, cards, worker=worker)
+
+    result = asyncio.run(run.tools.extract_fields(["100", "101"], [SIZE, COLOUR], fetch_details=False))
+
+    assert result["rows"] == [
+        {"id": "100", "size_cm": 140, "colour": "Oak"}, {"id": "101", "size_cm": 120, "colour": None}
+    ]
+    assert worker.extraction_batches == [(["100", "101"], ["size_cm", "colour"])]  # 100 only needed colour
+    assert result["counts"] == {"size_cm": {"pattern": 1, "model": 1, "unknown": 0},
+                                "colour": {"model": 2, "unknown": 1}}
+    assert result["columns"] == {"size_cm": "x_size_cm INTEGER", "colour": "x_colour TEXT"}
+    assert result["text_read"] == {"snippet": 2} and result["problems"] == {}
+    assert run.carousell.detail_requests == []  # fetch_details false: the card snippets were enough
+
+
+def test_extracted_values_land_in_typed_columns_and_the_extracted_json(tmp_path: Path) -> None:
+    worker = ScriptedWorker(field_answer=colour_from_text)
+    run = harness(tmp_path, [snippet_card("100", "Desk 140cm", "Oak top")], worker=worker)
+
+    asyncio.run(run.tools.extract_fields(["100"], [SIZE, COLOUR], fetch_details=False))
+
+    row = read_rows(tmp_path)["100"]
+    assert (row["x_size_cm"], row["x_colour"]) == (140, "Oak")
+    assert json.loads(row["extracted"]) == {"colour": "Oak", "size_cm": 140}
+    listings_json = json.loads((tmp_path / "run" / "listings.json").read_text())
+    assert listings_json[0]["extracted"] == {"colour": "Oak", "size_cm": 140}
+
+
+def test_unknown_values_stay_null_and_are_counted(tmp_path: Path) -> None:
+    run = harness(tmp_path, [snippet_card("100", "Desk", "no measurements given")])  # the worker never finds any
+
+    result = asyncio.run(run.tools.extract_fields(["100"], [SIZE], fetch_details=False))
+
+    assert result["rows"] == [{"id": "100", "size_cm": None}]
+    assert result["counts"]["size_cm"] == {"model": 1, "unknown": 1}
+    assert read_rows(tmp_path)["100"]["x_size_cm"] is None
+
+
+def test_model_answers_from_real_text_are_cached_by_spec(tmp_path: Path) -> None:
+    worker = ScriptedWorker(field_answer=colour_from_text)
+    cache = MemoryJudgementCache()
+    cards = [snippet_card("100", "Desk", "Oak top"), snippet_card("101", "Table", None)]  # 101: title only
+    run = harness(tmp_path, cards, worker=worker, cache=cache)
+
+    asyncio.run(run.tools.extract_fields(["100", "101"], [COLOUR], fetch_details=False))
+    again = asyncio.run(run.tools.extract_fields(["100", "101"], [COLOUR], fetch_details=False))
+    changed = COLOUR.model_copy(update={"hint": "the colour of the top"})
+    asyncio.run(run.tools.extract_fields(["100"], [changed], fetch_details=False))
+
+    assert [batch for batch, _ in worker.extraction_batches] == [["100", "101"], ["101"], ["100"]]
+    assert again["counts"]["colour"] == {"cached": 1, "model": 1, "unknown": 1}
+    assert again["rows"][0] == {"id": "100", "colour": "Oak"}
+
+
+def test_fetching_details_counts_against_the_budget_and_reports_what_was_left(tmp_path: Path) -> None:
+    carousell = FakeCarousellSource(details={"100": detail("100", "Oak frame, 120 wide")})
+    run = harness(tmp_path, [card("100"), card("101")], carousell, budget=AgentBudget(max_tool_calls=1),
+                  worker=ScriptedWorker(field_answer=colour_from_text))
+
+    result = asyncio.run(run.tools.extract_fields(["100", "101"], [COLOUR], fetch_details=True))
+
+    assert carousell.detail_requests == ["100"]
+    assert run.budget.tool_calls == 1
+    assert result["problems"] == {"101": "no description: the tool-call budget is used up"}
+    assert result["text_read"] == {"description": 1, "snippet": 1}
+    assert result["rows"][0] == {"id": "100", "colour": "Oak"}
+
+
+def test_unknown_listing_ids_are_reported_not_invented(tmp_path: Path) -> None:
+    run = harness(tmp_path, [snippet_card("100", "Desk 90cm", None)])
+
+    result = asyncio.run(run.tools.extract_fields(["100", "999"], [SIZE], fetch_details=False))
+
+    assert result["rows"] == [{"id": "100", "size_cm": 90}]
+    assert result["problems"] == {"999": "unknown listing id: search for it first"}
+
+
+def test_a_failing_worker_leaves_its_fields_unknown_and_says_so(tmp_path: Path) -> None:
+    def broken(messages, info):
+        raise ModelHTTPError(status_code=500, model_name="nano", body="down")
+
+    run = harness(tmp_path, [snippet_card("100", "Desk", "Oak")])
+    run.tools.worker = WorkerJudge(FunctionModel(broken), WORKER_NAME, run.ledger)
+
+    result = asyncio.run(run.tools.extract_fields(["100"], [COLOUR], fetch_details=False))
+
+    assert result["rows"] == [{"id": "100", "colour": None}]
+    assert result["problems"] == {"100": "the worker model failed; its fields are unknown"}
