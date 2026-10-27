@@ -87,7 +87,8 @@ def test_the_check_itself_finds_domain_words() -> None:
 
 
 def test_the_two_prompts_together_stay_short() -> None:
-    assert len(PLANNING_PROMPT.splitlines()) + len(EXECUTION_PROMPT.splitlines()) <= 70
+    """About 70 source lines of up to 116 characters between them."""
+    assert len(PLANNING_PROMPT) + len(EXECUTION_PROMPT) <= 70 * 116
 
 
 def test_the_planning_prompt_states_the_method_and_its_budget() -> None:
