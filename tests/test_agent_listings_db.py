@@ -43,6 +43,11 @@ def test_a_detail_becomes_a_row_with_the_seller_and_description_columns() -> Non
     ]
 
 
+def test_rows_keep_the_card_snippet_and_the_seller_entered_fields() -> None:
+    assert search_listing_row(FIRST, None)["snippet"] == FIRST["description_snippet"]
+    assert json.loads(detail_row(detail_response(DETAIL))["attributes"]) == DETAIL.attributes
+
+
 def test_the_upsert_keeps_known_times_and_categories_when_new_values_are_unknown() -> None:
     statement = upsert_statement({"id": "1", "title": "t", "category": None}, ["title"])
 

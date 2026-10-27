@@ -144,6 +144,8 @@ class Listing(BaseModel):
     listing_url: str
     posted_or_bumped_at: datetime | None
     posted_or_bumped_kind: PostedOrBumpedKind | None
+    # The start of the description as the search card shows it (about 300 characters); None when the card has none.
+    description_snippet: str | None = None
     raw: dict = Field(default_factory=dict, repr=False)
 
 
@@ -186,6 +188,9 @@ class ListingDetail(Listing):
     # 2026-10-27, when these fields were added.
     category_id: str | None = None
     category_name: str | None = None
+    # The structured fields the seller filled in for this category, by Carousell's field name, as displayed
+    # (e.g. {"<field_name>": "<value>"}); empty in details cached before 2026-10-28.
+    attributes: dict[str, str] = Field(default_factory=dict)
 
 
 class CategoryFilterOption(BaseModel):

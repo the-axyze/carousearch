@@ -5,7 +5,9 @@ import pytest
 
 from carousearch.carousell.errors import CarousellBlockedError, CarousellSchemaError
 from carousearch.carousell.parse import (
+    card_description_snippet,
     extract_csrf_token,
+    listing_attributes,
     long_to_int,
     parse_card_timestamp,
     parse_category_filters_response,
@@ -188,6 +190,39 @@ def test_listing_detail() -> None:
     assert detail.seller_verification.id_verified == raw_seller["profile"]["is_id_verified"]
     assert detail.meetup_available == raw_listing["meetup"]
     assert [meetup.name for meetup in detail.meetup_locations] == [m["name"] for m in raw_listing["meetups"]]
+
+
+def test_listing_detail_keeps_the_seller_entered_fields_without_display_text() -> None:
+    detail = parse_listing_detail_response(load_json_fixture("listing_detail.json"))
+
+    assert detail.attributes == {"mobile_color": "Blue", "mobile_model": "iPhone 15", "mobile_storage": "256GB"}
+
+
+def test_listing_attributes_skip_display_text_and_values_that_are_not_text() -> None:
+    attributes = {"category": "In {{{X}}}", "time_created": "moments ago", "condition": "Used", "size": " M ",
+                  "count": 3, "empty": "  "}
+
+    assert listing_attributes(attributes) == {"size": "M"}
+    assert listing_attributes(None) == {}
+
+
+def test_a_search_card_carries_its_description_snippet() -> None:
+    result = parse_search_response(load_json_fixture("search_price_condition.json"))
+
+    assert result.listings[0].description_snippet == (
+        "Selling a perfect condition iphone 15. No box and cable. Low ballers will be ignore."
+    )
+
+
+def test_a_card_whose_only_paragraph_is_the_condition_label_has_no_snippet() -> None:
+    card = {"condition": 4, "belowFold": [{"component": "paragraph", "stringContent": "Like new"},
+                                          {"component": "paragraph", "stringContent": ""}]}
+
+    assert card_description_snippet(card) is None
+    assert card_description_snippet({"belowFold": "not a list"}) is None
+    spaced = {"belowFold": [{"component": "header_1", "stringContent": "Title"},
+                            {"component": "paragraph", "stringContent": "  two\n lines  "}]}
+    assert card_description_snippet(spaced) == "two lines"
 
 
 def test_listing_detail_names_its_category() -> None:

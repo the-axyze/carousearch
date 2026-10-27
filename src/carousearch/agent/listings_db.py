@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS listings (
     bumped_at           TEXT,
     category            TEXT,
     category_name       TEXT,
+    snippet             TEXT,
     raw_json            TEXT,
     has_details         INTEGER NOT NULL DEFAULT 0,
     description         TEXT,
@@ -47,19 +48,21 @@ CREATE TABLE IF NOT EXISTS listings (
     response_rate       TEXT,
     image_urls          TEXT,
     meetup_locations    TEXT,
-    detail_json         TEXT
+    attributes          TEXT,
+    detail_json         TEXT,
+    extracted           TEXT
 );
 """
 # Columns holding JSON text; listings.json carries them decoded.
-JSON_COLUMNS = ("raw_json", "image_urls", "meetup_locations", "detail_json")
+JSON_COLUMNS = ("raw_json", "image_urls", "meetup_locations", "attributes", "detail_json", "extracted")
 CARD_COLUMNS = (
     "title", "price", "currency", "price_display", "condition", "condition_label", "like_count", "seller_username",
-    "seller_id", "url", "thumbnail_url", "raw_json",
+    "seller_id", "url", "thumbnail_url", "snippet", "raw_json",
 )
 DETAIL_COLUMNS = (
     "title", "price", "currency", "price_display", "condition", "condition_label", "like_count", "seller_username",
     "seller_id", "url", "has_details", "description", "seller_rating", "review_count", "seller_joined_at",
-    "response_rate", "image_urls", "meetup_locations", "detail_json", "category_name",
+    "response_rate", "image_urls", "meetup_locations", "attributes", "detail_json", "category_name",
 )
 # Filled only when the new value is known, so a later search or detail never blanks them.
 KEEP_IF_UNKNOWN_COLUMNS = ("posted_at", "bumped_at", "category")
@@ -88,6 +91,7 @@ def search_listing_row(listing: Mapping[str, Any], category: str | None) -> dict
         "posted_at": moment if kind == "time_created" else None,
         "bumped_at": moment if kind in ("active_bump", "expired_bump") else None,
         "category": category,
+        "snippet": listing.get("description_snippet"),
         "raw_json": json.dumps(listing, ensure_ascii=False),
     }
 
@@ -122,6 +126,7 @@ def detail_row(detail: Mapping[str, Any]) -> dict[str, Any]:
         "response_rate": detail.get("seller_response_rate"),
         "image_urls": json.dumps(detail.get("image_urls") or []),
         "meetup_locations": json.dumps(meetups, ensure_ascii=False),
+        "attributes": json.dumps(detail.get("attributes") or {}, ensure_ascii=False),
         "detail_json": json.dumps(dict(detail), ensure_ascii=False),
     }
 
