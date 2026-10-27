@@ -390,3 +390,15 @@ Built on branch `feature/tiered-agent-tools` (from `feature/phase-c-prompt-mode`
 - Tests: 896 offline (775 before; 121 new), ruff clean.
 
 Live check: four `ask` runs on the owner's two motorcycle prompts with `openai:gpt-5.4-mini` and `openai:gpt-5.4-nano`, US$0.026 to US$0.039 and 5 to 14 Carousell requests each. Every tool worked; the planner model follows multi-step prompts only partly (follow-up T1 in NEXT_STEPS). Ask mode has still not been opened in a real browser.
+
+## Agent: generic planning layer status (2026-10-27)
+
+Built on branch `feature/generic-planning` (from `main`, not pushed): the agent searches any kind of item with no item knowledge in code or prompts, and plans before it spends. [NEXT_STEPS.md](NEXT_STEPS.md), section 4.7, has what changed, the live runs and the deviations; `README.md`, "Ask the agent" and "Ask mode", has the usage.
+
+- Two phases: `plan_prompt` (planner, discovery tools only, 6 tool calls by default, strict `SearchPlan` output with consistency checks and one reminder to sample the listings) and `execute_plan` (the full toolset, the plan in its brief, a `plan_review` of every plan item in its answer). `run_prompt` does both; `ask --plan-only` and `--plan-file` split them in the CLI, and the web app shows the plan with Execute, Edit (one revision) and Cancel before anything else is spent.
+- Method-only prompts, guarded by a test over every model-facing text; generic method templates; optional owner's `knowledge/` notes and a suggested note the web app saves on request.
+- New tools: `sample_descriptions` (MCP; card snippets and seller-entered fields, both now parsed) and `extract_fields` (local; regex first, worker model second, typed `x_<name>` columns, unknown stays null, cached).
+- `carousearch eval` over seven cross-category prompts with generic plan checks (offline in the tests, `--live` once for real).
+- Tests: 1061 offline (896 before), ruff clean. H2 done.
+
+Live check: `carousearch eval --live` once over the seven prompts with `openai:gpt-5.4-mini` and `openai:gpt-5.4-nano` (US$0.40), plus the owner's R15 prompt through `ask --plan-only` and `--plan-file`; about US$0.63 in all. Every plan sampled the listings; 25 of 26 plan checks passed after one fix (strict structured output) and its re-run; the execution phase is where quality still varies (one prompt spent its listing budget on search pages and kept nothing, and said so in its review). The web app's plan step has not been opened in a real browser.

@@ -1,6 +1,6 @@
 # Carousearch: next steps
 
-Written 2026-10-26 against commit `26f68c9` on `main` (identical to `origin/main`); updated the same day for phase C, on branch `feature/phase-c-prompt-mode`, and on 2026-10-27 for the tiered agent (section 4.6), on branch `feature/tiered-agent-tools`. This is the live plan. [ROADMAP.md](ROADMAP.md) keeps the original milestones and the dated status history; [CLAUDE.md](../CLAUDE.md) has the working rules.
+Written 2026-10-26 against commit `26f68c9` on `main` (identical to `origin/main`); updated the same day for phase C, on branch `feature/phase-c-prompt-mode`, on 2026-10-27 for the tiered agent (section 4.6), on branch `feature/tiered-agent-tools`, and again on 2026-10-27 for the generic planning layer (section 4.7), on branch `feature/generic-planning`. This is the live plan. [ROADMAP.md](ROADMAP.md) keeps the original milestones and the dated status history; [CLAUDE.md](../CLAUDE.md) has the working rules.
 
 Labels used below: **verified** means checked against the code, or run, while this file was written on 2026-10-26. **Unverified** means taken from the docs or the owner's account and not re-checked. **Estimate** means a number nobody has measured.
 
@@ -10,8 +10,8 @@ Phase letters: phases C and D below continue the MCP and agent track in ROADMAP.
 
 ## 1. Current state (2026-10-26)
 
-- Head: phase C (prompt mode in the web app, tasks C1 to C5) is on branch `feature/phase-c-prompt-mode` (PR #4). The tiered agent (section 4.6) is on `feature/tiered-agent-tools`, branched from it on 2026-10-27, not pushed.
-- Tests: `.venv/bin/pytest` gives 896 passed, 1 deselected (the live test), in about 13 s on the owner's machine (verified 2026-10-27 on `feature/tiered-agent-tools`; 775 before it). `ruff check src tests` is clean.
+- Head: phase C (PR #4) and the tiered agent (PR #5) are merged into `main`. The generic planning layer (section 4.7) is on `feature/generic-planning`, branched from `main` on 2026-10-27, not pushed.
+- Tests: `.venv/bin/pytest` gives 1061 passed, 1 deselected (the live test), in about 15 s on the owner's machine (verified 2026-10-27 on `feature/generic-planning`; 896 before it). `ruff check src tests` is clean.
 - No type checker runs (see H1).
 
 ### 1.1 Components
@@ -24,8 +24,8 @@ Phase letters: phases C and D below continue the MCP and agent track in ROADMAP.
 | Market analysis | `market/`, `harvest`, `analyze` | Phase A of the analysis plan (section 1.4) | Offline tests only. The live acceptance run of the example spec has not been done (ROADMAP, phase A status) |
 | Telegram bot | `bot/` | Step-by-step search wizard, one locked session per chat (30-minute idle expiry, in memory), Next 5 / Refine / End, Details, `/save` and `/saved`, `[seen]` tags, multi-item caption line (title rule only) | **Used live by the owner** (`data/bot.log`). Running now |
 | Web app | `web/` | One page: keywords, price, condition, delivery, sort, category, "Hide multi-item posts" with a collapsed Hidden (n) list of the hidden posts and their reasons; card grid with resolved-price row and badges; Details panel with every tag's reason; Load more; 2-minute repeat memory. **Ask mode** (Filters \| Ask switch): runs the `ask` agent in the background, polls its progress every second, shows kept cards from Carousell's data with the agent's reason, Dropped (n), notes and the tool trace; one run at a time; filter searches wait while it runs | Filters mode: **used live by the owner** (`data/web.log`), running on 127.0.0.1:8765 (the running process predates phase C). Ask mode and the Hidden section: **built, scripted models only, not run in a browser** |
-| MCP server | `mcp_server.py`, `mcp_instructions.md` | Six read-only tools (`category_fields` added 2026-10-27, and `fields` on `search_listings`) over stdio or streamable HTTP; no auth on HTTP | **Verified over stdio with a script** driving the SDK client, 2026-10-26 (3 Carousell requests). **Not registered in any host yet** (verified: `~/.claude.json` has no `carousearch` entry) |
-| In-app agent | `agent/`, `ask` | Pydantic AI agent with a planner and a worker model; the MCP server's tools in-process plus four local tools (`run_python` sandbox over the run's `listings.db`, `judge_listings`, `judge_photos`, `photo_metrics`); capped hosted web search; prompt caching; per-run budgets (40 tool calls, 15 photos, 200 listings, 3 web searches) enforced by one gate; kept / dropped / not shortlisted / notes / trace / cost estimate; `--json` | **Run live 2026-10-27** with `openai:gpt-5.4-mini` and `openai:gpt-5.4-nano` on the two motorcycle prompts, twice each (section 4.6) |
+| MCP server | `mcp_server.py`, `mcp_instructions.md` | Seven read-only tools (`category_fields` and `fields` on `search_listings` added 2026-10-27, `sample_descriptions` the same day; search cards carry `description_snippet`, details `attributes`) over stdio or streamable HTTP; no auth on HTTP | **Verified over stdio with a script** driving the SDK client, 2026-10-26 (3 Carousell requests). **Not registered in any host yet** (verified: `~/.claude.json` has no `carousearch` entry) |
+| In-app agent | `agent/`, `ask`, `eval` | Two phases: a planning phase (discovery tools on a 6-call budget, returns a `SearchPlan`) and an execution phase over the MCP tools plus five local tools (`run_python` sandbox over the run's `listings.db`, `extract_fields`, `judge_listings`, `judge_photos`, `photo_metrics`); planner and worker models; no item knowledge anywhere (tested); method templates; optional owner's `knowledge/` notes; capped hosted web search; prompt caching; per-run budgets (40 tool calls, 15 photos, 200 listings, 3 web searches) enforced by one gate; kept / dropped / not shortlisted / plan review / notes / traces / cost estimate; `--json`, `--plan-only`, `--plan-file`; `carousearch eval` over seven cross-category prompts | **Run live 2026-10-27** with `openai:gpt-5.4-mini` and `openai:gpt-5.4-nano` on the two motorcycle prompts, twice each (section 4.6) |
 | Canary | `canary.py` | One search plus one detail; exit code; one line in `data/canary.log` | One logged run (2026-10-24, OK). Not scheduled: `crontab -l` says no crontab (verified) |
 
 ### 1.2 What has and has not been verified live
@@ -36,10 +36,11 @@ Verified live:
 - The web app (curl check 2026-10-25, then the owner's own searches, logged in `data/web.log`) and the wizard bot (the owner's own use, logged in `data/bot.log`).
 - The MCP server over stdio: tool list, one search, one photo (2026-10-26).
 - `carousearch ask` with OpenAI models (2026-10-27): four runs, US$0.026 to US$0.039 each, 5 to 14 Carousell requests each (home-page load included); the sandbox, `judge_listings`, `photo_metrics`, `category_fields`, listings.db and the cost line all worked live (section 4.6). `judge_photos` ran live once (prompt B, first run).
+- The planning layer (2026-10-27): `carousearch eval --live` over seven cross-category prompts, and the R15 prompt through `ask --plan-only` and `--plan-file`; `sample_descriptions`, `extract_fields` (regex and worker model), the plan checks, the sampling reminder and the plan review all worked live (section 4.7).
 
 Never run live:
 - `carousearch ask` with an Anthropic model (no key), and the hosted web search (no live run asked for one).
-- The web app's Ask mode and Hidden (n) section (phase C): no real model, no live Carousell, and no real browser. The mode switch, CSS (dark theme, phone width), HTMX polling and out-of-band swaps were checked only through `TestClient` tests and, for the Hidden swaps, a jsdom replay the C4 implementer reported (unverified; not kept in the repo).
+- The web app's Ask mode, with its plan step (Execute, Edit, Cancel, Save to knowledge/), and Hidden (n) section: no real model, no live Carousell, and no real browser. The mode switch, CSS (dark theme, phone width), HTMX polling and out-of-band swaps were checked only through `TestClient` tests and, for the Hidden swaps, a jsdom replay the C4 implementer reported (unverified; not kept in the repo).
 - The price resolver against any real model. It now runs on the worker model (`openai:gpt-5.4-nano` by default) and will run on the next `search --screen` or web search with multi-item posts, now that `OPENAI_API_KEY` is set.
 - The MCP server inside a real host (Claude Code, Codex CLI, Claude desktop, ChatGPT), and the HTTP transport through a tunnel.
 - The `analyze` example spec against the live site, and a real two-page `sort=recent` fixture pair.
@@ -67,7 +68,7 @@ Deferred, per ROADMAP: the live acceptance run and a real two-page fixture. Phas
 | Gap | Where | Tracked as |
 |---|---|---|
 | Only ruff runs; no type checker. The Protocols (`CarousellSource` and `ListingDetailCache` in `mcp_server.py`, `CarousellSource` in `web/services.py`, `ScreeningStore`, `PriceResolver`, `ListingDetailSource`) are not checked at runtime or statically | whole repo | H1 |
-| `(serve or mcp_server.serve)(...)` in `run_mcp_command` is hard to read; it should be two plain lines | `cli.py` | H2 |
+| ~~`(serve or mcp_server.serve)(...)` in `run_mcp_command` is hard to read~~ Done 2026-10-27: two plain lines | `cli.py` | Done (H2) |
 | Bot and web app run under `nohup` and die on WSL restart | operations | H3 |
 | The MCP HTTP transport has no authentication; do not tunnel it publicly yet | `mcp_server.py` | H4 |
 | Photos are not cached; every `listing_photo` call is a Carousell request | `mcp_server.py`, `carousell/client.py` | H5 |
@@ -77,7 +78,7 @@ Deferred, per ROADMAP: the live acceptance run and a real two-page fixture. Phas
 | ~~`ask` does not report token usage~~ Done 2026-10-27: `AgentAnswer.usage` per model and a cost-estimate line in `ask` and in Ask mode's notes | `agent/` | Done (H9) |
 | The canary is not scheduled and nothing alerts on failure | operations | H10 |
 | ~~The price resolver calls the `anthropic` SDK directly~~ Done 2026-10-27: it runs on the worker model through Pydantic AI (verified: no `anthropic` import left in `screening/`) | `screening/price_resolver.py` | Done (H11, Q6) |
-| The planner (gpt-5.4-mini) follows multi-step prompts only partly: it computed one benchmark across different bike models, kept a listing above its own benchmark, and skipped photo checks once (section 4.6) | `agent/prompt.py`, model choice | T1 |
+| The planner (gpt-5.4-mini) follows multi-step prompts only partly. Since the planning layer (section 4.7) it states a grouped benchmark and reviews every plan item, but its execution still varies run to run (it skipped photo checks and once extracted fields on one page only before the prompt was tightened) | `agent/prompt.py`, model choice | T1 |
 | Run folders `data/runs/*` and `judgement_cache` rows are never cleaned up | `agent/run_directory.py`, `storage.py` | T2 |
 | `run_python` is confined by Landlock (Linux 5.13+); elsewhere only the working directory, an empty environment and resource limits apply | `agent/sandbox.py` | T3 (accepted) |
 | The category tree is a snapshot (2026-10-27); new Carousell categories are missing until it is recaptured | `carousell/category_tree.json` | T4 |
@@ -213,11 +214,12 @@ Effort is in solo-developer days, as in ROADMAP.md, and is a rough estimate.
 
 | Phase | Goal | Effort | Depends on | Needs the owner |
 |---|---|---|---|---|
-| H1, H2 | pyright; the `cli.py` readability fix | 0.5 day | nothing | no |
+| H1 | pyright (H2, the `cli.py` readability fix, is done) | 0.5 day | nothing | no |
 | H9 | Token usage in `AgentAnswer` | **Done** (2026-10-27, section 4.6) | | |
 | L | First live validation with a real model | 1 hour left: price resolver, web app Ask mode in a browser, budget refusal (section 4.4) | OPENAI_API_KEY (now set) | yes: present for the run |
 | T | Tiered agent: planner and worker models, sandbox, judge tools, photo metrics, category fields, web search, cost | **Done** (2026-10-27, section 4.6; branch `feature/tiered-agent-tools`, not pushed) | C | review, merge |
-| T1 to T4 | Planner quality on multi-step prompts, cleanup of run folders and judgements, category tree refresh | 0.5 to 1 day | T | T1: choose the planner model |
+| G | Generic planning layer: plan first, for any kind of item, shown before it is spent; extraction, templates, knowledge notes, evals | **Done** (2026-10-27, section 4.7; branch `feature/generic-planning`, not pushed) | T | review, merge; open the plan step in a browser |
+| T1 to T4 | Planner quality on multi-step prompts, cleanup of run folders and judgements, category tree refresh | 0.5 to 1 day | T, G | T1: choose the planner model |
 | C | Prompt mode in the web app | **Done** (C1 to C5, 2026-10-26; branch `feature/phase-c-prompt-mode`, PR pending) | nothing (L before release) | screenshots after L |
 | H8 | Title rule for brand-only lists | 0.5 day | nothing | no |
 | D | Saved searches and prompts, alert job | 2 to 3 days | C for "save a prompt" (done) | to enable alerts |
@@ -225,7 +227,7 @@ Effort is in solo-developer days, as in ROADMAP.md, and is a rough estimate.
 | H4 to H7 | MCP auth, photo cache, bot sessions in SQLite, external request budget (H11, the vendor-neutral resolver, is done) | 2 to 3 days | as listed | H4 only if a tunnel is wanted |
 | M | Saved searches over MCP (optional) | 0.5 day | D | decide Q9 |
 
-Suggested order: H2 and H1, then H9 (C is done, offline, with scripted models), with L as soon as a key exists, then H8, D, H3 and H10, then the rest as needed.
+Suggested order: review and merge G, then T1 (with `carousearch eval --live` as the yardstick), L's remaining browser check, H1, H8, D (saved prompts can now save the agreed plan), H3 and H10, then the rest as needed.
 
 ### 4.1 Phase C: prompt mode in the web app (done 2026-10-26, except the after-L acceptance bullet)
 
@@ -357,7 +359,50 @@ Acceptance: the tool is listed with the read-only annotation; a test with an in-
 
 **Deviations from the brief.** `category_fields` is an MCP tool, not an agent-only tool (it needs no run state, external hosts benefit, and CLAUDE.md keeps tools in `mcp_server.py` where possible). The tiny `--json` live runs were run twice each, once before and once after the prompt fix they prompted. `usage_notes` is filtered out of the agent's tools. The `llm` extra is now empty. Prices in the cost table for Claude Haiku 5.5 come from launch coverage, not Anthropic's page.
 
-**Next (T1 to T4).** T1: planner quality: try `AGENT_PLANNER_MODEL=openai:gpt-5.4` (about three times the price) on the same two prompts, or give the planner a worked example of a per-model benchmark; T2: delete run folders older than N days and expire judgements; T3: accepted, documented; T4: a dev command to recapture the category tree.
+**Next (T1 to T4).** T1: planner quality. Since the planning layer (section 4.7) the planner must state a grouped benchmark and the executor must review every plan item, so the remaining question is execution quality; measure it with `carousearch eval --live` (about US$0.4 a pass) and try `AGENT_PLANNER_MODEL=openai:gpt-5.4` (about three times the price) for the execution phase. No item-specific worked examples: the method must stay generic. T2: delete run folders older than N days and expire judgements; T3: accepted, documented; T4: a dev command to recapture the category tree.
+
+### 4.7 Generic planning layer (done 2026-10-27, branch `feature/generic-planning`)
+
+**Status.** Built and committed on `feature/generic-planning` (from `main`, not pushed). 1061 offline tests pass (896 before), ruff is clean. Run live with `openai:gpt-5.4-mini` and `openai:gpt-5.4-nano` (see below). The web app's plan step is tested with scripted models only; the running web app predates it and needs a restart to show it.
+
+**The requirement.** The agent must search any kind of item smartly, with no domain knowledge in code or in the prompts: it works out what drives value, what the listings contain, which attributes the goal needs and where each comes from, how to compare fairly, what to exclude and why, and how to rank. Domain knowledge may only come from the model's general knowledge, web search, the listings it samples, or the owner's `knowledge/` notes.
+
+**What changed.**
+- `agent/plan.py`: `SearchPlan` (goal, item class, value drivers, attributes with a source of `structured_filter`, `card_field`, `text_extraction`, `derived` or `external_fact`, benchmark, exclusions with reasons, ranking, template, budget estimate, assumptions), `PlanItemStatus`, `plan_problems` (a grouping naming no attribute, an unknown template, text extraction with no worker calls budgeted) and `complete_plan_review` (every plan item gets a status; one the executor skipped is `not_done`).
+- Two phases. `agent/planning.py` `plan_prompt`: the planner with `category_fields`, `search_listings` and the new `sample_descriptions` on `AgentSettings.planning_budget` (`AGENT_PLAN_MAX_TOOL_CALLS`, default 6; no photos; 96 listings; 2 web searches), strict structured output, plan checks as an output validator, and one reminder to sample when a first plan read no listings. `agent/run_prompt.py` `execute_plan`: the plan, its review items and the owner's matching notes in the user message; `run_prompt` does both. The tool gate moved to `agent/toolsets.py`.
+- Prompts rewritten as method only (`agent/prompt.py`, both under 70 source lines); worker instructions and tool descriptions lost their item examples. `tests/test_agent_prompt.py` checks every model-facing text (prompts, tool descriptions, worker instructions, templates, MCP descriptions and usage notes) against a list of item and domain words.
+- `sample_descriptions` (MCP tool): one search page as description excerpts (cached detail, else the card's ~300-character snippet, now parsed as `Listing.description_snippet`) and structured fields (`ListingDetail.attributes`, the seller-entered category fields, now parsed). Budgeted like a search page; its detail fetches count as tool calls.
+- `extract_fields` (local tool): planner-written field specs, regex first, then the worker model in batches of 12 with a strict schema; typed values (unknown stays null), `x_<name>` columns and an `extracted` JSON column in `listings.db`; cached in `judgement_cache` (kind `extraction`) by listing, spec hash, text read and worker model.
+- `agent/templates.py`: `under_benchmark`, `best_under_budget`, `neglected_listings`, `compare_variants`, `watch_for` (planning only).
+- `agent/knowledge.py` and `knowledge/` (gitignored except its README): notes selected by `applies_to` keywords in the request or the plan's item class, shown labelled as the owner's. `AgentAnswer.suggested_knowledge`; the web app saves it on request, never on its own.
+- CLI: `ask --plan-only` (prints the plan, saves `plan.json` in the run folder) and `ask --plan-file`; `carousearch eval [--live] [--only NAME]` over `evals/prompts.json` (seven prompts) with generic plan checks; H2 done.
+- Web app: Run plans first and shows the plan with Execute, Edit (one revision round) and Cancel; nothing beyond planning is spent before Execute. The answer shows the plan review and a suggested note with Save to knowledge/. Method templates prefill the prompt box.
+
+**Live runs.**
+
+All with `openai:gpt-5.4-mini` (planner, both phases) and `openai:gpt-5.4-nano` (worker); outputs in `data/generic-planning/` and `data/evals/`. Costs are list-price estimates.
+
+`carousearch eval --live`, one pass (`data/evals/20261027-092942.json`), plus one re-run of the prompt that failed, after the fix it prompted (`data/evals/20261027-094750.json`):
+
+| Prompt | Item class (trimmed) | Attributes by source | Benchmark grouping | Review | Cost |
+|---|---|---|---|---|---|
+| phones_under_benchmark | used iPhone 15 Pro by storage | card 5, text 1, derived 1 | storage_size | done 10, partial 3 | US$0.061 (re-run; the pass failed: a plan without ranking and budget estimate, three times) |
+| office_chair_budget | ergonomic office chair | filter 1, card 6, text 2 | none (best under budget) | done 7, partial 5, not done 3 | US$0.055 |
+| neglected_cameras | mirrorless bodies, no kits | card 6, text 1 | condition | done 10, partial 3 | US$0.048 (failed check: listing age filed as card_field, not derived) |
+| console_variants | four console families | filter 1, card 3, text 2, derived 1 | variant, condition | done 12, partial 1 | US$0.044 |
+| owner_r15_benchmark | used R15s, about 2 years of COE | filter 1, card 3, text 4, derived 1 | generation_variant | done 11, partial 3, not done 1 | US$0.095 (average S$7,205.30 over 27, benchmark S$5,764.24, 2 kept) |
+| owner_motorcycles_below_median | used motorcycles by model | filter 1, card 3, text 4, derived 2 | model | done 6, partial 3, not done 7 | US$0.098 (execution spent its 200-listing budget on six search pages and never extracted; 0 kept, honestly reviewed) |
+| vague_request | furniture and home items | filter 2, card 2, text 1, derived 1 | item_type | done 10, partial 2 | US$0.059 |
+
+Every plan sampled listings before it was made. Checks: 25 of 26 passed (the re-run counted). Where the planner leaned on its own knowledge instead of the samples: the motorcycles prompt's mileage and registration-year regexes and its `condition_v2` filter, and the cameras prompt's negotiation phrases ("likely on Carousell"); the R15 and chair plans quoted phrasing from the samples.
+
+The R15 prompt through the two-phase CLI (`ask --plan-only`, then `ask --plan-file`), before the date and strict-output fixes: the plan (2 planning calls, US$0.015) had attributes `model_match` (text), `condition` (filter well_used, heavily_used), `price` (card), `coe_remaining` (text), `image_quality_proxy` (card), `listing_effort_proxy` (text), an average benchmark grouped by `model_match`, and five exclusions with reasons. The first execution extracted fields on one mostly irrelevant page, fetched two more without extracting and gave up (review: benchmark `not_done`); the prompt fix that followed made the second execution (US$0.045) compute an average of S$6,424.53 over 15 R15s (benchmark S$5,139.63), find one listing in the 1.5 to 2.5 year COE window at S$7,500, and keep none; its review: 9 done, 3 partial, 1 not done (ranking, nothing to rank). It also showed the worker computing time left without knowing today's date, which led to extracting stated dates instead.
+
+Total spend for the verification: about US$0.63 (four plan-only runs US$0.060, two executions US$0.095, the eval pass US$0.398 plus an unmetered failed planning attempt, the re-run US$0.061).
+
+**Deviations from the brief.** `plan_prompt` returns a `PlanningOutcome` (the plan with its trace, cost, notes and the notes shown), not a bare `SearchPlan`, so the answer can report both phases; `execute_plan` takes that outcome (`PlanningOutcome.from_plan` wraps a saved plan). `sample_descriptions` takes a full `SearchRequest` (query, category and filters) rather than "category or query", and is an MCP tool, so external hosts get it too; the execution phase does not see it. `suggested_knowledge` is plain text whose first line may be `applies_to: ...`; without it the plan's item class becomes the keyword. Existing tests that drove `run_prompt` with execution-only scripts now answer the planning phase with a fixed plan (`tests/scripted_model.PlanFirst`); tests that counted the MCP or local tools, or quoted the old prompt, were updated. Five changes came out of the live runs rather than the brief: the planner is reminded once to sample before planning (its first live plans named regexes from its own knowledge without reading a listing); the executor is told to extract on every page a figure needs and to look into a failing step before stopping short; extraction asks for what the text states (dates) and leaves durations to `run_python`, since the worker does not know today's date; both structured outputs are strict (a live plan arrived without its ranking and budget estimate); and each model request has a 180-second deadline (one planner request went unanswered for minutes). `ask --plan-only` also saves `plan.json` in its run folder. Prompt B's exact wording was not recorded anywhere; `evals/prompts.json` uses a reconstruction from section 4.6.
+
+**Not done or deferred.** Executing alerts (`watch_for` only shapes a plan; phase D). A browser check of the plan step and screenshots. Saving plans with saved prompts (phase D). Cleaning up `data/runs/*` and old extraction answers in `judgement_cache` (T2).
 
 ---
 
@@ -379,7 +424,11 @@ Each has the default that will be assumed if there is no answer.
 | Q10 | Should the web app and agent mark listings as seen (which changes the bot's `[seen]` tags)? | No, as today |
 | Q11 | systemd user services or a Windows Task Scheduler task per process? | systemd user services (systemd is already on), plus one Task Scheduler task to start WSL at logon |
 | Q12 | Should Run be disabled while an Ask run is in progress, instead of a second Run being refused with a message? | No; keep the refusal (the message shows, and the first run's progress keeps showing under it) |
-| Q13 | Should Ask mode show the last finished run's answer after a page reload? | No, until asked (the registry keeps the last 10 runs, but the page shows only a run in flight) |
+| Q13 | Should Ask mode show the last finished run's answer after a page reload? | No, until asked (the registry keeps the last 10 runs; the page shows a run in flight, or a plan waiting for a decision) |
+| Q14 | Should `carousearch ask` stop for approval of the plan, as the web app does? | No: `ask` plans and executes in one go; use `--plan-only` and `--plan-file` to look first |
+| Q15 | Photo checks have no attribute source of their own (the brief's five sources); planners file them under `card_field`. Add a `photo_judgement` source? | No, until the eval shows plans mishandling photos |
+| Q16 | Should a saved prompt (phase D) save the agreed plan too, so an alert re-runs the same method without planning again? | Yes, when D is built: store the `SearchPlan` JSON with the prompt |
+| Q17 | Which planner model for the execution phase, once `eval --live` gives a baseline? | `openai:gpt-5.4-mini` for both phases until T1 compares `openai:gpt-5.4` on the eval set |
 
 ---
 

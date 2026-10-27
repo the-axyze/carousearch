@@ -13,6 +13,7 @@ The same server also powers `carousearch ask`, carousearch's own agent, which ru
 | `listing_photo(url, max_width=800)` | One photo from `media.karousell.com` (other domains are refused), scaled down to `max_width` pixels wide. | 1 per photo |
 | `screening_tags(listing_id, query=None)` | Optional: carousearch's rule-based tags (multi-item title, price list in the description, floor price). | shares the `listing_details` cache |
 | `category_fields(category=None)` | Without a category: the top-level categories. With one: its path, its subcategories and the filters Carousell offers there (field name, label, type, allowed values, and which `search_listings` argument sets it). The tree is a snapshot (2026-10-27); the filters are read live. | 0 without a category, 1 with one |
+| `sample_descriptions(request, n=20, max_detail_fetches=0)` | One search page shown as short text per listing: id, title, price, the first ~300 characters of the description (from a cached detail, else the search card's snippet) and the structured fields known (condition, category name, the seller-entered fields of a cached detail). For learning what sellers in a category actually state before planning a search. | 1, plus one per detail it may fetch (0 to 5) |
 | `usage_notes()` | The recommended order, the request budget and the JSON shapes. The same text is sent to the host as the server's instructions when it connects. | 0 |
 
 The usage notes live in [`src/carousearch/mcp_instructions.md`](../src/carousearch/mcp_instructions.md).
