@@ -1,6 +1,6 @@
 // Requests, debouncing and swaps are HTMX attributes in the templates. This file adds the "/", Esc and Ctrl+Enter
-// keys, the Filters | Ask switch's address, Ask's refusal messages, the Details toggle and Close button, and the
-// form state that HTMX's history snapshots need.
+// keys, the Filters | Ask switch's address, Ask's method templates, Ask's refusal messages, the Details toggle and
+// Close button, and the form state that HTMX's history snapshots need.
 (() => {
   const askMode = () => document.getElementById("mode-ask")?.checked;
   document.addEventListener("keydown", (event) => {
@@ -23,6 +23,17 @@
     if (askMode()) filtersAddress = location.pathname + location.search;
     history.replaceState(history.state, "", askMode() ? "/?mode=ask" : filtersAddress);
     document.getElementById(askMode() ? "prompt" : "query").focus();
+  });
+
+  // A method template puts its example request, with <placeholders> to replace, in the prompt box; nothing runs.
+  document.addEventListener("click", (event) => {
+    const template = event.target.closest("[data-prefill]");
+    if (!template) return;
+    const prompt = document.getElementById("prompt");
+    prompt.value = template.dataset.prefill;
+    prompt.focus();
+    const placeholder = prompt.value.indexOf("<");
+    if (placeholder >= 0) prompt.setSelectionRange(placeholder, prompt.value.indexOf(">", placeholder) + 1);
   });
 
   // Ask's refusals (no key, empty prompt, a run in progress, an unknown run) come with a 4xx status, which HTMX

@@ -1,5 +1,8 @@
-{#- A refused POST /ask: why, and (when another run is in flight) that run's progress, which goes on polling. -#}
+{#- A refused Ask POST: why, and what goes on showing under it: the run in flight (which goes on polling), or the
+    plan still waiting for a decision. -#}
 {% include "partials/error.html" %}
 {%- if progress %}
 {% include "partials/ask_progress.html" %}
+{%- elif plan %}
+{% include "partials/ask_plan.html" %}
 {%- endif %}

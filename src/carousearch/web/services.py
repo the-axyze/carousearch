@@ -106,6 +106,7 @@ class WebServices:
     agent_worker_model: "Model | None" = None  # replaces the worker model, likewise
     judgement_cache: JudgementCache = field(default_factory=MemoryJudgementCache)  # the database's, from web.app
     runs_root: Path | None = None  # Ask runs keep their files in <runs_root>/runs/...; None: a temporary folder
+    knowledge_dir: Path | None = None  # the owner's knowledge notes (knowledge/); None: none are read or saved
     prompt_runs: PromptRunRegistry = field(default_factory=PromptRunRegistry)  # Ask mode's recent runs
 
 

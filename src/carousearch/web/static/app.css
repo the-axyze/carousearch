@@ -380,6 +380,39 @@ code { padding: 1px 5px; font-family: ui-monospace, SFMono-Regular, Menlo, Conso
 .ask-waiting { max-width: 560px; margin: 64px auto; padding: 14px 18px; text-align: center; color: var(--muted); background: var(--surface); border: 1px dashed var(--border-strong); border-radius: var(--radius); }
 .detail .ask-waiting, .grid .ask-waiting { grid-column: 1 / -1; margin: 0 auto; }
 
+/* Ask: method templates under the prompt, the plan before Execute, the plan review and a suggested note. */
+.template-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; font-size: 12.5px; }
+.template-chip { height: 28px; padding: 0 10px; font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 999px; cursor: pointer; transition: border-color 150ms; }
+.template-chip:hover { border-color: var(--accent-border); color: var(--accent); }
+.secondary-button { height: 40px; padding: 0 16px; font: inherit; font-weight: 500; color: var(--text); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); cursor: pointer; }
+.secondary-button:hover { border-color: var(--accent-border); }
+.secondary-button:disabled { opacity: 0.4; cursor: not-allowed; }
+.plan-card { margin: 12px 0 16px; padding: 14px 18px; background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: var(--radius); font-size: 13.5px; }
+.plan-heading { margin: 14px 0 6px; font-size: 13px; font-weight: 600; }
+.plan-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 14px; margin: 0; }
+.plan-facts dt { color: var(--muted); }
+.plan-facts dd { margin: 0; overflow-wrap: anywhere; }
+.plan-list { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+.plan-attribute { overflow-wrap: anywhere; }
+.plan-detail { display: block; }
+.plan-why { display: block; color: var(--muted); font-size: 12.5px; }
+.source-badge { display: inline-block; margin-left: 6px; padding: 1px 7px; font-size: 11.5px; color: var(--accent); background: var(--accent-soft); border-radius: 999px; }
+.plan-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.plan-actions .search-button { height: 40px; }
+.plan-edit-form { display: grid; gap: 8px; margin-top: 10px; }
+.plan-edit-form .secondary-button { justify-self: start; }
+.ask-review, .ask-note-suggestion { margin: 0 0 20px; padding: 12px 16px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); font-size: 13.5px; }
+.ask-review ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.review-row { overflow-wrap: anywhere; }
+.review-status { display: inline-block; min-width: 64px; margin-right: 6px; padding: 1px 7px; font-size: 11.5px; text-align: center; border-radius: 999px; }
+.review-done { color: var(--ok); background: rgba(21, 128, 61, 0.1); }
+.review-partial { color: var(--amber-text); background: var(--amber-bg); }
+.review-not-done { color: var(--failed); background: rgba(185, 28, 28, 0.1); }
+.review-item { font-weight: 500; }
+.review-note { color: var(--muted); }
+.note-text { margin: 4px 0 10px; padding: 10px 12px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; }
+.note-saved { margin: 0; color: var(--ok); }
+
 /* The posts "Hide multi-item posts" took out of the grid, each with the tag reasons that hid it. */
 .hidden-posts { margin-top: 28px; }
 .hidden-list { display: grid; gap: 6px; margin: 10px 0 0; padding: 0; list-style: none; font-size: 13.5px; }

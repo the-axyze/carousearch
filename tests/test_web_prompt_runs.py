@@ -6,12 +6,21 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from pydantic_ai import models
 
+from carousearch.agent.planning import PlanningOutcome
 from carousearch.agent.progress import BudgetUsed, ToolCallEvent
 from carousearch.agent.result import AgentAnswer
-from carousearch.web.prompt_runs import MAX_KEPT_RUNS, PromptRun, PromptRunRegistry, TraceLine, trace_lines
+from carousearch.web.prompt_runs import (
+    MAX_KEPT_RUNS,
+    PromptRun,
+    PromptRunRegistry,
+    TraceLine,
+    save_suggested_note,
+    trace_lines,
+)
 from carousearch.web.view_models import ErrorMessage
 
 from fake_mcp_services import SEARCH_RESULT
+from plan_examples import EXAMPLE_PLAN
 
 models.ALLOW_MODEL_REQUESTS = False
 
@@ -126,3 +135,69 @@ def test_run_ids_are_short_random_tokens() -> None:
     first, second = PromptRunRegistry().start("a", START), PromptRunRegistry().start("b", START)
     assert first.run_id != second.run_id
     assert 8 <= len(first.run_id) <= 16 and first.run_id.replace("-", "").replace("_", "").isalnum()
+
+
+# --- the plan step ------------------------------------------------------------------------------------------------
+
+
+def planned_run() -> PromptRun:
+    registry = PromptRunRegistry()
+    run = registry.start("Find a table", START)
+    run.plan_ready(PlanningOutcome.from_plan(EXAMPLE_PLAN), START + timedelta(seconds=5))
+    return run
+
+
+def test_a_registry_run_starts_planning_and_its_events_are_kept_apart_from_the_executions() -> None:
+    registry = PromptRunRegistry()
+    run = registry.start("Find a table", START)
+    run.record(event("started", "sample_descriptions"))
+
+    assert run.status == "planning" and run.busy and not run.running
+    assert registry.active() is run
+    assert [item.tool_name for item in run.planning_events] == ["sample_descriptions"] and run.events == []
+
+
+def test_a_planned_run_waits_holds_nothing_and_can_be_revised_once() -> None:
+    run = planned_run()
+
+    assert (run.status, run.busy, run.can_revise) == ("planned", False, True)
+    assert run.planned_at == START + timedelta(seconds=5)
+    run.begin_revision()
+    assert (run.status, run.revisions, run.planning_events) == ("planning", 1, [])
+    run.plan_ready(PlanningOutcome.from_plan(EXAMPLE_PLAN), START)
+    assert not run.can_revise
+
+
+def test_executing_and_cancelling_change_the_status() -> None:
+    executing, cancelled = planned_run(), planned_run()
+    executing.begin_execution()
+    executing.record(event("started"))
+    cancelled.cancel(START)
+
+    assert executing.running and executing.busy and len(executing.events) == 1
+    assert (cancelled.status, cancelled.busy, cancelled.finished_at) == ("cancelled", False, START)
+
+
+def test_the_newest_run_is_the_one_started_last() -> None:
+    registry = PromptRunRegistry()
+    assert registry.newest() is None
+    first = registry.start("a", START)
+    first.fail(ErrorMessage("x"), START)
+    second = registry.start("b", START)
+    assert registry.newest() is second
+
+
+def test_a_suggested_note_is_saved_once_under_the_item_class(tmp_path) -> None:
+    run = planned_run()
+    answer = AgentAnswer(kept=[], dropped=[], notes="", tool_trace=[], plan=EXAMPLE_PLAN,
+                         suggested_knowledge="Sizes are in titles.")
+    run.finish(answer, START)
+
+    first = save_suggested_note(run, tmp_path)
+    second = save_suggested_note(run, tmp_path)
+
+    assert first == second == "a-second-hand-household-item-sold-in-several-sizes.md"
+    assert (tmp_path / first).read_text() == (
+        "---\napplies_to: a second-hand household item sold in several sizes\n---\nSizes are in titles.\n"
+    )
+    assert len(list(tmp_path.iterdir())) == 1

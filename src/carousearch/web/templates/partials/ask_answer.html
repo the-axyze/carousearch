@@ -2,6 +2,9 @@
 <div class="ask-answer">
   <p class="ask-prompt">{{ answer.prompt }}</p>
   <p class="results-summary">{{ answer.summary }} · {{ answer.budget_line }}</p>
+  {%- if answer.plan_line %}
+  <p class="results-summary">{{ answer.plan_line }}</p>
+  {%- endif %}
 
   {%- if answer.notes %}
   <div class="ask-notes">
@@ -9,6 +12,34 @@
     <ul>
       {%- for line in answer.notes %}<li>{{ line }}</li>{% endfor %}
     </ul>
+  </div>
+  {%- endif %}
+
+  {%- if answer.review %}
+  <div class="ask-review">
+    <h2 class="ask-heading">Plan review</h2>
+    <ul>
+      {%- for row in answer.review %}
+      <li class="review-row"><span class="review-status review-{{ row.status_class }}">{{ row.status }}</span>
+        <span class="review-item">{{ row.label }}</span> <span class="review-note">{{ row.note }}</span></li>
+      {%- endfor %}
+    </ul>
+  </div>
+  {%- endif %}
+
+  {%- if answer.suggested_note %}
+  <div class="ask-note-suggestion">
+    <h2 class="ask-heading">Suggested note</h2>
+    <pre class="note-text">{{ answer.suggested_note.text }}</pre>
+    <div id="note-save">
+      {%- if answer.suggested_note.saved_to %}
+      {% with saved_to = answer.suggested_note.saved_to %}{% include "partials/ask_note_saved.html" %}{% endwith %}
+      {%- else %}
+      <button class="secondary-button" type="button" hx-post="{{ answer.suggested_note.save_url }}"
+              hx-target="#note-save" hx-swap="innerHTML" hx-disabled-elt="this">Save to knowledge/</button>
+      <span class="muted">Nothing is saved unless you press it.</span>
+      {%- endif %}
+    </div>
   </div>
   {%- endif %}
 
@@ -37,6 +68,15 @@
     <p class="muted">Nothing was dropped.</p>
     {%- endif %}
   </details>
+
+  {%- if answer.planning_trace %}
+  <details class="ask-section">
+    <summary>Planning calls ({{ answer.planning_trace | length }})</summary>
+    <ol class="trace">
+      {%- for row in answer.planning_trace %}{% include "partials/ask_trace_row.html" %}{% endfor %}
+    </ol>
+  </details>
+  {%- endif %}
 
   <details class="ask-section">
     <summary>Tool calls ({{ answer.trace | length }})</summary>

@@ -6,33 +6,42 @@ import pytest
 from pydantic_ai import models
 
 from carousearch.agent.cost import ModelUsage
+from carousearch.agent.planning import PlanningOutcome
 from carousearch.agent.progress import BudgetUsed, ToolCallEvent
 from carousearch.agent.result import AgentAnswer, DroppedListing, KeptListing, ToolCall
 from carousearch.agent.settings import AgentBudget, AgentSettings
+from carousearch.agent.templates import METHOD_TEMPLATES
 from carousearch.language_models import ProviderKeys
 from carousearch.web.prompt_runs import PromptRun, TraceLine
 from carousearch.web.prompt_view_models import (
+    EMPTY_CHANGE_MESSAGE,
     EMPTY_PROMPT_MESSAGE,
     MAX_PROMPT_LENGTH,
     UNSEEN_LISTING_WARNING,
+    SuggestedNoteView,
     answer_trace_rows,
     answer_view,
     ask_form_view,
     budget_used_line,
+    cancelled_view,
+    change_problem,
     dropped_row,
     failed_view,
     format_duration,
     kept_card,
     notes_lines,
+    plan_view,
     progress_trace_rows,
     progress_view,
     prompt_problem,
+    template_choices,
     trace_row,
     waiting_view,
 )
 from carousearch.web.view_models import ErrorMessage, meta_line
 
 from fake_mcp_services import SEARCH_RESULT
+from plan_examples import EXAMPLE_PLAN, example_plan
 
 models.ALLOW_MODEL_REQUESTS = False
 
@@ -253,3 +262,97 @@ def test_the_waiting_view_asks_for_the_same_url_and_says_what_it_waits_for() -> 
     assert (search.url, search.text) == ("/results?q=bike", "An Ask run is in progress; your search will run when it finishes.")
     assert detail.url == "/listing/123" and "details will load" in detail.text
     assert (search.element_id, detail.element_id) == ("ask-waiting-results", None)
+
+
+# --- the plan step ------------------------------------------------------------------------------------------------
+
+
+def planned_run(revisions: int = 0) -> PromptRun:
+    run = PromptRun(run_id="abc123", prompt="Find a table", started_at=START, status="planned", revisions=revisions)
+    trace = [ToolCall(tool_name="sample_descriptions", arguments="query=table", duration_seconds=1.2, status="ok")]
+    usage = [ModelUsage(role="planner", model="openai:gpt-5.4-mini", requests=2, estimated_cost_usd=0.0041)]
+    run.planning = PlanningOutcome(plan=EXAMPLE_PLAN, tool_trace=trace, usage=usage, knowledge_files=["tables.md"])
+    return run
+
+
+def test_the_plan_view_has_every_section_and_the_buttons() -> None:
+    view = plan_view(planned_run(), BUDGET, planning_seconds=12.4)
+
+    assert (view.goal, view.item_class) == (EXAMPLE_PLAN.goal, EXAMPLE_PLAN.item_class)
+    assert view.value_drivers == ["size", "condition", "age"]
+    assert [(row.name, row.source, row.source_class, row.unit) for row in view.attributes] == [
+        ("price", "card field", "card-field", None),
+        ("size_cm", "text extraction", "text-extraction", "cm"),
+        ("days_listed", "derived", "derived", "days"),
+    ]
+    assert view.benchmark == [
+        ("Population", "single-item sale listings with a plain price"), ("Grouped by", "size_cm"),
+        ("Statistic", "median"), ("Normalisation", "none"),
+    ]
+    assert view.exclusions[0].reason == "their price is not the price of one item"
+    assert view.template_line == "under_benchmark: Listings priced well below what comparable listings ask."
+    assert view.estimate_line == (
+        "2 search pages, 10 details, 0 photos, 1 worker call (run budget: 40 tool calls, 15 photos)"
+    )
+    assert view.planning_line == "Planned in 12 s · 1 tool call · about US$0.0041 so far"
+    assert view.knowledge_files == ["tables.md"] and view.planning_trace[0].tool_name == "sample_descriptions"
+    assert (view.execute_url, view.revise_url, view.cancel_url) == (
+        "/ask/abc123/execute", "/ask/abc123/revise", "/ask/abc123/cancel"
+    )
+    assert (view.can_revise, view.revised) == (True, False)
+
+
+def test_a_revised_plan_cannot_be_revised_again_and_a_plan_without_benchmark_says_so() -> None:
+    run = planned_run(revisions=1)
+    run.planning = PlanningOutcome(plan=example_plan(benchmark=None, template=None))
+
+    view = plan_view(run, BUDGET, planning_seconds=3)
+
+    assert (view.can_revise, view.revised, view.benchmark, view.template_line) == (False, True, [], "none")
+
+
+def test_progress_while_planning_counts_against_the_planning_budget() -> None:
+    run = PromptRun(run_id="abc123", prompt="Find a table", started_at=START, status="planning")
+    run.record(ToolCallEvent("started", "sample_descriptions", "query=table", None, 0.0, budget_used(1, 0, 20)))
+
+    view = progress_view(run, BUDGET, 4.0, planning_budget=AgentBudget(max_tool_calls=6, max_photos=0))
+
+    assert view.status_line == "Planning · 4.0 s · 1 tool call"
+    assert view.trace[0].tool_name == "sample_descriptions"
+
+
+def test_the_answer_shows_the_plan_line_the_review_and_the_suggested_note() -> None:
+    run = planned_run()
+    answer = AgentAnswer(
+        kept=[], dropped=[], notes="", tool_trace=[], plan=EXAMPLE_PLAN, suggested_knowledge="Sizes are in titles.",
+        plan_review=[{"item": "exclusion:1", "status": "not_done", "note": "no multi-item posts seen"}],
+    )
+    run.saved_note = "tables.md"
+
+    view = answer_view(run, answer, BUDGET, 30.0)
+
+    assert view.plan_line == "Plan: a second-hand household item sold in several sizes · under_benchmark"
+    (row,) = view.review
+    assert (row.label, row.status, row.status_class, row.note) == (
+        "Exclusion 1: posts offering several items at one price", "not done", "not-done", "no multi-item posts seen"
+    )
+    expected_note = SuggestedNoteView("Sizes are in titles.", "/ask/abc123/knowledge", "knowledge/tables.md")
+    assert view.suggested_note == expected_note
+
+
+def test_the_form_offers_one_choice_per_method_template() -> None:
+    choices = template_choices()
+
+    assert [choice.name for choice in choices] == [template.name for template in METHOD_TEMPLATES]
+    assert choices[0].label == "under benchmark" and "<item>" in choices[0].example_request
+    assert ask_form_view(AgentSettings()).templates == choices
+
+
+def test_a_plan_change_must_be_said_in_words_and_kept_short() -> None:
+    assert change_problem("   ") == EMPTY_CHANGE_MESSAGE
+    assert "1,000 characters" in change_problem("x" * 1001).text
+    assert change_problem("compare within each size") is None
+
+
+def test_a_cancelled_run_says_nothing_else_was_searched() -> None:
+    assert cancelled_view(planned_run()).text == "Plan cancelled. Nothing was searched beyond planning (1 tool call)."
