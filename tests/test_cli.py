@@ -27,7 +27,8 @@ from carousearch.screening.price_resolver import NoopPriceResolver, PriceResolve
 
 from fake_carousell import FakeCarousell
 from fixture_files import load_json_fixture
-from scripted_model import PlanFirst
+from plan_examples import EXAMPLE_PLAN
+from scripted_model import PlanFirst, is_planning
 
 NO_WAIT = ["--min-interval", "0", "--jitter", "0"]
 
@@ -544,13 +545,13 @@ def unused_worker(messages: list[ModelMessage], info: AgentInfo) -> ModelRespons
 
 
 def run_ask(
-    carousell: FakeCarousell, data_dir: Path, as_json: bool, script: Callable, settings: AgentSettings | None = None
+    carousell: FakeCarousell, data_dir: Path, as_json: bool, script: Callable, plan_only: bool = False
 ) -> int:
-    """`ask` with the planning phase answered by PlanFirst and the execution phase by `script`."""
+    """`ask` with the planning phase answered by PlanFirst and the execution phase by `script`; no owner's notes."""
     return cli.run_ask_command(
-        "Find an iPhone 15 under S$600.", settings or AgentSettings(), data_dir, carousell.client, RateLimiter(0, 0),
+        "Find an iPhone 15 under S$600.", AgentSettings(), data_dir, carousell.client, RateLimiter(0, 0),
         as_json, sys.stdout, sys.stderr, model=FunctionModel(PlanFirst(script)),
-        worker_model=FunctionModel(unused_worker),
+        worker_model=FunctionModel(unused_worker), plan_only=plan_only, knowledge_dir=None,
     )
 
 
@@ -660,3 +661,91 @@ def test_ask_options_are_checked_before_anything_runs() -> None:
         cli.agent_settings_from_arguments(AgentSettings(), parser.parse_args(["ask", "x", "--max-photos", "-1"]))
     with pytest.raises(ValueError, match="provider:model"):
         cli.agent_settings_from_arguments(AgentSettings(), parser.parse_args(["ask", "x", "--model", "gpt-5"]))
+
+
+# --- ask: the plan step -------------------------------------------------------------------------------------------
+
+
+def execution_must_not_run(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    raise AssertionError("--plan-only must stop before the execution phase")
+
+
+def test_ask_plan_only_prints_the_plan_and_spends_nothing_on_execution(tmp_path: Path, capsys) -> None:
+    carousell = FakeCarousell()
+
+    exit_code = run_ask(carousell, tmp_path, as_json=False, script=execution_must_not_run, plan_only=True)
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert output.startswith("Plan (0 planning tool calls):\nGoal:")
+    assert "Item class:     a second-hand household item sold in several sizes" in output
+    assert "  size_cm (cm) [text_extraction]: stated in titles" in output
+    assert "Benchmark:      median over single-item sale listings with a plain price, grouped by size_cm" in output
+    assert "  1. posts offering several items at one price. Why: their price is not the price of one item" in output
+    assert output.rstrip().splitlines()[-1].startswith("Cost (estimate, list prices of ")
+    assert carousell.api_requests == []
+
+
+def test_ask_plan_only_json_is_a_plan_that_plan_file_executes(tmp_path: Path, capsys) -> None:
+    run_ask(FakeCarousell(), tmp_path, as_json=True, script=execution_must_not_run, plan_only=True)
+    plan_file = tmp_path / "plan.json"
+    plan_file.write_text(capsys.readouterr().out)
+    planning_requests = []
+
+    def no_planning(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        planning_requests.append(is_planning(info))
+        return ModelResponse(parts=[ToolCallPart(OUTPUT_TOOL_NAME, {"kept": [], "dropped": [], "notes": "Done."})])
+
+    exit_code = cli.run_ask_command(
+        "Find a table.", AgentSettings(), tmp_path, FakeCarousell().client, RateLimiter(0, 0), True, sys.stdout,
+        sys.stderr, model=FunctionModel(no_planning), worker_model=FunctionModel(unused_worker),
+        saved_plan=cli.read_plan_file(plan_file), knowledge_dir=None,
+    )
+
+    answer = AgentAnswer.model_validate_json(capsys.readouterr().out)
+    assert exit_code == 0 and planning_requests == [False]
+    assert answer.plan == EXAMPLE_PLAN and answer.planning_trace == []
+    assert [status.status for status in answer.plan_review] == ["not_done"] * 6
+
+
+def test_ask_prints_the_plan_and_its_review(tmp_path: Path, capsys) -> None:
+    run_ask(FakeCarousell(), tmp_path, as_json=False, script=search_then_details_twice_then_answer)
+
+    output = capsys.readouterr().out
+    assert output.index("Tool calls (3)") < output.index("Plan (0 planning tool calls):") < output.index("Kept (1):")
+    assert output.index("Plan review:\n  not_done  Attribute price:") < output.index("Notes:")
+
+
+def test_ask_passes_the_owners_matching_notes_to_the_planner(tmp_path: Path, capsys) -> None:
+    knowledge = tmp_path / "knowledge"
+    knowledge.mkdir()
+    (knowledge / "phones.md").write_text("---\napplies_to: iphone 15\n---\nBattery health matters.")
+    planner = PlanFirst(execution_must_not_run)
+
+    cli.run_ask_command(
+        "Find an iPhone 15 under S$600.", AgentSettings(), tmp_path, FakeCarousell().client, RateLimiter(0, 0),
+        False, sys.stdout, sys.stderr, model=FunctionModel(planner), worker_model=FunctionModel(unused_worker),
+        plan_only=True, knowledge_dir=knowledge,
+    )
+
+    (messages, _), = planner.planning_requests
+    assert "Battery health matters." in str(messages[0].parts)
+
+
+def test_ask_rejects_an_invalid_plan_file_before_any_request(tmp_path: Path, capsys) -> None:
+    plan_file = tmp_path / "plan.json"
+    plan_file.write_text('{"goal": "x"}')
+
+    exit_code = cli.main(["--data-dir", str(tmp_path), "ask", "find a table", "--plan-file", str(plan_file)],
+                         client_factory=client_factory_that_must_not_run)
+
+    assert exit_code == 2
+    assert capsys.readouterr().err.startswith("error: ")
+    assert cli.main(["--data-dir", str(tmp_path), "ask", "x", "--plan-file", str(tmp_path / "missing.json")],
+                    client_factory=client_factory_that_must_not_run) == 2
+
+
+def test_plan_only_and_plan_file_cannot_be_combined(capsys) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        cli.build_argument_parser().parse_args(["ask", "x", "--plan-only", "--plan-file", "plan.json"])
+    assert exit_info.value.code == 2

@@ -20,6 +20,8 @@ from pydantic import ValidationError
 from telegram.error import TelegramError
 
 from carousearch import storage
+from carousearch.agent.knowledge import DEFAULT_KNOWLEDGE_DIR, load_notes
+from carousearch.agent.plan import SearchPlan
 from carousearch.agent.settings import AgentSettings, load_agent_settings
 from carousearch.bot.app import create_bot_services, fetch_recent_senders, run_polling
 from carousearch.canary import (
@@ -70,6 +72,7 @@ from carousearch.text_render import (
     render_agent_answer,
     render_listing_detail,
     render_listing_table,
+    render_planned_search,
     render_screened_table,
     render_search_summary,
 )
@@ -153,8 +156,10 @@ def main(
             return run_mcp_command(data_dir, client_factory, rate_limiter, arguments.transport, arguments.port)
         if arguments.command == "ask":
             settings = agent_settings_from_arguments(load_agent_settings(), arguments)
+            saved_plan = read_plan_file(arguments.plan_file) if arguments.plan_file else None
             return run_ask_command(
-                arguments.prompt, settings, data_dir, client_factory, rate_limiter, arguments.json, sys.stdout, sys.stderr
+                arguments.prompt, settings, data_dir, client_factory, rate_limiter, arguments.json, sys.stdout,
+                sys.stderr, plan_only=arguments.plan_only, saved_plan=saved_plan,
             )
     except (ValidationError, ValueError) as error:
         print(f"error: {_describe_input_error(error)}", file=sys.stderr)
@@ -221,9 +226,15 @@ def build_argument_parser() -> argparse.ArgumentParser:
     mcp.add_argument("--port", type=int, default=DEFAULT_MCP_HTTP_PORT,
                      help="with --transport http (default %(default)s)")
 
-    ask = commands.add_parser("ask", help="answer a shopping prompt with an AI agent that uses the MCP tools")
-    ask.add_argument("prompt", help='e.g. "Nintendo Switch under S$200 with meet-up, drop bundles"')
-    ask.add_argument("--json", action="store_true", help="print the answer as JSON (AgentAnswer)")
+    ask = commands.add_parser("ask", help="plan a search for a request with an AI agent, then carry the plan out")
+    ask.add_argument("prompt", help='e.g. "a desk under S$200 with meet-up, one desk per post"')
+    ask.add_argument("--json", action="store_true",
+                     help="print the answer as JSON (AgentAnswer); with --plan-only, the plan (SearchPlan)")
+    plan_options = ask.add_mutually_exclusive_group()
+    plan_options.add_argument("--plan-only", action="store_true",
+                              help="plan and print the plan, then stop (save it with --json > plan.json)")
+    plan_options.add_argument("--plan-file", type=Path,
+                              help="execute this saved or edited plan (SearchPlan JSON) instead of planning")
     ask.add_argument(
         "--model", help=f"planner model, provider:model (default {AGENT_PLANNER_MODEL_VARIABLE} or {DEFAULT_PLANNER_MODEL})"
     )
@@ -599,7 +610,8 @@ def run_mcp_command(
         closing(storage.open_database(data_dir / DATABASE_FILE_NAME, check_same_thread=False)) as database,
     ):
         services = mcp_server.McpServices(carousell=client, detail_cache=SqliteScreeningStore(database))
-        (serve or mcp_server.serve)(mcp_server.build_server(services), transport, port)
+        run_server = serve if serve is not None else mcp_server.serve
+        run_server(mcp_server.build_server(services), transport, port)
     return EXIT_OK
 
 
@@ -614,10 +626,16 @@ def run_ask_command(
     errors: TextIO,
     model: "Model | None" = None,
     worker_model: "Model | None" = None,
+    *,
+    plan_only: bool = False,
+    saved_plan: SearchPlan | None = None,
+    knowledge_dir: Path | None = DEFAULT_KNOWLEDGE_DIR,
 ) -> int:
-    """Answer the prompt with the agent and print the trace, kept, dropped, notes and cost (or the AgentAnswer JSON).
-    `model` and `worker_model` replace the planner and worker the settings name (tests); without them, the
-    providers' API keys must be set. The run's files go to <data dir>/runs/<time>-<id>/."""
+    """Plan the request and carry the plan out, then print the trace, plan, kept, dropped, review, notes and cost
+    (or the AgentAnswer JSON). `plan_only` stops after planning and prints the plan (JSON: the SearchPlan alone, to
+    edit and pass back); `saved_plan` skips planning. The owner's notes come from `knowledge_dir`. `model` and
+    `worker_model` replace the planner and worker the settings name (tests); without them, the providers' API keys
+    must be set. The run's files go to <data dir>/runs/<time>-<id>/."""
     missing_key = settings.missing_key_variable()
     missing_key_model = settings.missing_key_model()
     if (model is None or worker_model is None) and missing_key and missing_key_model:
@@ -629,8 +647,9 @@ def run_ask_command(
 
     from carousearch.agent.judge_cache import SqliteJudgementCache
     from carousearch.agent.local_tools import LocalToolServices
+    from carousearch.agent.planning import PlanningOutcome, plan_prompt_sync
     from carousearch.agent.run_directory import new_run_directory
-    from carousearch.agent.run_prompt import run_prompt_sync
+    from carousearch.agent.run_prompt import execute_plan_sync, run_prompt_sync
     from carousearch.mcp_server import McpServices
 
     pydantic_ai.BANNER_ENABLED = False  # this command owns its output
@@ -648,8 +667,24 @@ def run_ask_command(
             judgement_cache=SqliteJudgementCache(database),
             worker_model=worker_model,
         )
+        knowledge = load_notes(knowledge_dir)
         try:
-            answer = run_prompt_sync(prompt, services, settings, model, local=local)
+            if plan_only:
+                planning = plan_prompt_sync(
+                    prompt, services, settings, model, run_directory=local.run_directory, knowledge=knowledge
+                )
+                text = planning.plan.model_dump_json(indent=2) if as_json else render_planned_search(
+                    planning.plan, planning.tool_trace, planning.usage
+                )
+                print(text, file=output)
+                return EXIT_OK
+            if saved_plan is not None:
+                planning = PlanningOutcome.from_plan(saved_plan)
+                answer = execute_plan_sync(
+                    planning, prompt, services, settings, model, local=local, knowledge=knowledge
+                )
+            else:
+                answer = run_prompt_sync(prompt, services, settings, model, local=local, knowledge=knowledge)
         except UserError as error:  # e.g. a provider Pydantic AI does not know
             print(f"error: {error}", file=errors)
             return EXIT_USAGE_ERROR
@@ -658,6 +693,15 @@ def run_ask_command(
             return EXIT_FAILURE
     print(answer.model_dump_json(indent=2) if as_json else render_agent_answer(answer), file=output)
     return EXIT_OK
+
+
+def read_plan_file(path: Path) -> SearchPlan:
+    """A saved plan; an unreadable file raises ValueError and an invalid plan ValidationError (both exit 2)."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise ValueError(f"cannot read the plan file {path}: {error.strerror}") from error
+    return SearchPlan.model_validate_json(text)
 
 
 def describe_missing_agent_key(model: str, variable: str) -> str:
