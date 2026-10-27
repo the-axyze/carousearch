@@ -112,6 +112,9 @@ class RunTools:
                 answers[listing_id] = {"verdict": "unsure", "reason": problems.get(listing_id, "unknown listing id")}
         for batch in batched(texts, LISTINGS_PER_MODEL_CALL):
             answers.update(await self.judge_listing_batch(criterion, criterion_key, batch))
+        for listing_id, problem in problems.items():
+            if listing_id in rows:  # judged without its description
+                answers[listing_id] = {**answers[listing_id], "reason": f"{answers[listing_id]['reason']} ({problem})"}
         return [{"id": listing_id, **answers[listing_id]} for listing_id in listing_ids]
 
     async def judge_listing_batch(
@@ -126,7 +129,8 @@ class RunTools:
         answers = {verdict.listing_id: {"verdict": verdict.verdict, "reason": verdict.reason} for verdict in verdicts}
         # A verdict from the title alone could change once the description is known, so only those with one are kept.
         judged_with_description = [text.listing_id for text in batch if text.description]
-        await self.save_judgements("listing", criterion_key, {i: answers[i] for i in judged_with_description})
+        kept_answers = {listing_id: answers[listing_id] for listing_id in judged_with_description}
+        await self.save_judgements("listing", criterion_key, kept_answers)
         return answers
 
     # --- judge_photos and photo_metrics -------------------------------------------------------------------------
@@ -139,10 +143,15 @@ class RunTools:
         photos, problems = await self.main_photos(to_judge)
         for listing_id, problem in problems.items():
             answers[listing_id] = {"score_1_to_5": None, "reason": problem}
-        measured = {listing_id: photo_summary(data, source) for listing_id, (data, source) in photos.items()}
-        small_photos = [
-            (listing_id, downsize_to_longest_side(data, JUDGE_PHOTO_SIDE)) for listing_id, (data, _) in photos.items()
-        ]
+        measured: dict[str, dict[str, Any]] = {}
+        small_photos: list[tuple[str, Photo]] = []
+        for listing_id, (data, source) in photos.items():
+            summary = photo_summary(data, source)
+            if "problem" in summary:  # Carousell sent something that is not a readable image
+                answers[listing_id] = {"score_1_to_5": None, "reason": summary.pop("problem"), **summary}
+                continue
+            measured[listing_id] = summary
+            small_photos.append((listing_id, downsize_to_longest_side(data, JUDGE_PHOTO_SIDE)))
         for batch in batched(small_photos, PHOTOS_PER_MODEL_CALL):
             answers.update(await self.judge_photo_batch(criterion, criterion_key, batch, measured))
         return [{"id": listing_id, **answers[listing_id]} for listing_id in listing_ids]

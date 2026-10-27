@@ -61,6 +61,10 @@ def detail(
     )
 
 
+def detail_dict(listing_id: str) -> dict:
+    return detail_response(detail(listing_id))
+
+
 def photo(blurred: bool = False) -> bytes:
     image = Image.new("RGB", (810, 1080), "white")
     draw = ImageDraw.Draw(image)
@@ -193,9 +197,10 @@ def test_past_the_tool_call_budget_listings_are_judged_on_title_alone_and_not_ca
     run = harness(tmp_path, [card(listing_id) for listing_id in listing_ids], carousell,
                   budget=AgentBudget(max_tool_calls=1))
 
-    asyncio.run(run.tools.judge_listings(listing_ids, COE_CRITERION))
+    first = asyncio.run(run.tools.judge_listings(listing_ids, COE_CRITERION))
     asyncio.run(run.tools.judge_listings(listing_ids, COE_CRITERION))
 
+    assert first[1]["reason"] == "listing 101 fits (no description: the tool-call budget is used up)"
     assert carousell.detail_requests == ["100"]
     assert run.worker.listing_batches == [listing_ids, ["101", "102"]]  # only the one with a description was cached
     assert "Tool-call budget reached inside a tool: 4 listings left without details." in run.budget.notes()
@@ -264,10 +269,6 @@ def test_judge_photos_uses_the_full_photo_once_details_are_known(tmp_path: Path)
     assert run.carousell.photo_requests == ["https://media.karousell.com/media/photos/products/100_full"]
 
 
-def detail_dict(listing_id: str) -> dict:
-    return detail_response(detail(listing_id))
-
-
 def test_photos_are_downloaded_once_per_run_and_scores_are_cached(tmp_path: Path) -> None:
     run = harness(tmp_path, [card("100")], FakeCarousellSource(photo=photo()))
 
@@ -301,6 +302,18 @@ def test_past_the_photo_budget_photos_are_not_downloaded(tmp_path: Path) -> None
     assert answers[2] == {"id": "102", "score_1_to_5": None, "reason": "not checked: the photo budget is used up"}
     assert run.worker.photo_batches == [["100", "101"]]
     assert "Photo budget reached: 2 photos judged, 1 more refused." in run.budget.notes()
+
+
+def test_a_photo_that_is_not_an_image_is_reported_and_not_sent_to_the_model(tmp_path: Path) -> None:
+    run = harness(tmp_path, [card("100"), card("101")], FakeCarousellSource(
+        photos={"https://media.karousell.com/media/photos/products/100_thumbnail": b"<html>"}, photo=photo()
+    ))
+
+    answers = asyncio.run(run.tools.judge_photos(["100", "101"], "blurry photo"))
+
+    assert answers[0]["score_1_to_5"] is None and answers[0]["reason"].startswith("unreadable photo")
+    assert answers[1]["score_1_to_5"] == 3
+    assert run.worker.photo_batches == [["101"]]
 
 
 def test_a_listing_this_run_never_saw_has_no_photo(tmp_path: Path) -> None:
