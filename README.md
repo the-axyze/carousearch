@@ -1,6 +1,6 @@
 # carousearch
 
-Carousearch is a planned personal Telegram bot for searching [Carousell Singapore](https://www.carousell.sg) in plain English. A cheap LLM turns a prompt like "lightly used Aeron chair under $600, meet-up near Tampines, newest first" into Carousell's own search filters (Level 1). It then fills the search keywords and category-specific fields such as phone model, storage or shoe size (Level 2). Finally it screens the listings it finds: plain rules for seller rating, account age, price outliers and keyword blocklists, plus a vision model for subjective calls like low-effort photos or reseller-template descriptions (Level 3). It ranks results and shows them in Telegram with editable filter buttons. **Phase 1 is built** (2026-10-24): a tested Python client and command line for structured Carousell searches, listing details and a breakage canary. **Phase 2 task 1** adds a single-user Telegram bot that builds a search one question at a time with buttons (see [Running the Telegram bot](#running-the-telegram-bot)). **Phase 3a** adds [screening](#screening) for multi-item "catalogue" posts, with optional Claude Haiku price lookup; prompt-to-filters has no LLM yet. **Phase 3b** adds a local [web app](#web-app) for searching with filters and reading screened results in a card grid; the Telegram bot stays for quick lookups and future alerts. An [MCP server](#mcp-server) lets agent hosts such as Claude Code search Carousell through the same client. **Phase B** adds [`carousearch ask`](#ask-the-agent): carousearch's own agent, which answers a plain-English shopping prompt by calling that server's tools with a model of your choice (Claude Haiku by default). **Phase C** adds the same agent to the web app as [Ask mode](#ask-mode), with live progress and the answer as cards, and lists the posts "Hide multi-item posts" hides, with their reasons.
+Carousearch is a planned personal Telegram bot for searching [Carousell Singapore](https://www.carousell.sg) in plain English. A cheap LLM turns a prompt like "lightly used Aeron chair under $600, meet-up near Tampines, newest first" into Carousell's own search filters (Level 1). It then fills the search keywords and category-specific fields such as phone model, storage or shoe size (Level 2). Finally it screens the listings it finds: plain rules for seller rating, account age, price outliers and keyword blocklists, plus a vision model for subjective calls like low-effort photos or reseller-template descriptions (Level 3). It ranks results and shows them in Telegram with editable filter buttons. **Phase 1 is built** (2026-10-24): a tested Python client and command line for structured Carousell searches, listing details and a breakage canary. **Phase 2 task 1** adds a single-user Telegram bot that builds a search one question at a time with buttons (see [Running the Telegram bot](#running-the-telegram-bot)). **Phase 3a** adds [screening](#screening) for multi-item "catalogue" posts, with an optional price lookup by the worker model; prompt-to-filters has no LLM yet. **Phase 3b** adds a local [web app](#web-app) for searching with filters and reading screened results in a card grid; the Telegram bot stays for quick lookups and future alerts. An [MCP server](#mcp-server) lets agent hosts such as Claude Code search Carousell through the same client. **Phase B** adds [`carousearch ask`](#ask-the-agent): carousearch's own agent, which answers a plain-English shopping prompt by calling that server's tools with a model of your choice. **Phase C** adds the same agent to the web app as [Ask mode](#ask-mode), with live progress and the answer as cards, and lists the posts "Hide multi-item posts" hides, with their reasons. The **tiered agent** (2026-10-27) splits the agent into a planner model and a cheap worker model, and adds a Python sandbox over the run's listings, judge tools, photo metrics, category discovery, capped web search and a cost estimate per run.
 
 - [docs/FEASIBILITY.md](docs/FEASIBILITY.md): full feasibility study: verdict, recommended stack, costs, risks, architecture
 - [docs/CAROUSELL_ACCESS_NOTES.md](docs/CAROUSELL_ACCESS_NOTES.md): raw technical findings on Carousell's endpoints, filters, response shapes and anti-bot behaviour
@@ -21,6 +21,7 @@ src/carousearch/
   carousell/client.py    CarousellClient: session bootstrap, CSRF, re-bootstrap, rate limiting (all network I/O)
   carousell/parse.py     pure functions: response JSON / HTML -> models, block detection
   carousell/rate_limit.py, carousell/errors.py
+  carousell/categories.py, category_tree.json  Carousell's category tree, from a snapshot taken 2026-10-27
   photos.py              downsize a listing photo to a maximum width (Pillow, pure)
   storage.py             SQLite: seen_listings, listing_detail_cache, saved_searches, listings (upsert by content hash),
                          listing_changes, harvest_runs
@@ -31,10 +32,11 @@ src/carousearch/
   market/render.py       analysis result as text / JSON (pure)
   screening/models.py    Tag, ResolvedPrice, ScreenedListing (the contract for --json and the web front end)
   screening/rules.py     title, description and price rules, and dollar-amount extraction (pure)
-  screening/price_resolver.py  PriceResolver: Claude (Anthropic API) or Noop; prompt and parsing are pure
+  screening/price_resolver.py  PriceResolver: the worker model through Pydantic AI, or Noop; prompt and checks are pure
   screening/store.py     detail and resolved-price caches behind a small interface (SQLite)
   screening/pipeline.py  screen_listings: rules, budgeted detail fetches, price resolution (I/O injected)
-  config.py              data folder, the Telegram settings and the optional ANTHROPIC_API_KEY (environment or .env)
+  config.py              data folder, the Telegram settings and the screening settings (environment or .env)
+  language_models.py     planner and worker model names, provider keys, building a Pydantic AI model (vendor-neutral)
   bot/state.py           SearchSession, the wizard stages and their transitions, button actions and
                          their callback_data encoding (pure)
   bot/price_input.py     typed price ranges ("150-400", "<250", ">1000") to and from text (pure)
@@ -52,15 +54,25 @@ src/carousearch/
   web/prompt_runs.py     PromptRun and the in-memory registry of Ask runs; runs the agent as a background task
   web/services.py        WebServices; the screened search and listing detail (blocking, run one at a time)
   web/templates/, web/static/  Jinja2 templates; app.css, app.js, htmx.min.js (2.0.11, vendored)
-  mcp_server.py          build_server(services): the MCP tools (search, details, photo, screening tags, usage notes)
+  mcp_server.py          build_server(services): the MCP tools (search, details, photo, screening tags, category
+                         fields, usage notes)
   mcp_instructions.md    the usage notes the MCP server sends to hosts
-  agent/settings.py      AGENT_MODEL, the per-run budgets and the provider API keys (environment or .env)
+  agent/settings.py      planner and worker models, the per-run budgets, provider keys, the price table
   agent/prompt.py        the agent's system prompt
-  agent/result.py        AgentAnswer: kept, dropped, notes and tool_trace (the contract for `ask --json`)
+  agent/result.py        AgentAnswer: kept, dropped, not_shortlisted, notes, tool_trace, usage (`ask --json`)
   agent/budget.py        ToolBudget: counts a run's tool calls, photos and listings against the caps (pure)
   agent/trace.py         the tool trace, from a run's message history (pure)
   agent/progress.py      ToolCallEvent: what an observer is told as each tool call starts and finishes (pure)
-  agent/run_prompt.py    run_prompt: a Pydantic AI agent over the in-process MCP server, with the budget hook
+  agent/cost.py          token usage per model and the cost estimate (pure)
+  agent/local_tools.py   run_python, judge_listings, judge_photos, photo_metrics (Pydantic AI function tools)
+  agent/sandbox.py, sandbox_bootstrap.py  run_python's confined subprocess (Landlock, network namespace, limits)
+  agent/listings_db.py   the run's listings.db and listings.json (row building is pure)
+  agent/tool_results.py  the shorter tool results the planner reads (pure)
+  agent/judging.py, worker.py, judge_cache.py  judge prompts and answers (pure), worker-model calls, the cache
+  agent/photo_metrics.py, run_photos.py  sharpness and brightness of a photo (pure), a run's photo files
+  agent/web_search.py    the provider's hosted web search, capped per run
+  agent/run_directory.py data/runs/<time>-<id>/, one folder per run
+  agent/run_prompt.py    run_prompt: the Pydantic AI agent loop, the gate every tool call passes through
   canary.py              the health check behind `carousearch canary`
   fixture_capture.py     the dev command behind `carousearch capture-fixtures`
   text_render.py, cli.py terminal output and the `carousearch` command
@@ -75,14 +87,13 @@ Python 3.12 or newer.
 cd ~/carousearch
 python3 -m venv .venv            # Debian/Ubuntu needs the python3.X-venv apt package for this
 .venv/bin/pip install -e ".[dev]"
-.venv/bin/pip install -e ".[llm]"   # optional: the anthropic SDK, for screening's price lookup
 ```
 
 If `python3 -m venv` fails with "ensurepip is not available" (the case on this machine), create the venv with [uv](https://docs.astral.sh/uv/) instead:
 
 ```bash
 uv venv --python 3.14 .venv
-uv pip install --python .venv/bin/python pip -e ".[dev,llm]"   # llm is optional
+uv pip install --python .venv/bin/python pip -e ".[dev]"   # the old llm extra is now empty and harmless
 ```
 
 Runtime data goes to `~/carousearch/data/` (`carousearch.db`, `canary.log`). Override with `--data-dir` or the `CAROUSEARCH_DATA_DIR` environment variable.
@@ -139,7 +150,7 @@ ID          PRICE      YOUR PRICE    FLAGS                               CONDITI
 1470223613  S$610      S$610         -                                   Lightly used  6      iPhone 15 Pro Blue Titanium 256GB
 1470142763  S$8.88     S$8.88        Below market                        Lightly used  1      iPhone 15 Pro 256GB Black Titanium
 ...
-Screening: 0 of 20 multi-item; 1 description checked (detail budget 10); price resolution off (ANTHROPIC_API_KEY not set), so YOUR PRICE is the listed price.
+Screening: 0 of 20 multi-item; 1 description checked (detail budget 10); your variant's price read from the description by openai:gpt-5.4-nano.
 ```
 
 Tags (`code`, label, severity). Each tag also carries a one-sentence `reason` with the evidence, e.g. "title names 3 variants: iPhone 15, 15 Pro, 15 Pro Max; says 'all storage'":
@@ -160,9 +171,9 @@ How it runs, per page of results:
 2. Listings tagged in step 1 get their listing detail, through the 12-hour detail cache, for at most `--max-detail-fetches` (default 10) Carousell requests per search, so a page of 20 to 48 results never costs more than 10 extra requests. Then the description rules run.
 3. Listings that are multi-item after step 2 go to the price resolver, through `price_resolution_cache` (keyed by listing id and search keywords, so a listing is never looked up twice for the same search).
 
-**Price lookup (optional).** Put an Anthropic API key in `.env` (`ANTHROPIC_API_KEY=...`, see `.env.example`) and install the `llm` extra. Screening then asks Claude Haiku 5.5 (`claude-haiku-5-5`, structured JSON output, thinking off, `max_tokens` 256) for the price the description states for exactly your search; it answers `not_stated` rather than guess, which adds the "Price not for your item" tag. Descriptions are cut to 1,500 characters. Without a key, multi-item posts keep their listed price and the summary line says so.
+**Price lookup.** Screening asks the worker model (`AGENT_WORKER_MODEL`, default `openai:gpt-5.4-nano`; see [Ask the agent](#ask-the-agent)) through Pydantic AI, with structured output, for the price the description states for exactly your search; it answers `not_stated` rather than guess, which adds the "Price not for your item" tag. Descriptions are cut to 1,500 characters. It needs that model's provider key in `.env` (`OPENAI_API_KEY` for the default); without it, multi-item posts keep their listed price and the summary line says "price resolution off". Any provider Pydantic AI supports works, for example `AGENT_WORKER_MODEL=anthropic:claude-haiku-5-5` with `ANTHROPIC_API_KEY`. A lookup whose answer never validates, or whose API call fails, is not cached, so the next search tries again.
 
-Cost estimate per looked-up listing (from character counts; no call has been made yet): about 750 input tokens for a typical description and up to about 1,300 for a 1,500-character one (system prompt and schema about 500, the listing up to about 550, plus the structured-output overhead), and 30 to 80 output tokens. At US$0.10 per million input and US$0.50 per million output tokens that is US$0.0001 to US$0.0002 per listing, so US$1 covers roughly 5,000 to 10,000 lookups. Only multi-item listings with a fetched description are looked up, and cached answers are free.
+Cost estimate per looked-up listing (from character counts; not measured): about 750 to 1,300 input tokens and 30 to 80 output tokens. At gpt-5.4-nano's list prices (US$0.20 per million input, US$1.25 per million output, checked 2026-10-27) that is about US$0.0002 to US$0.0004 per listing. Only multi-item listings with a fetched description are looked up, and cached answers are free.
 
 `--json` prints `{screened_listings, total, total_display, next_page}`; each item has `listing`, `detail` (when the description was checked), `tags`, `resolved_price` (`amount`, `source`: `listed` / `description` / `not_stated`, `note`) and `is_multi_item`. In Telegram, result cards of multi-item posts get the one-line summary from the title rule only (no extra requests), e.g. "Multi-item · listed S$579 · may not be your variant's price".
 
@@ -313,12 +324,12 @@ The price row:
 | You see | Meaning |
 |---|---|
 | S$720 | The listed price. Nothing suggests it is wrong. |
-| **S$850** ~~S$579~~ *from description* | A catalogue post: the description gives S$850 for the item you searched for, while the card shows S$579 (usually the cheapest variant). Needs `ANTHROPIC_API_KEY` ([Screening](#screening)). |
+| **S$850** ~~S$579~~ *from description* | A catalogue post: the description gives S$850 for the item you searched for, while the card shows S$579 (usually the cheapest variant). Needs the worker model's API key ([Screening](#screening)). |
 | S$579 *price for your item not stated* | The description was read and has no price for the item you searched for, so the listed price probably belongs to another variant. |
 
 Badges on the photo: **Multi-item** (amber) means a screening rule thinks the price does not apply to your item; hover over it for the reasons. **Low price** (grey) means the price is under 60% of the median of the other results on the page (often a placeholder such as S$1 or S$8.88).
 
-The line above the grid reads like `20 of 10,000+ results · 3 multi-item hidden · screened 6 descriptions`. "Screened" counts listings whose description was checked; "price lookup off" appears when there are multi-item posts but no `ANTHROPIC_API_KEY`, so their listed price is kept. **Load more** at the bottom appends the next page; with "Hide multi-item posts" on, that page's hidden posts join the Hidden list and its count goes up.
+The line above the grid reads like `20 of 10,000+ results · 3 multi-item hidden · screened 6 descriptions`. "Screened" counts listings whose description was checked; "price lookup off" appears when there are multi-item posts but no API key for the worker model, so their listed price is kept. **Load more** at the bottom appends the next page; with "Hide multi-item posts" on, that page's hidden posts join the Hidden list and its count goes up.
 
 Keyboard: `/` puts the cursor in the search box from anywhere on the page; Esc leaves a field.
 
@@ -326,28 +337,28 @@ Requests: a search costs one Carousell search plus, for flagged listings, up to 
 
 ### Ask mode
 
-**Ask**, next to **Filters** above the search box, switches the page to a plain-English prompt for the same agent `carousearch ask` runs ([Ask the agent](#ask-the-agent)): the same five MCP tools, the same budgets, the same answer. The address becomes `/?mode=ask`, and switching back to Filters brings back the filter search you had. Opening or reloading `/?mode=ask` never runs anything; only **Run** does.
+**Ask**, next to **Filters** above the search box, switches the page to a plain-English prompt for the same agent `carousearch ask` runs ([Ask the agent](#ask-the-agent)): the same tools, the same budgets, the same answer. The address becomes `/?mode=ask`, and switching back to Filters brings back the filter search you had. Opening or reloading `/?mode=ask` never runs anything; only **Run** does.
 
-Settings are the ones `carousearch ask` reads, from `.env` or the environment: `AGENT_MODEL`, `AGENT_MAX_TOOL_CALLS`, `AGENT_MAX_PHOTOS`, `AGENT_MAX_LISTINGS`, and the model provider's key (`ANTHROPIC_API_KEY` for the default model, `OPENAI_API_KEY` for an `openai:` one). There are no `--model` or `--max-photos` overrides here. Under the prompt box the page shows the model and where it came from ("Model: anthropic:claude-haiku-5-5, from AGENT_MODEL") and the budgets. Without the provider's key it names the missing variable, says to add it to `.env` and restart `carousearch web`, and **Run** is disabled. `carousearch web` reads `.env` once at start-up, so restart it after any change; a malformed `AGENT_*` value stops it from starting (exit code 2), as it does for `ask`.
+Settings are the ones `carousearch ask` reads, from `.env` or the environment: `AGENT_PLANNER_MODEL`, `AGENT_WORKER_MODEL`, the `AGENT_MAX_*` budgets, and each model's provider key (`OPENAI_API_KEY` for the defaults). There are no `--model` or `--max-photos` overrides here. Under the prompt box the page shows the two models ("Models: openai:gpt-5.4-mini plans, openai:gpt-5.4-nano judges") and the budgets. Without the provider's key it names the missing variable, says to add it to `.env` and restart `carousearch web`, and **Run** is disabled. `carousearch web` reads `.env` once at start-up, so restart it after any change; a malformed `AGENT_*` value stops it from starting (exit code 2), as it does for `ask`.
 
 A prompt can be up to 2,000 characters. **Run** starts the agent in the background of the web process, and the page asks for its progress every second:
 
 - While it runs: "Running · 12 s · 2 tool calls", the budget used so far ("calls 2 of 40 · photos 0 of 15 · listings 48 of 200"), and one line per tool call with its status (`running`, `ok`, `failed` or `refused`) and duration.
-- When it ends, the answer replaces the progress: a summary line ("2 kept · 5 dropped · 6 tool calls · 14 s"), the agent's **Notes**, a card for each kept listing, then two collapsed sections, **Dropped (n)** and **Tool calls (n)**.
+- When it ends, the answer replaces the progress: a summary line ("2 kept · 5 dropped · 30 not shortlisted · 6 tool calls · 14 s"), the agent's **Notes** ending with the cost estimate line, a card for each kept listing, then two collapsed sections, **Dropped (n)** and **Tool calls (n)**.
 
-A kept card is built from what Carousell's search returned, not from the model's text: the thumbnail, the listed price and condition · likes · seller, plus the agent's reason and a **Details** button that opens the same panel as in Filters mode. A kept listing that no search in the run returned gets an **Unverified** badge and a warning that its title, price and link are the model's. **Dropped** lists every listing the agent left out: the title (linked to Carousell), the price when a search returned the listing, and the reason. When Carousell blocks a tool call, that call shows as `failed`; the agent is told and can still answer with what it has. When the run itself fails (the model's API refuses the key or errors, or `AGENT_MODEL` is unusable), the page says so calmly and lists the calls made before it stopped; the details go to the terminal running `carousearch web`.
+A kept card is built from what Carousell's search returned, not from the model's text: the thumbnail, the listed price and condition · likes · seller, plus the agent's reason and a **Details** button that opens the same panel as in Filters mode. A kept listing that no search in the run returned gets an **Unverified** badge and a warning that its title, price and link are the model's. **Dropped** lists the shortlisted listings that failed one of your criteria: the title (linked to Carousell), the price when a search returned the listing, and the reason. Everything else the agent saw is only counted, as "not shortlisted". When Carousell blocks a tool call, that call shows as `failed`; the agent is told and can still answer with what it has. When the run itself fails (the model's API refuses the key or errors, or a model setting is unusable), the page says so calmly and lists the calls made before it stopped; the details go to the terminal running `carousearch web`.
 
 One run at a time. A second **Run** while one is in progress is refused with a message, and the first run's progress keeps showing. A run holds the web app's Carousell client from start to end, so meanwhile a filter search shows "An Ask run is in progress; your search will run when it finishes." (a **Details** panel says the same of its details) and asks again every 2 seconds, then shows the real results once the run has ended. It never overlaps an agent tool call. Only the page itself can start a run: `POST /ask` is refused without the `HX-Request` header the page's HTMX form sends, so another website cannot post a form to your localhost and spend your API budget. Runs are kept in memory, the last 10, until `carousearch web` restarts, and stopping the web app stops a run in flight. After a reload, Ask mode shows a run that is still in progress, but not the answer of a finished one.
 
 Keyboard: `/` puts the cursor in the current mode's box (the search box or the prompt box); Ctrl+Enter (Cmd+Enter on a Mac) in the prompt box runs it.
 
-Requests and cost are as for `carousearch ask`: every Carousell request goes through the rate limiter (1.0 s ± 0.3 s apart), so a run with 20 tool calls takes at least 20 seconds plus the model's time, and with Claude Haiku 5.5 a run should cost a few US cents. That is an estimate, never measured; neither the page nor `ask` reports token usage yet, so read the cost from the provider's console.
+Requests and cost are as for `carousearch ask`: every Carousell request goes through the rate limiter (1.0 s ± 0.3 s apart), so a run with 20 tool calls takes at least 20 seconds plus the models' time. Each run's files go to `data/runs/<time>-<run id>/`.
 
-Status (2026-10-26): Ask mode is tested with scripted models only. It has not been run against a real model, or opened in a real browser; the screenshot above predates the Filters | Ask switch.
+Status (2026-10-27): Ask mode is tested with scripted models only and has not been opened in a real browser; the agent behind it has run live through `carousearch ask` (see below). The screenshot above predates the Filters | Ask switch.
 
 ## MCP server
 
-`carousearch mcp` lets an agent host (Claude Code, Codex CLI, the Claude desktop app, or ChatGPT through a tunnel) search Carousell through this client: `search_listings`, `listing_details` (12-hour cache), `listing_photo` (downsized, Carousell's media host only), the optional `screening_tags`, and `usage_notes`. It is only a connector: the host filters, ranks, looks at photos and plans; the server does none of that. Over stdio by default; `--transport http --port 8766` serves streamable HTTP on 127.0.0.1 for tunnelling.
+`carousearch mcp` lets an agent host (Claude Code, Codex CLI, the Claude desktop app, or ChatGPT through a tunnel) search Carousell through this client: `search_listings` (optionally only some fields per listing), `listing_details` (12-hour cache), `listing_photo` (downsized, Carousell's media host only), the optional `screening_tags`, `category_fields` (the categories, their subcategories and the filters each offers) and `usage_notes`. It is only a connector: the host filters, ranks, looks at photos and plans; the server does none of that. Over stdio by default; `--transport http --port 8766` serves streamable HTTP on 127.0.0.1 for tunnelling.
 
 ```bash
 claude mcp add --scope user carousearch -- /home/moses/carousearch/.venv/bin/carousearch mcp
@@ -357,35 +368,55 @@ claude mcp add --scope user carousearch -- /home/moses/carousearch/.venv/bin/car
 
 ## Ask the agent
 
-`carousearch ask` answers a shopping prompt in plain English. It runs an agent built with [Pydantic AI](https://pydantic.dev/docs/ai/) whose tools are the [MCP server](#mcp-server)'s five tools, nothing else. The server runs inside the same process, so a run starts no second interpreter. The agent searches first, filters the results itself, fetches details for a shortlist only and looks at photos last, then reports what it kept, everything it dropped with the reason, and notes. The web app's [Ask mode](#ask-mode) runs the same agent from the browser.
+`carousearch ask` answers a shopping prompt in plain English, including multi-step ones such as "work out the market price, take 80% as a benchmark, then find bikes 50% below it with about 2 years of COE and low-effort photos". It runs an agent built with [Pydantic AI](https://pydantic.dev/docs/ai/). The web app's [Ask mode](#ask-mode) runs the same agent from the browser.
 
 ```bash
-.venv/bin/carousearch ask "Find Nintendo Switch consoles under S\$200 with meet-up. Drop listings whose title mentions more than one console model. For the top 3 by likes, look at the main photo and say whether it looks like a real used unit or a stock/catalogue image."
+.venv/bin/carousearch ask "Find the average market price of the r15 motorcycle (well used), take 80% of that as the benchmark, and find bikes priced 50% below it with about 2 years of COE"
 .venv/bin/carousearch ask "used Aeron chair under S\$600, meet-up" --json         # the answer as AgentAnswer JSON
-.venv/bin/carousearch ask "road bike under S\$800" --model openai:gpt-5 --max-photos 5
+.venv/bin/carousearch ask "road bike under S\$800" --model openai:gpt-5.4 --worker-model openai:gpt-5.4-nano --max-photos 5
 ```
 
-It needs the API key of the model's provider: `ANTHROPIC_API_KEY` for the default `anthropic:claude-haiku-5-5`, `OPENAI_API_KEY` for an `openai:` model, in `.env` or the environment. Without it, `ask` exits with an error before making any request.
+**Two models.** The planner (`AGENT_PLANNER_MODEL`, default `openai:gpt-5.4-mini`) runs the agent loop: it plans, calls tools and writes the answer. The worker (`AGENT_WORKER_MODEL`, default `openai:gpt-5.4-nano`) does the many small jobs: one-line judgements per listing and photo scores, and screening's price lookup. Any Pydantic AI model string works for either (`anthropic:claude-haiku-5-5`, `openai:gpt-5.4`, ...); each needs its provider's key in `.env` or the environment (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`), and `ask` exits before any request when one is missing. The older `AGENT_MODEL` still works as a deprecated alias that sets both tiers (a tier set on its own wins), and `ask` warns while it is used.
+
+**Tools.** The [MCP server](#mcp-server)'s tools run inside the same process: `search_listings` (with `fields`, so the planner reads only, say, id, title and price), `listing_details` (the planner sees the first 300 characters of the description), `listing_photo`, `screening_tags` and `category_fields`. Four local tools work on the run's own data:
+
+| Tool | What it does | Cost |
+|---|---|---|
+| `run_python(code)` | Runs a Python snippet in a sandbox whose working directory holds `listings.db` (SQLite, table `listings`) and `listings.json`: every listing the run's searches and details returned, with card columns (price, condition, likes, seller, posted_at, bumped_at, category, raw_json) and detail columns (description, seller_rating, review_count, image_urls, meetup_locations, ...). The agent does all arithmetic, medians, benchmarks and regexes here. Standard library only (pandas only if installed). | no tokens, no Carousell request |
+| `judge_listings(listing_ids, criterion)` | The worker model answers yes, no or unsure with a one-line reason per listing, from title, price and description, 12 listings per model call. Missing details are fetched first. | worker tokens; one Carousell request per uncached detail |
+| `judge_photos(listing_ids, criterion)` | The worker model scores each main photo 1 to 5 against the criterion (the photo is downsized to 512 px), plus the metrics below. Uses the full-size photo once details are known, else the thumbnail. | worker tokens; one request per photo not yet downloaded in the run |
+| `photo_metrics(listing_ids)` | Width, height, sharpness (Laplacian variance at 512 px; under about 100 looks blurry) and brightness (0 to 255), with no model. | one request per photo not yet downloaded |
+
+Judgements are cached in `data/carousearch.db` (`judgement_cache`) by listing, criterion (case and spacing ignored) and worker model, so asking again is free. Where the planner's provider has a hosted web search (OpenAI's Responses API, Anthropic), the agent may use it, up to `AGENT_MAX_WEB_SEARCHES` per run, to learn an unfamiliar term; without one, the notes say so. Prompt caching uses Pydantic AI's `Caching` capability (OpenAI caches long prompts on its own; Anthropic gets cache points).
+
+**The sandbox.** `run_python` starts `python -I -S` (no site-packages, no `PYTHON*` variables) in the run folder with an empty environment, so no API key is visible. On Linux 5.13 and later it confines itself with Landlock before running the snippet: it can read only the interpreter and system libraries and write only inside the run folder, and TCP connections are refused (verified on this machine: reading `../../../.env` from the run folder raises `PermissionError`). Where unprivileged user namespaces exist it also runs under `unshare -rn`, with no network at all. Limits: 20 s wall clock (the process group is killed), 512 MB of memory, 64 MB per written file, and only the first few thousand characters of output come back. Without Landlock (an older kernel, macOS) only the working directory, the empty environment, the limits and the network namespace remain; the tests skip the confinement checks there and say why. Each snippet and its output stay in `python/NNN.*` in the run folder.
+
+**Run folders.** Each run writes `data/runs/<UTC time>-<id>/`: `listings.db`, `listings.json`, `photos/` and `python/`. Nothing deletes old run folders.
 
 The output, top to bottom:
 
-- **Tool calls**: one line per call, with its duration, the tool and its arguments, and `[refused]` (over a budget, never sent to Carousell), `[failed]` (the tool reported an error, such as Carousell blocking) or `[not run]` when it did not run normally.
-- **Kept**: a table of price, title, seller, URL and the agent's one-line reason. The reason comes last so it is never cut off.
-- **Dropped**: every listing the agent saw and excluded, each with its reason.
-- **Notes**: the agent's assumptions and what you should check yourself, plus a line for each budget that stopped or shortened the run.
+- **Tool calls**: a count per tool, then one line per call with its duration, the tool and its arguments, and `[refused]` (over a budget, never sent to Carousell), `[failed]` (the tool reported an error, such as Carousell blocking) or `[not run]`. Hosted web searches appear as `web_search`.
+- **Kept**: a table of price, title, seller, URL and the agent's reason, which quotes the numbers it computed (benchmark, percent below) and what it checked.
+- **Dropped**: only shortlisted listings that failed one of your criteria, each with that criterion and its number.
+- **Not shortlisted**: how many more listings the agent saw; they are not listed.
+- **Notes**: the agent's assumptions (how it read a vague criterion, what the benchmark was computed from) and what you should check, plus a line for each budget that stopped or shortened the run.
+- **Cost (estimate)**: tokens per model (input, of which cached, and output), web searches, and US$ at list prices, for example `Cost (estimate, list prices of 2026-10-27): about US$0.0255. planner openai:gpt-5.4-mini: 6 requests, 92,483 input tokens (76,032 cached), 1,531 output; worker openai:gpt-5.4-nano: 1 request, 1,237 input tokens (0 cached), 260 output.` The prices are in `agent/settings.py` (`MODEL_PRICES`, checked 2026-10-27); a model not in the table is reported as "no price".
 
-`--json` prints the same as one `AgentAnswer` object: `kept` (`listing_id`, `title`, `price`, `url`, `seller`, `reason`), `dropped` (`listing_id`, `title`, `reason`), `notes` and `tool_trace` (`tool_name`, `arguments`, `duration_seconds`, `status`).
+`--json` prints the same as one `AgentAnswer` object: `kept`, `dropped`, `not_shortlisted`, `notes`, `tool_trace` and `usage` (per model: `role`, `model`, `requests`, `input_tokens`, `cached_input_tokens`, `output_tokens`, `web_searches`, `estimated_cost_usd`).
 
 | Setting (`.env` or environment) | Default | Meaning |
 |---|---|---|
-| `AGENT_MODEL` | `anthropic:claude-haiku-5-5` | Any Pydantic AI model string, `provider:model`. `--model` overrides it. |
-| `AGENT_MAX_TOOL_CALLS` | 40 | Tool calls per run: search pages, details, photos and tags together. |
-| `AGENT_MAX_PHOTOS` | 15 | Photos the agent may look at. `--max-photos` overrides it. |
+| `AGENT_PLANNER_MODEL` | `openai:gpt-5.4-mini` | The model that runs the agent loop. `--model` overrides it. |
+| `AGENT_WORKER_MODEL` | `openai:gpt-5.4-nano` | The model behind the judge tools and screening's price lookup. `--worker-model` overrides it for `ask`. |
+| `AGENT_MODEL` | none | Deprecated: sets both of the above when they are not set. |
+| `AGENT_MAX_TOOL_CALLS` | 40 | Tool calls per run, plus each Carousell request a local tool makes (details, photos). |
+| `AGENT_MAX_PHOTOS` | 15 | Photos looked at or measured. `--max-photos` overrides it. |
 | `AGENT_MAX_LISTINGS` | 200 | Listings asked for across all search pages. A page that would pass it is cut short. |
+| `AGENT_MAX_WEB_SEARCHES` | 3 | Hosted web searches per run; 0 turns web search off. |
 
-The budgets are enforced, not advised. A call over a budget is refused before it reaches Carousell, and the agent is told to finish with what it has. The notes then say which budget was reached. A model that keeps calling tools anyway is stopped after its tool-call budget plus 5 more model requests. Carousell requests still go through the usual rate limiter (1.0 s ± 0.3 s apart), so a run with 20 tool calls takes at least 20 seconds plus the model's time. Details come from the 12-hour cache shared with the other commands.
+The budgets are enforced, not advised. A call over a budget is refused before it reaches Carousell, and the agent is told to finish with what it has; a judge tool that runs out part-way judges the rest on their titles and says so. The notes then say which budget was reached. A model that keeps calling tools anyway is stopped after its tool-call budget plus 5 more model requests. Carousell requests still go through the usual rate limiter (1.0 s ± 0.3 s apart). Details come from the 12-hour cache shared with the other commands.
 
-Photos reach the model as images: Anthropic models and OpenAI's Responses API get them inside the tool result, and OpenAI chat models get them in a separate user message (Pydantic AI chooses). Cost with Claude Haiku 5.5 (US$0.10 per million input tokens, US$0.50 per million output tokens) should be a few US cents per run. That is an estimate, not yet measured against the real API.
+Status (2026-10-27): run live with the default models on the two motorcycle prompts in docs/NEXT_STEPS.md; each run cost US$0.03 to US$0.04 and made fewer than 20 Carousell requests. The tools worked; how well the answer follows a multi-step prompt depends on the planner model (gpt-5.4-mini sometimes computes one benchmark across different models; a larger planner such as `openai:gpt-5.4` costs about three times as much).
 
 ## Running the Telegram bot
 
