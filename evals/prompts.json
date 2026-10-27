@@ -1,0 +1,40 @@
+{
+  "about": "Cross-category prompts for `carousearch eval`. Each names the plan properties a good plan has (agent/evals.py, PLAN_CHECKS); the checks are generic, the prompts are not. `carousearch eval` lists them; `carousearch eval --live` runs each once for real (planner, Carousell, worker).",
+  "prompts": [
+    {
+      "name": "phones_under_benchmark",
+      "prompt": "Find used iPhone 15 Pro listings priced at least 20% below the typical asking price for the same storage size.",
+      "expect": ["has_benchmark", "benchmark_grouped", "has_exclusion_with_reason", "ranking_stated"]
+    },
+    {
+      "name": "office_chair_budget",
+      "prompt": "Best ergonomic office chair under S$250: lightly used or better, adjustable lumbar support and armrests, from a seller with good reviews.",
+      "expect": ["source:structured_filter", "source:text_extraction", "states_value_drivers", "ranking_stated"]
+    },
+    {
+      "name": "neglected_cameras",
+      "prompt": "Find mirrorless camera bodies that have been listed for a long time with few likes, where the seller might take a lower offer.",
+      "expect": ["source:derived", "source:card_field", "has_assumptions", "ranking_stated"]
+    },
+    {
+      "name": "console_variants",
+      "prompt": "Compare asking prices of the Nintendo Switch variants (original, Lite, OLED, Switch 2) and show the best-value listing of each.",
+      "expect": ["has_benchmark", "benchmark_grouped", "has_exclusion_with_reason"]
+    },
+    {
+      "name": "owner_r15_benchmark",
+      "prompt": "Find the average market price of the r15 motorcycle (well used and second hand), then take 80% of that as the market benchmark, then filter on top of that for blurry or low-effort images and COE of about 2 years, to find a bike priced 50% below the benchmark.",
+      "expect": ["has_benchmark", "source:text_extraction", "has_exclusion_with_reason", "ranking_stated"]
+    },
+    {
+      "name": "owner_motorcycles_below_median",
+      "prompt": "Find used motorcycles priced well below the market median for the same model, show how many days each has been listed, and flag the ones with blurry or low-effort photos.",
+      "expect": ["has_benchmark", "benchmark_grouped", "source:derived", "has_exclusion_with_reason"]
+    },
+    {
+      "name": "vague_request",
+      "prompt": "Something nice for my new flat, not too expensive.",
+      "expect": ["has_assumptions", "states_value_drivers", "ranking_stated"]
+    }
+  ]
+}

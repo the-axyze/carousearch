@@ -1,5 +1,5 @@
 """The `carousearch` command line: search, listing, harvest, analyze, canary, capture-fixtures, bot, whoami, web,
-mcp and ask."""
+mcp, ask and eval."""
 
 import argparse
 import asyncio
@@ -20,6 +20,15 @@ from pydantic import ValidationError
 from telegram.error import TelegramError
 
 from carousearch import storage
+from carousearch.agent.evals import (
+    DEFAULT_EVAL_FILE,
+    BlockWatch,
+    EvalOutcome,
+    EvalPrompt,
+    load_eval_prompts,
+    outcome_summary,
+    run_eval_prompts,
+)
 from carousearch.agent.knowledge import DEFAULT_KNOWLEDGE_DIR, load_notes
 from carousearch.agent.plan import SearchPlan
 from carousearch.agent.settings import AgentSettings, load_agent_settings
@@ -70,6 +79,9 @@ from carousearch.screening.price_resolver import (
 from carousearch.screening.store import SqliteScreeningStore
 from carousearch.text_render import (
     render_agent_answer,
+    render_eval_outcome,
+    render_eval_prompts,
+    render_eval_summary,
     render_listing_detail,
     render_listing_table,
     render_planned_search,
@@ -80,6 +92,8 @@ from carousearch.web.app import DEFAULT_WEB_HOST, DEFAULT_WEB_PORT, WebSettings,
 
 if TYPE_CHECKING:
     from pydantic_ai.models import Model
+
+    from carousearch.agent.result import AgentAnswer
 
 ClientFactory = Callable[[RateLimiter], CarousellClient]
 PriceResolverFactory = Callable[[], PriceResolver]
@@ -161,6 +175,12 @@ def main(
                 arguments.prompt, settings, data_dir, client_factory, rate_limiter, arguments.json, sys.stdout,
                 sys.stderr, plan_only=arguments.plan_only, saved_plan=saved_plan,
             )
+        if arguments.command == "eval":
+            prompts = select_eval_prompts(load_eval_prompts(arguments.file), arguments.only)
+            return run_eval_command(
+                prompts, arguments.live, load_agent_settings(), data_dir, client_factory, rate_limiter, sys.stdout,
+                sys.stderr,
+            )
     except (ValidationError, ValueError) as error:
         print(f"error: {_describe_input_error(error)}", file=sys.stderr)
         return EXIT_USAGE_ERROR
@@ -235,6 +255,13 @@ def build_argument_parser() -> argparse.ArgumentParser:
                               help="plan and print the plan, then stop (save it with --json > plan.json)")
     plan_options.add_argument("--plan-file", type=Path,
                               help="execute this saved or edited plan (SearchPlan JSON) instead of planning")
+
+    evaluate = commands.add_parser("eval", help="list the cross-category eval prompts, or run each once with --live")
+    evaluate.add_argument("--live", action="store_true",
+                          help="run every prompt once for real: planner, Carousell and worker requests (costs money)")
+    evaluate.add_argument("--file", type=Path, default=DEFAULT_EVAL_FILE, help="default evals/prompts.json")
+    evaluate.add_argument("--only", action="append", default=[], metavar="NAME",
+                          help="run only the prompt with this name (repeatable)")
     ask.add_argument(
         "--model", help=f"planner model, provider:model (default {AGENT_PLANNER_MODEL_VARIABLE} or {DEFAULT_PLANNER_MODEL})"
     )
@@ -702,6 +729,82 @@ def read_plan_file(path: Path) -> SearchPlan:
     except OSError as error:
         raise ValueError(f"cannot read the plan file {path}: {error.strerror}") from error
     return SearchPlan.model_validate_json(text)
+
+
+def select_eval_prompts(prompts: list[EvalPrompt], names: list[str]) -> list[EvalPrompt]:
+    """The prompts named in `names` (all of them when empty); an unknown name raises ValueError."""
+    unknown = sorted(set(names) - {prompt.name for prompt in prompts})
+    if unknown:
+        raise ValueError(f"no eval prompt named {', '.join(unknown)}")
+    return [prompt for prompt in prompts if not names or prompt.name in names]
+
+
+def run_eval_command(
+    prompts: list[EvalPrompt],
+    live: bool,
+    settings: AgentSettings,
+    data_dir: Path,
+    client_factory: ClientFactory,
+    rate_limiter: RateLimiter,
+    output: TextIO,
+    errors: TextIO,
+    model: "Model | None" = None,
+    worker_model: "Model | None" = None,
+    knowledge_dir: Path | None = DEFAULT_KNOWLEDGE_DIR,
+) -> int:
+    """Without `live`, list the prompts and their checks (no request). With it, run each prompt once through the
+    two-phase agent, print each result as it finishes, then a summary table with the total cost, and write
+    <data dir>/evals/<UTC time>.json. Stops early if Carousell blocks. Exit 1 when a prompt gave no answer."""
+    if not live:
+        print(render_eval_prompts(prompts), file=output)
+        return EXIT_OK
+    missing_key = settings.missing_key_variable()
+    missing_key_model = settings.missing_key_model()
+    if (model is None or worker_model is None) and missing_key and missing_key_model:
+        print(describe_missing_agent_key(missing_key_model, missing_key), file=errors)
+        return EXIT_USAGE_ERROR
+    import pydantic_ai
+
+    from carousearch.agent.judge_cache import SqliteJudgementCache
+    from carousearch.agent.local_tools import LocalToolServices
+    from carousearch.agent.run_directory import new_run_directory
+    from carousearch.agent.run_prompt import run_prompt_sync
+    from carousearch.mcp_server import McpServices
+
+    pydantic_ai.BANNER_ENABLED = False
+    logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.WARNING)
+    started = _now()
+    knowledge = load_notes(knowledge_dir)
+    with (
+        client_factory(rate_limiter) as client,
+        closing(storage.open_database(data_dir / DATABASE_FILE_NAME, check_same_thread=False)) as database,
+    ):
+        watched = BlockWatch(client)
+        services = McpServices(carousell=watched, detail_cache=SqliteScreeningStore(database))
+        judgement_cache = SqliteJudgementCache(database)
+
+        def run_one(prompt: EvalPrompt) -> "AgentAnswer":
+            local = LocalToolServices(
+                run_directory=new_run_directory(data_dir, _now()), judgement_cache=judgement_cache,
+                worker_model=worker_model,
+            )
+            return run_prompt_sync(prompt.prompt, services, settings, model, local=local, knowledge=knowledge)
+
+        def show(outcome: EvalOutcome) -> None:
+            print(render_eval_outcome(outcome) + "\n", file=output, flush=True)
+
+        outcomes = run_eval_prompts(prompts, run_one, should_stop=lambda: watched.blocked, on_outcome=show)
+    print(render_eval_summary(outcomes), file=output)
+    report_path = write_eval_report(data_dir, started, [outcome_summary(outcome) for outcome in outcomes])
+    print(f"Report: {report_path}", file=output)
+    return EXIT_OK if all(outcome.answer is not None for outcome in outcomes) else EXIT_FAILURE
+
+
+def write_eval_report(data_dir: Path, started: datetime, summaries: list[dict]) -> Path:
+    path = data_dir / "evals" / f"{started.astimezone(UTC):%Y%m%d-%H%M%S}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(summaries, indent=2, ensure_ascii=False), encoding="utf-8")
+    return path
 
 
 def describe_missing_agent_key(model: str, variable: str) -> str:

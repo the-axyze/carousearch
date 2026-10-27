@@ -1,12 +1,17 @@
 """Plain-text rendering of listings for the terminal. Pure functions: models in, strings out."""
 
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING
 
 from carousearch.agent.cost import ModelUsage, format_cost_line
 from carousearch.agent.plan import PlanItemStatus, SearchPlan, review_item_label
 from carousearch.agent.result import AgentAnswer, DroppedListing, KeptListing, ToolCall, tool_call_counts
 from carousearch.filters.schema import Listing, ListingDetail, SearchResult, SellerVerification
 from carousearch.screening.models import PriceSource, ResolvedPrice, ScreenedListing, format_sgd
+
+if TYPE_CHECKING:
+    from carousearch.agent.evals import EvalOutcome, EvalPrompt
 
 SINGAPORE_TIME = timezone(timedelta(hours=8), "SGT")
 
@@ -165,6 +170,58 @@ def render_plan_review(review: list[PlanItemStatus], plan: SearchPlan | None) ->
     lines = ["Plan review:"]
     lines += [f"  {status.status:<8}  {review_item_label(plan, status.item)}: {status.note}" for status in review]
     return "\n".join(lines)
+
+
+def render_eval_prompts(prompts: "Sequence[EvalPrompt]") -> str:
+    """`carousearch eval` without --live: each prompt and the plan properties it is checked for."""
+    blocks = [f"{prompt.name}: {prompt.prompt}\n  expects: {', '.join(prompt.expect)}" for prompt in prompts]
+    return "\n".join(blocks) + f"\n\n{len(prompts)} prompts. Run them once for real with --live (costs money)."
+
+
+def render_eval_outcome(outcome: "EvalOutcome") -> str:
+    """One live eval prompt: its plan in brief, the checks, the plan review, the tool counts and the cost."""
+    from carousearch.agent.evals import attribute_sources, review_counts
+
+    lines = [f"== {outcome.prompt.name} ==", f"Prompt: {outcome.prompt.prompt}"]
+    answer = outcome.answer
+    if answer is None:
+        return "\n".join([*lines, f"No answer: {outcome.error}"])
+    if answer.plan is not None:
+        sources = ", ".join(f"{source} {count}" for source, count in attribute_sources(answer.plan).items())
+        lines.append(_field("Item class", answer.plan.item_class))
+        lines.append(_field("Attributes", sources))
+        lines.append(_field("Benchmark", describe_benchmark(answer.plan)))
+        lines.append(_field("Template", answer.plan.template or "none"))
+    passed = sum(check.passed for check in outcome.checks)
+    failed = [check.name for check in outcome.checks if not check.passed]
+    lines.append(_field("Checks", f"{passed} of {len(outcome.checks)} passed"
+                                  + (f"; failed: {', '.join(failed)}" if failed else "")))
+    review = ", ".join(f"{status} {count}" for status, count in review_counts(answer).items())
+    lines.append(_field("Review", review or "none"))
+    lines.append(_field("Result", f"{len(answer.kept)} kept, {len(answer.dropped)} dropped, "
+                                  f"{answer.not_shortlisted} not shortlisted"))
+    lines.append(_field("Planning", render_tool_counts("tool call", answer.planning_trace)))
+    lines.append(_field("Execution", render_tool_counts("tool call", answer.tool_trace)))
+    lines.append(_field("Cost", f"about US${outcome.cost_usd:.4f}"))
+    return "\n".join(lines)
+
+
+def render_eval_summary(outcomes: "Sequence[EvalOutcome]") -> str:
+    """The table at the end of a live eval: per prompt, checks passed, review statuses and cost; then the total."""
+    from carousearch.agent.evals import review_counts
+
+    columns = [("PROMPT", 30), ("CHECKS", 7), ("REVIEW", 30), ("COST US$", 0)]
+    rows = [[header for header, _ in columns]]
+    for outcome in outcomes:
+        if outcome.answer is None:
+            rows.append([outcome.prompt.name, "-", (outcome.error or "")[:30], "-"])
+            continue
+        passed = f"{sum(check.passed for check in outcome.checks)}/{len(outcome.checks)}"
+        review = " ".join(f"{status} {count}" for status, count in review_counts(outcome.answer).items())
+        rows.append([outcome.prompt.name, passed, review or "-", f"{outcome.cost_usd:.4f}"])
+    total = sum(outcome.cost_usd for outcome in outcomes)
+    table = "\n".join(_format_row(row, columns) for row in rows)
+    return f"{table}\nTotal: about US${total:.4f} (estimate, list prices)"
 
 
 def render_tool_counts(noun: str, tool_trace: list[ToolCall]) -> str:

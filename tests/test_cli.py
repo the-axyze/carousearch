@@ -15,6 +15,7 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from carousearch import cli
+from carousearch.agent.evals import EvalPrompt
 from carousearch.agent.result import AgentAnswer
 from carousearch.agent.run_prompt import OUTPUT_TOOL_NAME
 from carousearch.agent.settings import AgentBudget, AgentSettings
@@ -749,3 +750,48 @@ def test_plan_only_and_plan_file_cannot_be_combined(capsys) -> None:
     with pytest.raises(SystemExit) as exit_info:
         cli.build_argument_parser().parse_args(["ask", "x", "--plan-only", "--plan-file", "plan.json"])
     assert exit_info.value.code == 2
+
+
+# --- eval ---------------------------------------------------------------------------------------------------------
+
+
+def test_eval_without_live_lists_the_prompts_and_makes_no_request(capsys) -> None:
+    exit_code = cli.main(["eval"], client_factory=client_factory_that_must_not_run)
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert output.startswith("phones_under_benchmark: Find used iPhone 15 Pro listings")
+    assert "  expects: has_benchmark, benchmark_grouped" in output
+    assert "7 prompts. Run them once for real with --live" in output
+
+
+def test_eval_only_rejects_an_unknown_prompt_name(capsys) -> None:
+    assert cli.main(["eval", "--only", "nothing_like_this"], client_factory=client_factory_that_must_not_run) == 2
+    assert "no eval prompt named nothing_like_this" in capsys.readouterr().err
+
+
+def test_eval_live_runs_each_prompt_once_and_writes_a_report(tmp_path: Path, capsys) -> None:
+    prompts = [EvalPrompt(name="first", prompt="Find a table.", expect=["has_benchmark", "source:structured_filter"]),
+               EvalPrompt(name="second", prompt="Find a lamp.", expect=["ranking_stated"])]
+    answer = ModelResponse(parts=[ToolCallPart(OUTPUT_TOOL_NAME, {"kept": [], "dropped": [], "notes": "Done.",
+                                                                  "plan_review": []})])
+
+    exit_code = cli.run_eval_command(
+        prompts, True, AgentSettings(), tmp_path, FakeCarousell().client, RateLimiter(0, 0), sys.stdout, sys.stderr,
+        model=FunctionModel(PlanFirst(lambda messages, info: answer)), worker_model=FunctionModel(unused_worker),
+        knowledge_dir=None,
+    )
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert output.index("== first ==") < output.index("== second ==") < output.index("PROMPT ")
+    assert "Checks:         1 of 2 passed; failed: source:structured_filter" in output
+    assert "Review:         not_done 6" in output
+    assert "Planning:       0 tool calls" in output
+    assert "Total: about US$" in output
+    (report,) = (tmp_path / "evals").iterdir()
+    summaries = json.loads(report.read_text())
+    assert [summary["name"] for summary in summaries] == ["first", "second"]
+    assert summaries[0]["checks"] == [{"name": "has_benchmark", "passed": True},
+                                      {"name": "source:structured_filter", "passed": False}]
+    assert len(list((tmp_path / "runs").iterdir())) == 2
