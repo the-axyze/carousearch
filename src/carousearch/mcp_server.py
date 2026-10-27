@@ -224,7 +224,8 @@ def build_server(services: McpServices) -> MCPServer:
         live (one Carousell request): each filter's field_name, label, type, allowed values, and `set_with`, the
         search_listings argument that applies it. Filters whose set_with is "request.category_fields" go into
         request.category_fields by field_name, e.g. {"make": "Yamaha"}. Some categories split by subcategory
-        instead of by filter (for example motorcycles by licence class), so check subcategories first.
+        instead of by filter (for example motorcycles by licence class), so check subcategories first; a top-level
+        category often reports only the generic filters, while its subcategories report their own.
         """
         if category is None:
             return top_level_categories_response(services.categories)
