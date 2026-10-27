@@ -1,4 +1,5 @@
-"""What Ask mode's templates show: the form, a run's progress, its answer and its failure. Pure functions, no I/O.
+"""What Ask mode's templates show: the form with its method templates, a run's progress, its plan (before anything
+else is spent), its answer with the plan review, and its failure. Pure functions, no I/O.
 
 As in view_models.py, templates only print these fields and pick CSS classes from them. A kept card is built from
 the Listing a search returned (Carousell's data) plus the model's reason; a kept id that no search returned keeps
@@ -9,9 +10,18 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from carousearch.agent.cost import format_cost_line
-from carousearch.agent.result import AgentAnswer, DroppedListing, KeptListing, ToolCall
+from carousearch.agent.cost import format_cost_line, total_cost_usd
+from carousearch.agent.plan import AttributeSpec, SearchPlan, review_item_label
+from carousearch.agent.result import (
+    NOT_SAMPLED_WARNING,
+    AgentAnswer,
+    DroppedListing,
+    KeptListing,
+    ToolCall,
+    planning_sampled_listings,
+)
 from carousearch.agent.settings import AgentBudget, AgentSettings
+from carousearch.agent.templates import METHOD_TEMPLATES, find_template
 from carousearch.carousell.parse import LISTING_URL_TEMPLATE
 from carousearch.filters.schema import Listing
 from carousearch.screening.models import format_sgd
@@ -19,17 +29,33 @@ from carousearch.web.prompt_runs import PromptRun, TraceLine, trace_lines
 from carousearch.web.view_models import ErrorMessage, meta_line, plural
 
 if TYPE_CHECKING:  # agent.progress imports Pydantic AI, which the web app loads only when a run starts
-    from carousearch.agent.progress import BudgetUsed
+    from carousearch.agent.progress import BudgetUsed, ToolCallEvent
 
 MAX_PROMPT_LENGTH = 2000
 EMPTY_PROMPT_MESSAGE = ErrorMessage("Type what you are looking for, then press Run.")
 RUN_IN_PROGRESS_MESSAGE = ErrorMessage("An Ask run is already in progress. Wait for it to finish, then run again.")
 UNKNOWN_RUN_MESSAGE = ErrorMessage("That Ask run is no longer here (the web app keeps the last 10 until it restarts).")
 NOT_FROM_THE_PAGE_MESSAGE = ErrorMessage("Start Ask runs from the carousearch page itself.")
+NOT_PLANNED_MESSAGE = ErrorMessage("That plan is no longer waiting for a decision.")
+NO_MORE_REVISIONS_MESSAGE = ErrorMessage("The plan was revised once already. Execute it, or cancel and ask again.")
+EMPTY_CHANGE_MESSAGE = ErrorMessage("Say in plain words what to change in the plan, then press Revise.")
+NO_NOTE_MESSAGE = ErrorMessage("This answer has no suggested note to save.")
+NO_KNOWLEDGE_FOLDER_MESSAGE = ErrorMessage("The web app has no knowledge folder to save notes to.")
+MAX_CHANGE_LENGTH = 1000
 UNSEEN_LISTING_WARNING = "Not in any search result: the title, price and link are the model's, not Carousell's."
 
 
 # --- the form -----------------------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class TemplateChoiceView:
+    """A method template offered as a starting point: pressing it puts its example request in the prompt box."""
+
+    name: str
+    label: str  # "under benchmark"
+    description: str
+    example_request: str  # with <placeholders> to replace
 
 
 @dataclass(frozen=True)
@@ -39,6 +65,7 @@ class AskFormView:
     missing_key: ErrorMessage | None  # set when the model's provider key is missing; Run is then disabled
     run_disabled: bool
     max_prompt_length: int
+    templates: list[TemplateChoiceView]
 
 
 def ask_form_view(settings: AgentSettings) -> AskFormView:
@@ -53,7 +80,20 @@ def ask_form_view(settings: AgentSettings) -> AskFormView:
         missing_key=missing_key,
         run_disabled=missing_key is not None,
         max_prompt_length=MAX_PROMPT_LENGTH,
+        templates=template_choices(),
     )
+
+
+def template_choices() -> list[TemplateChoiceView]:
+    return [
+        TemplateChoiceView(
+            name=template.name,
+            label=template.name.replace("_", " "),
+            description=template.description,
+            example_request=template.example_request,
+        )
+        for template in METHOD_TEMPLATES
+    ]
 
 
 def missing_key_message(settings: AgentSettings) -> ErrorMessage | None:
@@ -65,6 +105,16 @@ def missing_key_message(settings: AgentSettings) -> ErrorMessage | None:
     return ErrorMessage(
         f"{variable} is not set; the model {model_name} needs it. Add it to .env and restart", "carousearch web"
     )
+
+
+def change_problem(change: str) -> ErrorMessage | None:
+    """Why a plan change cannot be sent to the planner (empty, or too long), or None."""
+    text = change.strip()
+    if not text:
+        return EMPTY_CHANGE_MESSAGE
+    if len(text) > MAX_CHANGE_LENGTH:
+        return ErrorMessage(f"Keep the change to {MAX_CHANGE_LENGTH:,} characters; this one has {len(text):,}.")
+    return None
 
 
 def prompt_problem(prompt: str) -> ErrorMessage | None:
@@ -122,6 +172,11 @@ def latest_budget(run: PromptRun) -> "BudgetUsed | None":
     return run.events[-1].budget if run.events else None
 
 
+def current_events(run: PromptRun) -> "list[ToolCallEvent]":
+    """The events of the phase in flight: planning's while planning, otherwise the execution's."""
+    return run.planning_events if run.status == "planning" else run.events
+
+
 # --- a run in flight ----------------------------------------------------------------------------------------------
 
 
@@ -135,16 +190,138 @@ class ProgressView:
     trace: list[TraceRowView]
 
 
-def progress_view(run: PromptRun, budget: AgentBudget, elapsed_seconds: float) -> ProgressView:
-    lines = trace_lines(run.events)
+def progress_view(
+    run: PromptRun, budget: AgentBudget, elapsed_seconds: float, planning_budget: AgentBudget | None = None
+) -> ProgressView:
+    """A run in flight. While planning, its planning calls against the planning budget (if given)."""
+    planning = run.status == "planning"
+    events = current_events(run)
+    lines = trace_lines(events)
     calls = plural(len(lines), "tool call") if lines else "starting"
+    phase = "Planning" if planning else "Running"
+    shown_budget = planning_budget if planning and planning_budget is not None else budget
     return ProgressView(
         run_id=run.run_id,
         poll_url=f"/ask/{run.run_id}",
         prompt=run.prompt,
-        status_line=f"Running · {format_duration(elapsed_seconds)} · {calls}",
-        budget_line=budget_used_line(latest_budget(run), budget),
+        status_line=f"{phase} · {format_duration(elapsed_seconds)} · {calls}",
+        budget_line=budget_used_line(events[-1].budget if events else None, shown_budget),
         trace=progress_trace_rows(lines),
+    )
+
+
+# --- the plan, before anything else is spent ----------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class AttributeView:
+    name: str
+    unit: str | None
+    source: str  # "text extraction"
+    source_class: str  # the CSS modifier, the source's value
+    detail: str
+    purpose: str
+
+
+@dataclass(frozen=True)
+class ExclusionView:
+    rule: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class PlanView:
+    run_id: str
+    prompt: str
+    goal: str
+    item_class: str
+    value_drivers: list[str]
+    attributes: list[AttributeView]
+    benchmark: list[tuple[str, str]]  # (label, value) rows; empty without a benchmark
+    exclusions: list[ExclusionView]
+    ranking: str
+    template_line: str  # "under_benchmark: Listings priced well below ..." or "none"
+    estimate_line: str  # "2 searches, 10 details, 0 photos, 1 worker call (run budget: 40 tool calls, 15 photos)"
+    assumptions: list[str]
+    knowledge_files: list[str]
+    planning_line: str  # "Planned in 12 s · 3 tool calls · about US$0.0041"
+    sampling_warning: str | None  # set when planning read no listings
+    planning_trace: list[TraceRowView]
+    revised: bool
+    can_revise: bool
+    execute_url: str
+    revise_url: str
+    cancel_url: str
+    max_change_length: int
+
+
+def plan_view(run: PromptRun, budget: AgentBudget, planning_seconds: float) -> PlanView:
+    assert run.planning is not None, "only a planned run has a plan to show"
+    plan = run.planning.plan
+    planning_cost = total_cost_usd(run.planning.usage)
+    calls = plural(len(run.planning.tool_trace), "tool call")
+    return PlanView(
+        run_id=run.run_id,
+        prompt=run.prompt,
+        goal=plan.goal,
+        item_class=plan.item_class,
+        value_drivers=plan.value_drivers,
+        attributes=[attribute_view(attribute) for attribute in plan.attributes],
+        benchmark=benchmark_rows(plan),
+        exclusions=[ExclusionView(rule=exclusion.rule, reason=exclusion.reason) for exclusion in plan.exclusions],
+        ranking=plan.ranking,
+        template_line=template_line(plan.template),
+        estimate_line=estimate_line(plan, budget),
+        assumptions=plan.assumptions,
+        knowledge_files=run.planning.knowledge_files,
+        planning_line=(
+            f"Planned in {format_duration(planning_seconds)} · {calls} · about US${planning_cost:.4f} so far"
+        ),
+        sampling_warning=None if planning_sampled_listings(run.planning.tool_trace) else NOT_SAMPLED_WARNING,
+        planning_trace=answer_trace_rows(run.planning.tool_trace),
+        revised=run.revisions > 0,
+        can_revise=run.can_revise,
+        execute_url=f"/ask/{run.run_id}/execute",
+        revise_url=f"/ask/{run.run_id}/revise",
+        cancel_url=f"/ask/{run.run_id}/cancel",
+        max_change_length=MAX_CHANGE_LENGTH,
+    )
+
+
+def attribute_view(attribute: AttributeSpec) -> AttributeView:
+    return AttributeView(
+        name=attribute.name,
+        unit=attribute.unit,
+        source=attribute.source.value.replace("_", " "),
+        source_class=attribute.source.value.replace("_", "-"),
+        detail=attribute.detail,
+        purpose=attribute.purpose,
+    )
+
+
+def benchmark_rows(plan: SearchPlan) -> list[tuple[str, str]]:
+    benchmark = plan.benchmark
+    if benchmark is None:
+        return []
+    return [
+        ("Population", benchmark.population),
+        ("Grouped by", ", ".join(benchmark.grouping) or "one group"),
+        ("Statistic", benchmark.statistic),
+        ("Normalisation", benchmark.normalisation or "none"),
+    ]
+
+
+def template_line(name: str | None) -> str:
+    template = find_template(name)
+    return f"{template.name}: {template.description}" if template else "none"
+
+
+def estimate_line(plan: SearchPlan, budget: AgentBudget) -> str:
+    estimate = plan.budget_estimate
+    return (
+        f"{plural(estimate.searches, 'search page')}, {plural(estimate.details, 'detail')}, "
+        f"{plural(estimate.photos, 'photo')}, {plural(estimate.judgements, 'worker call')} "
+        f"(run budget: {plural(budget.max_tool_calls, 'tool call')}, {plural(budget.max_photos, 'photo')})"
     )
 
 
@@ -174,14 +351,33 @@ class DroppedRowView:
 
 
 @dataclass(frozen=True)
+class ReviewRowView:
+    label: str  # "Attribute size_cm", "Exclusion 1: <rule>", "Benchmark", "Ranking"
+    status: str  # "done", "partial", "not done"
+    status_class: str  # the CSS modifier: "done", "partial", "not-done"
+    note: str
+
+
+@dataclass(frozen=True)
+class SuggestedNoteView:
+    text: str
+    save_url: str  # POST /ask/{run_id}/knowledge
+    saved_to: str | None  # "knowledge/tables.md" once saved
+
+
+@dataclass(frozen=True)
 class AnswerView:
     prompt: str
     summary: str  # "2 kept · 5 dropped · 30 not shortlisted · 6 tool calls · 14 s"
     budget_line: str
+    plan_line: str | None  # "Plan: <item class> · under_benchmark", None without a plan
     notes: list[str]
+    review: list[ReviewRowView]
+    suggested_note: SuggestedNoteView | None
     kept: list[KeptCardView]
     dropped: list[DroppedRowView]
     trace: list[TraceRowView]
+    planning_trace: list[TraceRowView]
 
 
 def answer_view(run: PromptRun, answer: AgentAnswer, budget: AgentBudget, elapsed_seconds: float) -> AnswerView:
@@ -196,10 +392,39 @@ def answer_view(run: PromptRun, answer: AgentAnswer, budget: AgentBudget, elapse
         prompt=run.prompt,
         summary=" · ".join(summary_parts),
         budget_line=budget_used_line(latest_budget(run), budget),
+        plan_line=plan_line(answer.plan),
         notes=[*notes_lines(answer.notes), format_cost_line(answer.usage)],
+        review=[review_row(answer.plan, status.item, status.status, status.note) for status in answer.plan_review],
+        suggested_note=suggested_note_view(run, answer),
         kept=[kept_card(kept, run.seen_listings.get(kept.listing_id)) for kept in answer.kept],
         dropped=[dropped_row(dropped, run.seen_listings.get(dropped.listing_id)) for dropped in answer.dropped],
         trace=answer_trace_rows(answer.tool_trace),
+        planning_trace=answer_trace_rows(answer.planning_trace),
+    )
+
+
+def plan_line(plan: SearchPlan | None) -> str | None:
+    if plan is None:
+        return None
+    return f"Plan: {plan.item_class}" + (f" · {plan.template}" if plan.template else "")
+
+
+def review_row(plan: SearchPlan | None, item: str, status: str, note: str) -> ReviewRowView:
+    return ReviewRowView(
+        label=review_item_label(plan, item),
+        status=status.replace("_", " "),
+        status_class=status.replace("_", "-"),
+        note=note,
+    )
+
+
+def suggested_note_view(run: PromptRun, answer: AgentAnswer) -> SuggestedNoteView | None:
+    if not answer.suggested_knowledge:
+        return None
+    return SuggestedNoteView(
+        text=answer.suggested_knowledge,
+        save_url=f"/ask/{run.run_id}/knowledge",
+        saved_to=f"knowledge/{run.saved_note}" if run.saved_note else None,
     )
 
 
@@ -264,11 +489,30 @@ class FailedView:
 
 
 def failed_view(run: PromptRun, error: ErrorMessage, budget: AgentBudget) -> FailedView:
+    """A failed run: the calls of the phase that failed (planning when no execution call was made)."""
+    events = run.events or run.planning_events
     return FailedView(
         prompt=run.prompt,
         error=error,
-        budget_line=budget_used_line(latest_budget(run), budget),
-        trace=progress_trace_rows(trace_lines(run.events)),
+        budget_line=budget_used_line(events[-1].budget if events else None, budget),
+        trace=progress_trace_rows(trace_lines(events)),
+    )
+
+
+# --- a cancelled plan, and a saved note -----------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CancelledView:
+    prompt: str
+    text: str
+
+
+def cancelled_view(run: PromptRun) -> CancelledView:
+    calls = len(run.planning.tool_trace) if run.planning else 0
+    return CancelledView(
+        prompt=run.prompt,
+        text=f"Plan cancelled. Nothing was searched beyond planning ({plural(calls, 'tool call')}).",
     )
 
 

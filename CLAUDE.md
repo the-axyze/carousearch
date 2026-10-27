@@ -1,6 +1,6 @@
 # carousearch: working rules for Claude Code
 
-Carousearch is a single-user, personal tool for searching Carousell Singapore (carousell.sg) through its undocumented internal JSON endpoints, and for flagging listings whose shown price does not apply to what was searched. It has a local web app (the main interface), a Telegram bot, a CLI, an MCP server for external agent hosts, and an in-app agent (`carousearch ask`) that uses the same MCP tools.
+Carousearch is a single-user, personal tool for searching Carousell Singapore (carousell.sg) through its undocumented internal JSON endpoints, and for flagging listings whose shown price does not apply to what was searched. It has a local web app (the main interface), a Telegram bot, a CLI, an MCP server for external agent hosts, and an in-app agent (`carousearch ask`, the web app's Ask mode) that uses the same MCP tools. The agent plans first and executes an agreed plan; it has no knowledge of any kind of item built in (see "Agent: no item knowledge" below).
 
 The live plan, current state and open questions are in [docs/NEXT_STEPS.md](docs/NEXT_STEPS.md). Read it before starting work.
 
@@ -9,7 +9,7 @@ The live plan, current state and open questions are in [docs/NEXT_STEPS.md](docs
 Every front end builds a `SearchRequest` and calls `CarousellClient`. Nothing else talks to Carousell.
 
 ```
-front ends   cli.py (11 commands) · bot/ · web/ · mcp_server.py · agent/ (via mcp_server's tools)
+front ends   cli.py (12 commands) · bot/ · web/ · mcp_server.py · agent/ (via mcp_server's tools)
                  │
                  ▼
 shared core  SearchRequest (filters/schema.py) ──> CarousellClient (carousell/client.py) ──> carousell.sg
@@ -17,20 +17,24 @@ shared core  SearchRequest (filters/schema.py) ──> CarousellClient (carousel
 
 | Module | Job |
 |---|---|
-| `filters/schema.py` | `SearchRequest`, `Listing`, `ListingDetail`, `SearchResult`: the shared data model (semantic enum values) |
+| `filters/schema.py` | `SearchRequest`, `Listing` (with the card's `description_snippet`), `ListingDetail` (with the seller-entered `attributes`), `SearchResult`, `CategoryFilter`: the shared data model (semantic enum values) |
 | `filters/payload.py` | `SearchRequest` to Carousell's search body; the only place with Carousell codes (pure) |
-| `carousell/client.py` | bootstrap (cookies + CSRF), `search`, `get_listing`, `get_photo`; all Carousell network I/O through one `RateLimiter` |
-| `carousell/parse.py`, `errors.py`, `rate_limit.py` | response parsing and block detection (pure), typed errors, 1.0 s ± 0.3 s pacing |
-| `storage.py` | SQLite (`data/carousearch.db`): seen listings, detail cache, saved searches, price cache, market tables |
-| `screening/` | `rules.py` (pure tags), `models.py` (`Tag`, `ResolvedPrice`, `ScreenedListing`), `pipeline.py` (`screen_listings`, I/O injected), `price_resolver.py` (Claude or Noop), `store.py` |
+| `carousell/client.py` | bootstrap (cookies + CSRF), `search`, `get_listing`, `get_photo`, `get_category_filters`; all Carousell network I/O through one `RateLimiter` |
+| `carousell/parse.py`, `errors.py`, `rate_limit.py`, `categories.py` | response parsing and block detection (pure), typed errors, 1.0 s ± 0.3 s pacing, the category tree snapshot (`category_tree.json`) |
+| `storage.py` | SQLite (`data/carousearch.db`): seen listings, detail cache, saved searches, price cache, judgement cache, market tables |
+| `screening/` | `rules.py` (pure tags), `models.py` (`Tag`, `ResolvedPrice`, `ScreenedListing`), `pipeline.py` (`screen_listings`, I/O injected), `price_resolver.py` (the worker model through Pydantic AI, or Noop), `store.py` |
 | `market/` | `harvest` (pages into `listings` + `harvest_runs`), `analysis` and `render` (pure statistics), `hashing`, `limits` |
-| `photos.py` | downsize a photo for a model (pure, Pillow) |
+| `photos.py`, `language_models.py` | downsize a photo for a model (pure, Pillow); vendor-neutral model strings and provider keys for the planner and worker tiers |
 | `canary.py`, `fixture_capture.py` | daily health check; dev command that refreshes `tests/fixtures/` |
 | `config.py`, `text_render.py`, `cli.py` | settings from `.env`, data dir, ports; terminal output; the `carousearch` command |
 | `bot/` | Telegram wizard: `state.py`, `keyboard.py`, `messages.py`, `price_input.py` (pure), `session_store.py` (in memory), `handlers.py` (I/O), `app.py` |
-| `web/` | FastAPI + Jinja2 + HTMX: `app.py`, `routes.py` (thin), `services.py` (blocking work, one call at a time), `query_params.py`, `view_models.py` and `prompt_view_models.py` (pure), `prompt_runs.py` (Ask mode's runs and their in-memory registry), `templates/`, `static/` (no build step) |
-| `mcp_server.py` | `build_server(McpServices)`: `search_listings`, `listing_details`, `listing_photo`, `screening_tags`, `usage_notes`. A connector only: no filtering, ranking or LLM calls |
-| `agent/` | `run_prompt.py`: Pydantic AI agent over `build_server(...)` in-process, budget hook `ToolCallGate`; `budget.py`, `trace.py`, `progress.py` (pure; `progress.py` holds the events a run's optional observer receives); `settings.py` (`AGENT_MODEL`, budgets, keys); `prompt.py`; `result.py` (`AgentAnswer`) |
+| `web/` | FastAPI + Jinja2 + HTMX: `app.py`, `routes.py` (thin), `services.py` (blocking work, one call at a time), `query_params.py`, `view_models.py` and `prompt_view_models.py` (pure), `prompt_runs.py` (Ask mode's runs: plan, then execute on the owner's word; in-memory registry), `templates/`, `static/` (no build step) |
+| `mcp_server.py` | `build_server(McpServices)`: `search_listings`, `listing_details`, `listing_photo`, `screening_tags`, `category_fields`, `sample_descriptions`, `usage_notes`. A connector only: no filtering, ranking or LLM calls |
+| `agent/` planning layer | `plan.py` (`SearchPlan`, `PlanItemStatus`, checks; pure), `templates.py` (generic method templates; pure), `knowledge.py` (the owner's `knowledge/` notes), `planning.py` (`plan_prompt`: planner with the discovery tools on a small budget), `prompt.py` (method-only instructions), `evals.py` (the cross-category eval set and its plan checks) |
+| `agent/` execution | `run_prompt.py` (`execute_plan`, and `run_prompt` for both phases), `toolsets.py` (`ToolCallGate`, the hook every tool call passes through), `local_tools.py` (`run_python`, `extract_fields`, `judge_listings`, `judge_photos`, `photo_metrics`), `extraction.py`, `judging.py`, `worker.py`, `judge_cache.py`, `sandbox.py`, `listings_db.py`, `photo_metrics.py`, `run_photos.py`, `web_search.py`, `run_directory.py` |
+| `agent/` bookkeeping | `settings.py` (models, per-run and planning budgets, keys, prices), `budget.py`, `trace.py`, `progress.py`, `cost.py`, `tool_results.py` (pure), `result.py` (`AgentAnswer` with the plan, its review and both phases' traces) |
+
+Outside `src/`: `knowledge/` (the owner's optional notes; gitignored except its README) and `evals/prompts.json` (the eval prompts).
 
 ## Setup
 
@@ -57,7 +61,8 @@ All of these except `whoami` and `--help` can reach carousell.sg. See the hard c
 .venv/bin/carousearch whoami                  # Telegram user ids that messaged the bot recently
 .venv/bin/carousearch web [--port 8765]       # http://localhost:8765, bound to 127.0.0.1
 .venv/bin/carousearch mcp [--transport http --port 8766]   # stdio by default; http has no auth
-.venv/bin/carousearch ask "<prompt>" [--json] [--model provider:model] [--max-photos N]
+.venv/bin/carousearch ask "<prompt>" [--json] [--model provider:model] [--max-photos N] [--plan-only | --plan-file plan.json]
+.venv/bin/carousearch eval [--live] [--only NAME]   # lists the eval prompts; --live runs each once (models and Carousell)
 ```
 
 On the owner's machine the bot and web app run under `nohup` (commands in docs/NEXT_STEPS.md, section 3). Do not stop or restart them unless asked.
@@ -65,12 +70,12 @@ On the owner's machine the bot and web app run under `nohup` (commands in docs/N
 ## Tests and checks
 
 ```bash
-.venv/bin/pytest                 # offline; 765 passed, 1 deselected at 2026-10-26
+.venv/bin/pytest                 # offline; 1061 passed, 1 deselected at 2026-10-27
 .venv/bin/pytest -m live         # 1 test, about 5 real Carousell requests; owner's home machine only
 .venv/bin/ruff check src tests   # must print "All checks passed!"
 ```
 
-There is no type checker yet (adding pyright is hardening task H1 in NEXT_STEPS). Test helpers: `tests/fake_carousell.py` (`FakeCarousell` over `httpx.MockTransport`, fixture-backed), `tests/fake_mcp_services.py` (fakes behind `McpServices`), `tests/fixture_files.py`. Agent tests use Pydantic AI's `FunctionModel` with `models.ALLOW_MODEL_REQUESTS = False`; web tests use FastAPI's `TestClient`; bot tests use a fake bot. Fixtures in `tests/fixtures/` are trimmed real responses captured 2026-10-24.
+There is no type checker yet (adding pyright is hardening task H1 in NEXT_STEPS). Test helpers: `tests/fake_carousell.py` (`FakeCarousell` over `httpx.MockTransport`, fixture-backed), `tests/fake_mcp_services.py` (fakes behind `McpServices`), `tests/fixture_files.py`, `tests/scripted_model.py` (`ScriptedModel`, and `PlanFirst`, which answers the planning phase with a fixed plan), `tests/scripted_worker.py`, `tests/plan_examples.py` (`EXAMPLE_PLAN`). Agent tests use Pydantic AI's `FunctionModel` with `models.ALLOW_MODEL_REQUESTS = False`; web tests use FastAPI's `TestClient`; bot tests use a fake bot. Fixtures in `tests/fixtures/` are trimmed real responses captured 2026-10-24.
 
 ## Code rules
 
@@ -82,6 +87,12 @@ There is no type checker yet (adding pyright is hardening task H1 in NEXT_STEPS)
 - Type hints everywhere. Pydantic models for persisted and model-facing data, frozen dataclasses for in-process results, `StrEnum` with semantic values.
 - Reuse over rewrite: use what Pydantic AI, the MCP SDK or the host already provides. No bespoke agent loops, tool registries or vision pipelines.
 - Line length 120, ruff clean. No `print` outside the CLI and text rendering. Never log secrets.
+
+## Agent: no item knowledge
+
+- The agent must search any kind of item. No code, prompt, tool description or worker instruction may name a kind of item, a brand or a domain term; `tests/test_agent_prompt.py` checks every model-facing text against a list of such words.
+- Domain knowledge enters only through the model's general knowledge, web search, the listings the planner samples (`sample_descriptions`), or the owner's `knowledge/` notes. Improve the agent by improving its method (prompt steps, plan checks, tools), never by adding item rules.
+- A plan is shown before anything beyond planning is spent (web: Execute; CLI: `--plan-only`), and every answer carries a review of each plan item.
 
 ## Testing rules
 

@@ -1,5 +1,7 @@
 """A scripted model for agent tests: a FunctionModel function that plays its turns in order, plus helpers that build
-tool-call turns and the final answer. Shared by the agent and web tests; never reaches a provider."""
+tool-call turns, the plan and the final answer. PlanFirst answers the planning phase with a fixed plan and passes the
+execution phase to a script, for tests about execution. Shared by the agent, CLI and web tests; never reaches a
+provider."""
 
 from collections.abc import Callable
 
@@ -7,7 +9,11 @@ from pydantic_ai import models
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo
 
+from carousearch.agent.plan import SearchPlan
+from carousearch.agent.planning import PLAN_OUTPUT_TOOL_NAME
 from carousearch.agent.run_prompt import OUTPUT_TOOL_NAME
+
+from plan_examples import EXAMPLE_PLAN
 
 models.ALLOW_MODEL_REQUESTS = False  # a test that reaches a real provider fails instead of spending money
 
@@ -42,3 +48,30 @@ def calls(*tool_calls: tuple[str, dict]) -> ModelResponse:
 def final_answer(notes: str = "", kept: list[dict] | None = None, dropped: list[dict] | None = None) -> ModelResponse:
     arguments = {"kept": kept or [], "dropped": dropped or [], "notes": notes}
     return ModelResponse(parts=[ToolCallPart(OUTPUT_TOOL_NAME, arguments)])
+
+
+def plan_answer(plan: SearchPlan = EXAMPLE_PLAN) -> ModelResponse:
+    """The planning phase's final turn: the plan as the search_plan output tool's arguments."""
+    return ModelResponse(parts=[ToolCallPart(PLAN_OUTPUT_TOOL_NAME, plan.model_dump(mode="json"))])
+
+
+def is_planning(info: AgentInfo) -> bool:
+    return [tool.name for tool in info.output_tools] == [PLAN_OUTPUT_TOOL_NAME]
+
+
+class PlanFirst:
+    """A FunctionModel function for both phases: planning requests get `plan` at once (kept in planning_requests),
+    every other request goes to `script`, so the script's turns and request counts are the execution phase's."""
+
+    def __init__(
+        self, script: Callable[[list[ModelMessage], AgentInfo], ModelResponse], plan: SearchPlan = EXAMPLE_PLAN
+    ) -> None:
+        self.script = script
+        self.plan = plan
+        self.planning_requests: list[tuple[list[ModelMessage], AgentInfo]] = []
+
+    def __call__(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if is_planning(info):
+            self.planning_requests.append((list(messages), info))
+            return plan_answer(self.plan)
+        return self.script(messages, info)

@@ -1,0 +1,92 @@
+{#- A plan waiting for the owner's decision. Nothing beyond planning has been spent; no polling. -#}
+<div id="ask-plan" class="ask-plan" data-run-id="{{ plan.run_id }}">
+  <p class="ask-prompt">{{ plan.prompt }}</p>
+  <p class="results-summary">{{ plan.planning_line }}{% if plan.revised %} · revised once{% endif %}</p>
+  {%- if plan.sampling_warning %}
+  <p class="ask-warning plan-warning">{{ plan.sampling_warning }}</p>
+  {%- endif %}
+
+  <section class="plan-card" aria-label="The plan">
+    <h2 class="ask-heading">Plan</h2>
+    <dl class="plan-facts">
+      <dt>Goal</dt><dd>{{ plan.goal }}</dd>
+      <dt>Item class</dt><dd>{{ plan.item_class }}</dd>
+      <dt>Value drivers</dt>
+      <dd>{% if plan.value_drivers %}{{ plan.value_drivers | join("; ") }}{% else %}none named{% endif %}</dd>
+      <dt>Template</dt><dd>{{ plan.template_line }}</dd>
+      <dt>Ranking</dt><dd>{{ plan.ranking }}</dd>
+      <dt>Estimate</dt><dd>{{ plan.estimate_line }}</dd>
+    </dl>
+
+    <h3 class="plan-heading">Attributes ({{ plan.attributes | length }})</h3>
+    <ul class="plan-list">
+      {%- for attribute in plan.attributes %}
+      <li class="plan-attribute">
+        <code>{{ attribute.name }}</code>{% if attribute.unit %} <span class="muted">({{ attribute.unit }})</span>{% endif %}
+        <span class="source-badge source-{{ attribute.source_class }}">{{ attribute.source }}</span>
+        <span class="plan-detail">{{ attribute.detail }}</span>
+        <span class="plan-why">{{ attribute.purpose }}</span>
+      </li>
+      {%- endfor %}
+    </ul>
+
+    <h3 class="plan-heading">Benchmark</h3>
+    {%- if plan.benchmark %}
+    <dl class="plan-facts">
+      {%- for label, value in plan.benchmark %}<dt>{{ label }}</dt><dd>{{ value }}</dd>{% endfor %}
+    </dl>
+    {%- else %}
+    <p class="muted">No price benchmark: the goal needs none.</p>
+    {%- endif %}
+
+    <h3 class="plan-heading">Exclusions ({{ plan.exclusions | length }})</h3>
+    {%- if plan.exclusions %}
+    <ol class="plan-list">
+      {%- for exclusion in plan.exclusions %}
+      <li>{{ exclusion.rule }} <span class="plan-why">{{ exclusion.reason }}</span></li>
+      {%- endfor %}
+    </ol>
+    {%- else %}
+    <p class="muted">Nothing is left out.</p>
+    {%- endif %}
+
+    <h3 class="plan-heading">Assumptions</h3>
+    {%- if plan.assumptions %}
+    <ul class="plan-list">{% for assumption in plan.assumptions %}<li>{{ assumption }}</li>{% endfor %}</ul>
+    {%- else %}
+    <p class="muted">None stated.</p>
+    {%- endif %}
+    {%- if plan.knowledge_files %}
+    <p class="muted">Your notes used: {{ plan.knowledge_files | join(", ") }}</p>
+    {%- endif %}
+  </section>
+
+  <div class="plan-actions">
+    <button class="search-button" type="button" hx-post="{{ plan.execute_url }}" hx-target="#ask-run"
+            hx-swap="innerHTML" hx-disabled-elt="this">Execute</button>
+    <button class="secondary-button" type="button" hx-post="{{ plan.cancel_url }}" hx-target="#ask-run"
+            hx-swap="innerHTML">Cancel</button>
+  </div>
+  {%- if plan.can_revise %}
+  <details class="ask-section plan-edit">
+    <summary>Edit</summary>
+    <form class="plan-edit-form" hx-post="{{ plan.revise_url }}" hx-target="#ask-run" hx-swap="innerHTML"
+          hx-disabled-elt="find button">
+      <textarea class="ask-input" name="change" rows="2" maxlength="{{ plan.max_change_length }}"
+                placeholder="Say what to change, e.g. compare within each size, or keep posts listing several items"
+                aria-label="What should change in the plan?"></textarea>
+      <button class="secondary-button" type="submit">Revise plan</button>
+    </form>
+    <p class="muted">The planner revises the plan once; then Execute or Cancel.</p>
+  </details>
+  {%- endif %}
+
+  {%- if plan.planning_trace %}
+  <details class="ask-section">
+    <summary>Planning calls ({{ plan.planning_trace | length }})</summary>
+    <ol class="trace">
+      {%- for row in plan.planning_trace %}{% include "partials/ask_trace_row.html" %}{% endfor %}
+    </ol>
+  </details>
+  {%- endif %}
+</div>

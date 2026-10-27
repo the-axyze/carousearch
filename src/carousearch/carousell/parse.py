@@ -160,8 +160,26 @@ def parse_listing_card(card: dict) -> Listing:
         listing_url=LISTING_URL_TEMPLATE.format(listing_id=listing_id),
         posted_or_bumped_at=posted_or_bumped_at,
         posted_or_bumped_kind=posted_or_bumped_kind,
+        description_snippet=card_description_snippet(card),
         raw=card,
     )
+
+
+def card_description_snippet(card: Mapping[str, Any]) -> str | None:
+    """The description excerpt on a search card: its first non-empty `paragraph` component under `belowFold`,
+    unless that paragraph is only the condition label (a card whose listing has no description)."""
+    below_fold = card.get("belowFold")
+    if not isinstance(below_fold, list):
+        return None
+    condition_label = CARD_CONDITION_LABELS.get(str(card.get("condition")))
+    for component in below_fold:
+        if not isinstance(component, Mapping) or component.get("component") != "paragraph":
+            continue
+        text = component.get("stringContent")
+        if isinstance(text, str) and text.strip():
+            snippet = " ".join(text.split())
+            return None if snippet == condition_label else snippet
+    return None
 
 
 def parse_card_timestamp(above_fold: Any) -> tuple[PostedOrBumpedKind | None, datetime | None]:
@@ -246,7 +264,23 @@ def parse_listing_detail(listing_json: dict) -> ListingDetail:
         meetup_locations=[parse_meetup_location(meetup) for meetup in meetups if isinstance(meetup, dict)],
         category_id=_optional_string(collection.get("id")),
         category_name=collection.get("name") or collection.get("display_name"),
+        attributes=listing_attributes(listing_json.get("listing_attributes")),
     )
+
+
+# Keys of `listing_attributes` that are display text about the listing, not seller-entered fields.
+NON_FIELD_ATTRIBUTES = frozenset({"category", "time_created", "condition"})
+
+
+def listing_attributes(attributes: Any) -> dict[str, str]:
+    """The seller-entered category fields of a listing detail's `listing_attributes`, as displayed."""
+    if not isinstance(attributes, Mapping):
+        return {}
+    return {
+        str(name): value.strip()
+        for name, value in attributes.items()
+        if name not in NON_FIELD_ATTRIBUTES and isinstance(value, str) and value.strip()
+    }
 
 
 def _detail_condition_label(listing_json: dict) -> str | None:

@@ -101,7 +101,7 @@ CREATE TABLE IF NOT EXISTS price_resolution_cache (
     PRIMARY KEY (listing_id, query)
 );
 CREATE TABLE IF NOT EXISTS judgement_cache (
-    kind       TEXT NOT NULL,                 -- "listing" (judge_listings) or "photo" (judge_photos)
+    kind       TEXT NOT NULL,                 -- "listing" (judge_listings), "photo" (judge_photos), "extraction"
     listing_id TEXT NOT NULL,
     criterion  TEXT NOT NULL,                 -- normalised (agent.judging.normalise_criterion)
     model      TEXT NOT NULL,                 -- the worker model string

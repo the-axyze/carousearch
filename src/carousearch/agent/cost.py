@@ -66,11 +66,29 @@ class UsageLedger:
             output_tokens=usage.output_tokens,
         )
 
+    def add_report(self, usages: Sequence[ModelUsage]) -> None:
+        """Add an earlier phase's report (for example the planning phase's) to this run's totals."""
+        for usage in usages:
+            self.add(
+                usage.role,
+                usage.model,
+                requests=usage.requests,
+                input_tokens=usage.input_tokens,
+                cached_input_tokens=usage.cached_input_tokens,
+                output_tokens=usage.output_tokens,
+                web_searches=usage.web_searches,
+            )
+
     def report(self, find_price: Callable[[str], ModelPrice | None] = price_for) -> list[ModelUsage]:
         """Planner first, then workers, each with its estimated cost."""
         ordered = sorted(self._usage.values(), key=lambda usage: (usage.role != "planner", usage.model))
         return [usage.model_copy(update={"estimated_cost_usd": estimate_cost_usd(usage, find_price(usage.model))})
                 for usage in ordered]
+
+
+def total_cost_usd(usages: Sequence[ModelUsage]) -> float:
+    """The sum of the priced models' estimates (models without a price count as 0)."""
+    return sum(usage.estimated_cost_usd or 0.0 for usage in usages)
 
 
 def estimate_cost_usd(usage: ModelUsage, price: ModelPrice | None) -> float | None:

@@ -1,6 +1,6 @@
 import pytest
 
-from carousearch.agent.cost import ModelUsage, UsageLedger, estimate_cost_usd, format_cost_line
+from carousearch.agent.cost import ModelUsage, UsageLedger, estimate_cost_usd, format_cost_line, total_cost_usd
 from carousearch.agent.settings import WEB_SEARCH_USD_PER_CALL, ModelPrice
 
 PRICE = ModelPrice(input_usd_per_million=1.0, cached_input_usd_per_million=0.1, output_usd_per_million=4.0)
@@ -73,3 +73,15 @@ def test_the_cost_line_says_when_a_model_has_no_price() -> None:
 
 def test_no_requests_no_cost() -> None:
     assert format_cost_line([]) == "Cost (estimate): no model requests were made."
+
+
+def test_an_earlier_phases_report_adds_to_the_run_totals() -> None:
+    planning = UsageLedger()
+    planning.add("planner", "openai:gpt-5.4-mini", requests=2, input_tokens=1000, output_tokens=100, web_searches=1)
+    ledger = UsageLedger()
+    ledger.add_report(planning.report())
+    ledger.add("planner", "openai:gpt-5.4-mini", requests=3, input_tokens=500)
+
+    (usage,) = ledger.report()
+    assert (usage.requests, usage.input_tokens, usage.output_tokens, usage.web_searches) == (5, 1500, 100, 1)
+    assert total_cost_usd(ledger.report()) == pytest.approx(usage.estimated_cost_usd)

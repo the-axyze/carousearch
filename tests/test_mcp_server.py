@@ -17,12 +17,14 @@ from carousearch.mcp_server import (
     ListingField,
     build_server,
     category_fields_response,
+    cut_text,
     filter_setter,
     load_usage_notes,
     project_listing,
+    sample_entry,
 )
 
-from fake_mcp_services import DETAIL, PHOTO_URL, SEARCH_RESULT, FakeCarousellSource, fake_services, jpeg_bytes
+from fake_mcp_services import DETAIL, NOW, PHOTO_URL, SEARCH_RESULT, FakeCarousellSource, fake_services, jpeg_bytes
 
 
 def build_test_server(carousell: FakeCarousellSource):
@@ -47,7 +49,7 @@ def error_text(result: CallToolResult) -> str:
     return result.content[0].text
 
 
-def test_the_server_offers_exactly_the_six_tools_and_sends_its_usage_notes_as_instructions() -> None:
+def test_the_server_offers_exactly_the_seven_tools_and_sends_its_usage_notes_as_instructions() -> None:
     async def connect() -> tuple[set[str], str | None]:
         async with Client(build_test_server(FakeCarousellSource())) as client:
             tools = await client.list_tools()
@@ -56,7 +58,8 @@ def test_the_server_offers_exactly_the_six_tools_and_sends_its_usage_notes_as_in
     tool_names, instructions = anyio.run(connect)
 
     assert tool_names == {
-        "search_listings", "listing_details", "listing_photo", "screening_tags", "category_fields", "usage_notes"
+        "search_listings", "listing_details", "listing_photo", "screening_tags", "category_fields",
+        "sample_descriptions", "usage_notes",
     }
     assert instructions == load_usage_notes()
 
@@ -304,3 +307,71 @@ def test_filters_that_search_listings_cannot_set_say_so() -> None:
     for field_name, filter_type in [("vehicle_age", "float_range"), ("_delivery", "boolean"), ("collections", "id_or_keyword")]:
         category_filter = CategoryFilter(field_name=field_name, label=None, filter_type=filter_type, options=[])
         assert filter_setter(category_filter) == "not settable through search_listings"
+
+
+# --- sample_descriptions ---------------------------------------------------------------------------------------
+
+
+def test_sample_descriptions_reads_one_page_and_shows_card_snippets_without_fetching_details() -> None:
+    carousell = FakeCarousellSource()
+
+    answer = json_answer(call_tool(build_test_server(carousell), "sample_descriptions",
+                                   {"request": {"query": "iphone 15"}, "n": 3}))
+
+    assert [request.page_size for request in carousell.search_requests] == [3]
+    assert carousell.detail_requests == []
+    first = answer["samples"][0]
+    assert first == {
+        "id": SEARCH_RESULT.listings[0].id,
+        "title": SEARCH_RESULT.listings[0].title,
+        "price": SEARCH_RESULT.listings[0].price,
+        "description_excerpt": SEARCH_RESULT.listings[0].description_snippet,
+        "excerpt_source": "card",
+        "structured_fields": {"condition": SEARCH_RESULT.listings[0].condition_label},
+    }
+    assert len(answer["samples"]) == 3 and answer["with_full_description"] == 0
+
+
+def test_sample_descriptions_prefers_a_cached_detail_and_adds_its_fields() -> None:
+    carousell = FakeCarousellSource()
+    services = fake_services(carousell)
+    first_id = SEARCH_RESULT.listings[0].id
+    services.detail_cache.save_detail(
+        DETAIL.model_copy(update={"id": first_id, "description": "x" * 400, "attributes": {"size": "M"}}), NOW
+    )
+
+    answer = json_answer(call_tool(build_server(services), "sample_descriptions", {"request": {"query": "a"}}))
+
+    first = answer["samples"][0]
+    assert first["excerpt_source"] == "detail" and first["description_excerpt"] == "x" * 299 + "…"
+    assert first["structured_fields"] == {"condition": "Like new", "category_name": "iPhone 15 Series", "size": "M"}
+    assert answer["with_full_description"] == 1 and carousell.detail_requests == []
+
+
+def test_sample_descriptions_fetches_details_only_for_listings_with_no_text_and_only_as_many_as_allowed() -> None:
+    bare = [listing.model_copy(update={"description_snippet": None}) for listing in SEARCH_RESULT.listings]
+    carousell = FakeCarousellSource(search_result=SEARCH_RESULT.model_copy(update={"listings": bare}))
+
+    answer = json_answer(call_tool(build_test_server(carousell), "sample_descriptions",
+                                   {"request": {"query": "a"}, "max_detail_fetches": 2}))
+
+    assert carousell.detail_requests == [bare[0].id, bare[1].id]
+    assert [sample["excerpt_source"] for sample in answer["samples"]] == ["detail", "detail", "none", "none", "none"]
+
+
+def test_sample_descriptions_refuses_more_than_five_detail_fetches_before_any_request() -> None:
+    carousell = FakeCarousellSource()
+
+    result = call_tool(build_test_server(carousell), "sample_descriptions",
+                       {"request": {"query": "a"}, "max_detail_fetches": 6})
+
+    assert result.is_error is True
+    assert carousell.search_requests == []
+
+
+def test_a_sample_entry_without_any_text_says_so() -> None:
+    listing = SEARCH_RESULT.listings[0].model_copy(update={"description_snippet": None, "condition_label": None})
+
+    assert sample_entry(listing, None)["excerpt_source"] == "none"
+    assert sample_entry(listing, None)["structured_fields"] == {}
+    assert cut_text("a  b\n c", 10) == "a b c"

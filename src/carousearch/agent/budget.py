@@ -1,8 +1,9 @@
 """Counts one run's tool calls against its AgentBudget. Pure: the run's tool hook asks before every call.
 
 Three caps: tool calls in total, photos (listing_photo calls) and listings asked for from search pages. A search
-that would pass the listing cap is cut to what is left; any other call over a cap is refused. Refused calls
-never reach Carousell and do not count.
+(or a sample_descriptions page) that would pass the listing cap is cut to what is left; any other call over a cap is
+refused. Refused calls never reach Carousell and do not count. The details sample_descriptions may fetch count as
+tool calls and are lowered to what the tool-call cap leaves.
 
 The local tools (agent/local_tools.py) fetch details and photos for several listings in one call. Each such
 Carousell request counts as one more tool call, and each photo also as a photo, as if the model had called
@@ -13,7 +14,7 @@ The hosted web search has its own cap, counted from the run's messages (agent/we
 from typing import Any
 
 from carousearch.agent.settings import AgentBudget
-from carousearch.mcp_server import DEFAULT_SEARCH_LIMIT, PHOTO_TOOL, SEARCH_TOOL
+from carousearch.mcp_server import DEFAULT_SAMPLE_SIZE, DEFAULT_SEARCH_LIMIT, PHOTO_TOOL, SAMPLE_TOOL, SEARCH_TOOL
 
 
 class BudgetExhausted(Exception):
@@ -50,6 +51,8 @@ class ToolBudget:
             )
         if tool_name == SEARCH_TOOL:
             arguments = self._fit_search_to_listing_budget(arguments)
+        if tool_name == SAMPLE_TOOL:
+            arguments = self._fit_sample_to_budgets(arguments)
         self.tool_calls += 1
         if tool_name == PHOTO_TOOL:
             self.photos += 1
@@ -97,7 +100,21 @@ class ToolBudget:
             )
         return lines
 
+    def _fit_sample_to_budgets(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """A sample's page counts like a search page (its size is `n`); the detail fetches it asks for are granted
+        from what the tool-call cap leaves after this call, and counted now."""
+        page = self._fit_page_to_listing_budget(arguments.get("n", DEFAULT_SAMPLE_SIZE))
+        wanted = arguments.get("max_detail_fetches", 0)
+        wanted = wanted if isinstance(wanted, int) and wanted > 0 else 0
+        granted = max(0, min(wanted, self.budget.max_tool_calls - self.tool_calls - 1))
+        self.tool_calls += granted
+        self.withheld_detail_fetches += wanted - granted
+        return {**arguments, "n": page, "max_detail_fetches": granted}
+
     def _fit_search_to_listing_budget(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return {**arguments, "limit": self._fit_page_to_listing_budget(arguments.get("limit", DEFAULT_SEARCH_LIMIT))}
+
+    def _fit_page_to_listing_budget(self, requested: Any) -> int:
         """Counts the page size asked for (Carousell may return fewer), lowered to what is left of the cap."""
         remaining = self.budget.max_listings - self.listings
         if remaining <= 0:
@@ -106,14 +123,13 @@ class ToolBudget:
                 f"Refused: the listing budget of {self.budget.max_listings} listings from search pages is used up. "
                 "Work with the listings you have, give your answer now and say so in notes."
             )
-        requested = arguments.get("limit", DEFAULT_SEARCH_LIMIT)
         if not isinstance(requested, int):
-            requested = DEFAULT_SEARCH_LIMIT  # a limit that is not a whole number is replaced by the tool's default
+            requested = DEFAULT_SEARCH_LIMIT  # a size that is not a whole number is replaced by the tool's default
         page_size = min(requested, remaining)
         if page_size < requested:
             self.shortened_searches += 1
         self.listings += page_size
-        return {**arguments, "limit": page_size}
+        return page_size
 
 
 def count_of(count: int, noun: str, plural: str | None = None) -> str:

@@ -1,17 +1,18 @@
-"""The agent's local tools: run_python, judge_listings, judge_photos and photo_metrics.
+"""The agent's local tools: run_python, extract_fields, judge_listings, judge_photos and photo_metrics.
 
 They are Pydantic AI function tools, not MCP tools, because they need this process's state for one run: the run
 directory (listings.db, downloaded photos, snippets), the worker model and the run's budget. Every call still goes
-through the run's ToolCallGate (run_prompt.GatedToolset), so it is counted, timed and traced like the MCP tools,
+through the run's ToolCallGate (toolsets.GatedToolset), so it is counted, timed and traced like the MCP tools,
 and the Carousell requests a tool makes inside (details, photos) are counted through ToolBudget.grant_*.
 
 I/O: the sandbox subprocess, Carousell and the shared database (through McpServices, under its lock, in worker
-threads), and the worker model. The pure parts are in sandbox.py, judging.py, photo_metrics.py, listings_db.py and
-run_photos.py.
+threads), and the worker model. The pure parts are in sandbox.py, extraction.py, judging.py, photo_metrics.py,
+listings_db.py and run_photos.py.
 """
 
 import asyncio
 import logging
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,6 +25,17 @@ from pydantic_ai.models import Model
 from pydantic_ai.toolsets import FunctionToolset
 
 from carousearch.agent.budget import ToolBudget
+from carousearch.agent.extraction import (
+    FieldSpec,
+    TextSource,
+    apply_pattern,
+    coerce_value,
+    column_name,
+    column_type,
+    listing_source_text,
+    listing_text_block,
+    spec_cache_key,
+)
 from carousearch.agent.judge_cache import JudgementCache, JudgementKind
 from carousearch.agent.judging import (
     LISTINGS_PER_MODEL_CALL,
@@ -47,19 +59,37 @@ from carousearch.agent.sandbox import (
 )
 from carousearch.agent.worker import WorkerJudge
 from carousearch.carousell.errors import CarousellBlockedError
-from carousearch.filters.schema import ListingDetail
-from carousearch.mcp_server import McpServices, carousell_call, detail_response, load_listing_detail
+from carousearch.mcp_server import (
+    McpServices,
+    carousell_call,
+    detail_response,
+    find_cached_detail,
+    load_listing_detail,
+)
 from carousearch.photos import Photo, downsize_to_longest_side
 
 logger = logging.getLogger(__name__)
 
 MAX_LISTINGS_PER_JUDGE_CALL = 30
+MAX_LISTINGS_PER_EXTRACT_CALL = 40
+MAX_FIELDS_PER_EXTRACT_CALL = 8
 MAX_LISTINGS_PER_PHOTO_CALL = 10
 JUDGE_PHOTO_SIDE = 512  # the longer side of a photo sent to the worker model
 
 ListingIds = Annotated[
     list[Annotated[str, Field(pattern=r"^\d+$")]],
     Field(min_length=1, description="Listing ids from search_listings results."),
+]
+FieldSpecs = Annotated[
+    list[FieldSpec],
+    Field(min_length=1, max_length=MAX_FIELDS_PER_EXTRACT_CALL, description="The fields to read, with unique names."),
+]
+FetchDetails = Annotated[
+    bool,
+    Field(
+        description="True: fetch the full description of listings this run has no details for (one Carousell "
+        "request each, counted as tool calls). False: read the title and the search card's ~300-character snippet."
+    ),
 ]
 Criterion = Annotated[
     str, Field(min_length=3, max_length=300, description="One plain-language criterion, the same wording each time.")
@@ -96,6 +126,113 @@ class RunTools:
             run_python_in_sandbox, code, self.local.run_directory, limits, self.local.network_prefix
         )
         return format_sandbox_output(result, limits.max_output_characters)
+
+    # --- extract_fields -----------------------------------------------------------------------------------------
+
+    async def extract_fields(
+        self, listing_ids: Sequence[str], specs: Sequence[FieldSpec], fetch_details: bool
+    ) -> dict[str, Any]:
+        listing_ids = unique(listing_ids)[:MAX_LISTINGS_PER_EXTRACT_CALL]
+        specs = list({spec.name: spec for spec in specs}.values())  # a repeated name: the last spec wins
+        problems = await self.ensure_details(listing_ids) if fetch_details else {}
+        rows = self.listings.listings(listing_ids)
+        problems |= {listing_id: "unknown listing id: search for it first" for listing_id in listing_ids
+                     if listing_id not in rows}
+        texts = {listing_id: listing_source_text(rows[listing_id]) for listing_id in listing_ids if listing_id in rows}
+        values: dict[str, dict[str, Any]] = {listing_id: {} for listing_id in texts}
+        methods: dict[str, Counter[str]] = {spec.name: Counter() for spec in specs}
+        for spec in specs:
+            for listing_id, (text, _) in texts.items():
+                value = apply_pattern(spec, f"{rows[listing_id]['title']}\n{text or ''}")
+                if value is not None:
+                    values[listing_id][spec.name] = value
+                    methods[spec.name]["pattern"] += 1
+        pending = {listing_id: [spec for spec in specs if spec.name not in values[listing_id]] for listing_id in texts}
+        cached = await self.load_cached_extractions(pending, texts)
+        for listing_id, cached_values in cached.items():
+            for name, value in cached_values.items():
+                values[listing_id][name] = value
+                methods[name]["cached"] += 1
+        still_pending = {
+            listing_id: [spec for spec in pending[listing_id] if spec.name not in cached.get(listing_id, {})]
+            for listing_id in texts
+        }
+        model_values, failed = await self.extract_with_model(specs, still_pending, rows, texts)
+        for listing_id, listing_values in model_values.items():
+            for name, value in listing_values.items():
+                values[listing_id][name] = value
+                methods[name]["model"] += 1
+        if failed:
+            problems |= dict.fromkeys(failed, "the worker model failed; its fields are unknown")
+        complete = {
+            listing_id: {spec.name: values[listing_id].get(spec.name) for spec in specs} for listing_id in texts
+        }
+        columns = {spec.name: (column_name(spec), column_type(spec)) for spec in specs}
+        self.listings.record_extracted(complete, columns)
+        return extraction_result(listing_ids, complete, specs, methods, texts, problems)
+
+    async def extract_with_model(
+        self,
+        specs: Sequence[FieldSpec],
+        pending: dict[str, list[FieldSpec]],
+        rows: dict[str, dict[str, Any]],
+        texts: dict[str, tuple[str | None, TextSource]],
+    ) -> tuple[dict[str, dict[str, Any]], list[str]]:
+        """The worker model's typed values for the pending fields (null where the text does not say), by listing,
+        and the listings whose batch failed. Answers read from a description or a snippet are cached."""
+        to_ask = [listing_id for listing_id, specs in pending.items() if specs]
+        found: dict[str, dict[str, Any]] = {}
+        failed: list[str] = []
+        for batch in batched(to_ask, LISTINGS_PER_MODEL_CALL):
+            asked = [spec for spec in specs if any(spec in pending[listing_id] for listing_id in batch)]
+            blocks = [listing_text_block(listing_id, rows[listing_id]["title"], texts[listing_id][0])
+                      for listing_id in batch]
+            try:
+                answer_rows = await self.worker.extract_fields(asked, blocks)
+            except AgentRunError as error:
+                logger.warning("extract_fields: the worker model failed: %s: %s", type(error).__name__, error)
+                failed += batch
+                continue
+            by_id = {str(row.get("listing_id")): row for row in answer_rows}
+            for listing_id in batch:
+                answer = by_id.get(listing_id, {})
+                found[listing_id] = {
+                    spec.name: coerce_value(spec, answer.get(spec.name)) for spec in pending[listing_id]
+                }
+            await self.save_extractions(batch, pending, found, texts)
+        return found, failed
+
+    async def load_cached_extractions(
+        self, pending: dict[str, list[FieldSpec]], texts: dict[str, tuple[str | None, TextSource]]
+    ) -> dict[str, dict[str, Any]]:
+        def load_all() -> dict[str, dict[str, Any]]:
+            found: dict[str, dict[str, Any]] = {}
+            with self.services.lock:
+                for listing_id, specs in pending.items():
+                    for spec in specs:
+                        key = spec_cache_key(spec, texts[listing_id][1])
+                        answer = self.local.judgement_cache.load("extraction", listing_id, key, self.worker.model_name)
+                        if answer is not None:
+                            found.setdefault(listing_id, {})[spec.name] = coerce_value(spec, answer.get("value"))
+            return found
+
+        return await asyncio.to_thread(load_all)
+
+    async def save_extractions(
+        self,
+        batch: Sequence[str],
+        pending: dict[str, list[FieldSpec]],
+        found: dict[str, dict[str, Any]],
+        texts: dict[str, tuple[str | None, TextSource]],
+    ) -> None:
+        """Cache what the model read from real text; an answer from the title alone could change with more text."""
+        for listing_id in batch:
+            source = texts[listing_id][1]
+            if source == "title":
+                continue
+            for spec in pending[listing_id]:
+                answer = {listing_id: {"value": found[listing_id][spec.name]}}
+                await self.save_judgements("extraction", spec_cache_key(spec, source), answer)
 
     # --- judge_listings -----------------------------------------------------------------------------------------
 
@@ -281,6 +418,29 @@ def listing_text(row: dict[str, Any]) -> ListingText:
     return ListingText(listing_id=row["id"], title=row["title"], price=row["price"], description=row["description"])
 
 
+def extraction_result(
+    listing_ids: Sequence[str],
+    values: dict[str, dict[str, Any]],
+    specs: Sequence[FieldSpec],
+    methods: dict[str, Counter[str]],
+    texts: dict[str, tuple[str | None, TextSource]],
+    problems: dict[str, str],
+) -> dict[str, Any]:
+    """What extract_fields returns: the values per listing, where each field's values came from, the columns
+    they are in, which text was read, and what went wrong."""
+    counts = {}
+    for spec in specs:
+        unknown = sum(1 for listing_values in values.values() if listing_values.get(spec.name) is None)
+        counts[spec.name] = {**dict(methods[spec.name]), "unknown": unknown}
+    return {
+        "rows": [{"id": listing_id, **values[listing_id]} for listing_id in listing_ids if listing_id in values],
+        "columns": {spec.name: f"{column_name(spec)} {column_type(spec)}" for spec in specs},
+        "counts": counts,
+        "text_read": dict(Counter(source for _, source in texts.values())),
+        "problems": problems,
+    }
+
+
 def photo_summary(data: bytes, source: PhotoSource) -> dict[str, Any]:
     """The zero-token metrics of a downloaded photo, with which photo it was."""
     try:
@@ -293,11 +453,6 @@ def photo_answer(score: PhotoScore | None, metrics: dict[str, Any]) -> dict[str,
     if score is None:
         return {"score_1_to_5": None, "reason": "the worker model gave no score", **metrics}
     return {"score_1_to_5": score.score, "reason": score.reason, **metrics}
-
-
-def find_cached_detail(services: McpServices, listing_id: str) -> ListingDetail | None:
-    with services.lock:
-        return services.detail_cache.load_detail(listing_id, services.clock())
 
 
 def download_photo(services: McpServices, url: str) -> bytes:
@@ -332,13 +487,29 @@ files outside the working directory, {DEFAULT_SANDBOX_LIMITS.wall_seconds:.0f} s
 need: the output is cut after a few thousand characters."""
 
 
+EXTRACT_FIELDS_DESCRIPTION = f"""\
+Read named fields from each listing's title and text into typed columns of listings.db, for attributes sellers \
+state only in words. Each field spec: name (snake_case), type (str, int, float, date, bool or enum), unit, hint \
+(what to read), optional pattern (a Python regex, tried first, case-insensitive; its first group or the whole \
+match is the value) and enum_values (for enum). Listings the pattern does not match, and specs without one, go to \
+a small model in batches, which answers null when the text does not state the value: unknown stays null, never \
+guessed. Ask for what the text states (a date, a number with its unit) and work out ages and time left from it \
+in run_python: the small model does not know today's date. Values land in columns named x_<name> (INTEGER for \
+int and bool as 0/1, REAL for float, TEXT for str, enum and date as YYYY-MM-DD), and all of a listing's values \
+also in the JSON column `extracted`. In run_python: \
+SELECT id, price, x_<name> FROM listings WHERE x_<name> IS NOT NULL. Returns rows of the values, the counts per \
+field (pattern, model, cached, unknown), which text was read and any problems. Answers are cached per listing \
+and spec. With fetch_details true, each listing without details costs one Carousell request, counted against \
+the tool-call budget. At most {MAX_LISTINGS_PER_EXTRACT_CALL} listings and {MAX_FIELDS_PER_EXTRACT_CALL} fields per \
+call."""
+
 JUDGE_LISTINGS_DESCRIPTION = f"""\
 Ask a small, cheap model to check listings against one criterion, from each listing's title, price and \
-description, for example "COE has about 2 years left (between 1.5 and 2.5 years)" or "a whole bike for sale, not \
-parts or a rental". Returns [{{id, verdict, reason}}] in the order given; verdict is yes, no or unsure. Listings \
-whose details this run has not fetched yet cost one Carousell request each, counted against the tool-call budget. \
-Answers are cached: asking the same criterion about the same listing again is free. Use this instead of reading \
-many descriptions yourself. At most {MAX_LISTINGS_PER_JUDGE_CALL} listings per call."""
+description, for a yes/no question no field captures, for example "the post offers one item for sale, not a \
+wanted ad or a list of several items". Returns [{{id, verdict, reason}}] in the order given; verdict is yes, no \
+or unsure. Listings whose details this run has not fetched yet cost one Carousell request each, counted against \
+the tool-call budget. Answers are cached: asking the same criterion about the same listing again is free. Use \
+this instead of reading many descriptions yourself. At most {MAX_LISTINGS_PER_JUDGE_CALL} listings per call."""
 
 JUDGE_PHOTOS_DESCRIPTION = f"""\
 Ask a small model to score each listing's main photo against one criterion, from 1 (does not match at all) to 5 \
@@ -362,6 +533,14 @@ def build_local_toolset(tools: RunTools) -> FunctionToolset[Any]:
     @toolset.tool_plain(description=run_python_description(available_optional_libraries()))
     async def run_python(code: Annotated[str, Field(description="Python source; print what you need.")]) -> str:
         return await tools.run_python(code)
+
+    @toolset.tool_plain(description=EXTRACT_FIELDS_DESCRIPTION)
+    async def extract_fields(
+        listing_ids: ListingIds,
+        field_specs: FieldSpecs,
+        fetch_details: FetchDetails = False,
+    ) -> dict[str, Any]:
+        return await tools.extract_fields(listing_ids, field_specs, fetch_details)
 
     @toolset.tool_plain(description=JUDGE_LISTINGS_DESCRIPTION)
     async def judge_listings(listing_ids: ListingIds, criterion: Criterion) -> list[dict[str, Any]]:

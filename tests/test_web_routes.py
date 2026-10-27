@@ -16,10 +16,13 @@ import pytest
 from fastapi.testclient import TestClient
 from httpx import Response
 from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models import Model
 from pydantic_ai.models.function import FunctionModel
 
+from carousearch.agent.run_prompt import OUTPUT_TOOL_NAME
 from carousearch.agent.settings import AgentBudget, AgentSettings
+from carousearch.agent.templates import METHOD_TEMPLATES
 from carousearch.carousell.errors import CarousellBlockedError, CarousellSchemaError
 from carousearch.carousell.parse import parse_listing_detail_response, parse_search_response
 from carousearch.config import ScreeningSettings
@@ -34,7 +37,8 @@ from carousearch.web.services import WebServices
 from fake_carousell import FakeCarousell as FakeCarousellSite
 from fake_mcp_services import jpeg_bytes
 from fixture_files import load_json_fixture
-from scripted_model import ScriptedModel, calls, final_answer
+from plan_examples import example_plan
+from scripted_model import PlanFirst, ScriptedModel, calls, final_answer, plan_answer
 
 
 @pytest.fixture(autouse=True)
@@ -527,12 +531,26 @@ class GatedCarousell(FakeCarousell):
 def open_ask_client(
     script: ScriptedModel, carousell: FakeCarousell | None = None, agent: AgentSettings = KEYED
 ) -> TestClient:
-    return open_client(carousell or GatedCarousell(), agent=agent, agent_model=FunctionModel(script))
+    return open_client(carousell or GatedCarousell(), agent=agent, agent_model=FunctionModel(PlanFirst(script)))
+
+
+HTMX = {"HX-Request": "true"}
 
 
 def post_ask(client: TestClient, prompt: str = ASK_PROMPT) -> Response:
-    """As the page's HTMX form sends it."""
-    return client.post("/ask", data={"prompt": prompt}, headers={"HX-Request": "true"})
+    """Run, wait for the plan, then Execute, as the page does; returns the Execute response (the run's progress), or
+    the Run response when Run was refused."""
+    planning = start_planning(client, prompt)
+    if planning.status_code != 200:
+        return planning
+    run_id = run_id_of(planning.text)
+    poll_until(client, run_id, lambda text: PLAN_MARKER in text)
+    return client.post(f"/ask/{run_id}/execute", headers=HTMX)
+
+
+def start_planning(client: TestClient, prompt: str = ASK_PROMPT) -> Response:
+    """Run, as the page's HTMX form sends it."""
+    return client.post("/ask", data={"prompt": prompt}, headers=HTMX)
 
 
 def run_id_of(progress_html: str) -> str:
@@ -549,6 +567,9 @@ def poll_until(client: TestClient, run_id: str, done: Callable[[str], bool]) -> 
         if done(page) or time.monotonic() > deadline:
             return page
         time.sleep(0.02)
+
+
+PLAN_MARKER = 'id="ask-plan"'
 
 
 def poll_to_the_end(client: TestClient, run_id: str) -> str:
@@ -806,3 +827,218 @@ def test_stopping_the_app_mid_run_stops_the_run_before_the_client_closes() -> No
     assert run is not None and run.status == "failed"
     assert run.error is not None and "shut down" in run.error.text
     assert closed_with_a_call_in_flight == [False]
+
+
+# --- the plan before execution ------------------------------------------------------------------------------------
+
+
+SAMPLE = ("sample_descriptions", {"request": {"query": "iphone 15 pro"}, "n": 5})
+
+
+def answer_with(review: list[dict], suggested_knowledge: str | None = None) -> ModelResponse:
+    arguments = {"kept": [SEEN_KEPT], "dropped": [], "notes": "Done.", "plan_review": review,
+                 "suggested_knowledge": suggested_knowledge}
+    return ModelResponse(parts=[ToolCallPart(OUTPUT_TOOL_NAME, arguments)])
+
+
+def plan_page(client: TestClient, prompt: str = ASK_PROMPT) -> tuple[str, str]:
+    """Run, then wait for the plan; returns (run id, the plan partial)."""
+    run_id = run_id_of(start_planning(client, prompt).text)
+    page = poll_until(client, run_id, lambda text: PLAN_MARKER in text or "ask-failed" in text)
+    return run_id, page
+
+
+def open_planning_client(script: ScriptedModel, carousell: FakeCarousell | None = None) -> TestClient:
+    """A client whose one scripted model plays both phases in order (no PlanFirst)."""
+    return open_client(carousell or GatedCarousell(), agent=KEYED, agent_model=FunctionModel(script))
+
+
+def test_run_shows_the_plan_before_any_search_beyond_planning() -> None:
+    carousell = GatedCarousell()
+    script = ScriptedModel(calls(SAMPLE), plan_answer(), calls(AGENT_SEARCH), final_answer("Done."))
+    with open_planning_client(script, carousell) as client:
+        started = start_planning(client)
+        run_id = run_id_of(started.text)
+        page = poll_until(client, run_id, lambda text: PLAN_MARKER in text)
+        searches_before_execute = len(carousell.search_requests)
+        requests_before_execute = len(script.requests)
+
+    assert "Planning ·" in started.text and 'hx-trigger="every 1s"' in started.text
+    assert PLAN_MARKER in page and 'hx-trigger="every 1s"' not in page  # waiting for a decision: no polling
+    assert searches_before_execute == 1 and requests_before_execute == 2  # the sample and the plan only
+    assert "<dt>Item class</dt><dd>a second-hand household item sold in several sizes</dd>" in page
+    assert '<code>size_cm</code> <span class="muted">(cm)</span>' in page
+    assert '<span class="source-badge source-text-extraction">text extraction</span>' in page
+    assert "<dt>Grouped by</dt><dd>size_cm</dd>" in page and "<dt>Statistic</dt><dd>median</dd>" in page
+    assert "posts offering several items at one price" in page and "their price is not the price of one item" in page
+    assert "<li>&#39;well below&#39; read as at least 30% below</li>" in page
+    assert "2 search pages, 10 details, 0 photos, 1 worker call (run budget: 40 tool calls, 15 photos)" in page
+    assert f'hx-post="/ask/{run_id}/execute"' in page and f'hx-post="/ask/{run_id}/cancel"' in page
+    assert f'hx-post="/ask/{run_id}/revise"' in page and "<summary>Edit</summary>" in page
+    assert "<summary>Planning calls (1)</summary>" in page and "<code>sample_descriptions</code>" in page
+
+
+def test_execute_runs_the_plan_and_the_answer_shows_the_plan_review() -> None:
+    carousell = GatedCarousell()
+    review = [{"item": "benchmark", "status": "partial", "note": "only 3 sizes had 5 or more listings"}]
+    script = ScriptedModel(calls(SAMPLE), plan_answer(), calls(AGENT_SEARCH), answer_with(review))
+    with open_planning_client(script, carousell) as client:
+        run_id, _ = plan_page(client)
+        executed = client.post(f"/ask/{run_id}/execute", headers=HTMX)
+        page = poll_to_the_end(client, run_id)
+
+    assert executed.status_code == 200 and "Running ·" in executed.text
+    assert len(carousell.search_requests) == 2  # planning's sample, then the execution's search after Execute
+    assert '<h2 class="ask-heading">Plan review</h2>' in page
+    assert re.search(r'review-partial">partial</span>\s*<span class="review-item">Benchmark</span> '
+                     r'<span class="review-note">only 3 sizes had 5 or more listings</span>', page)
+    assert page.count("review-not-done") == 5  # every item the model did not report on
+    assert "Plan: a second-hand household item sold in several sizes · under_benchmark" in page
+    assert ask_card_html(page, "300")
+
+
+def test_edit_sends_the_change_to_the_planner_once_and_shows_the_revised_plan() -> None:
+    revised = example_plan(exclusions=[], assumptions=["multi-item posts kept, as asked"])
+    script = ScriptedModel(calls(SAMPLE), plan_answer(), plan_answer(revised))
+    with open_planning_client(script) as client:
+        run_id, _ = plan_page(client)
+        revising = client.post(f"/ask/{run_id}/revise", data={"change": "Keep multi-item posts."}, headers=HTMX)
+        page = poll_until(client, run_id, lambda text: PLAN_MARKER in text)
+        again = client.post(f"/ask/{run_id}/revise", data={"change": "And more."}, headers=HTMX)
+
+    assert revising.status_code == 200 and "Planning ·" in revising.text
+    revision_prompt = str(script.requests[2][0][0].parts)
+    assert "Your previous plan (JSON)" in revision_prompt and "Keep multi-item posts." in revision_prompt
+    assert "multi-item posts kept, as asked" in page and "· revised once" in page
+    assert "<summary>Edit</summary>" not in page and "Nothing is left out." in page
+    assert again.status_code == 409 and "revised once already" in again.text
+    assert PLAN_MARKER in again.text  # the plan stays on screen under the refusal
+    assert len(script.requests) == 3
+
+
+def test_an_empty_change_is_refused_and_the_plan_stays() -> None:
+    with open_planning_client(ScriptedModel(calls(SAMPLE), plan_answer())) as client:
+        run_id, _ = plan_page(client)
+        refused = client.post(f"/ask/{run_id}/revise", data={"change": "  "}, headers=HTMX)
+
+    assert refused.status_code == 422 and "Say in plain words what to change" in refused.text
+    assert PLAN_MARKER in refused.text
+
+
+def test_cancel_drops_the_plan_and_nothing_else_is_spent() -> None:
+    carousell = GatedCarousell()
+    script = ScriptedModel(calls(SAMPLE), plan_answer(), calls(AGENT_SEARCH), final_answer())
+    with open_planning_client(script, carousell) as client:
+        run_id, _ = plan_page(client)
+        cancelled = client.post(f"/ask/{run_id}/cancel", headers=HTMX)
+        later = client.get(f"/ask/{run_id}").text
+        execute = client.post(f"/ask/{run_id}/execute", headers=HTMX)
+        page = client.get("/?mode=ask").text
+
+    assert cancelled.status_code == 200
+    assert "Plan cancelled. Nothing was searched beyond planning (1 tool call)." in cancelled.text
+    assert "Plan cancelled" in later
+    assert execute.status_code == 409 and "no longer waiting for a decision" in execute.text
+    assert PLAN_MARKER not in page
+    assert len(carousell.search_requests) == 1 and len(script.requests) == 2  # the sample and the plan
+
+
+def test_a_reload_shows_the_plan_still_waiting_for_a_decision() -> None:
+    with open_planning_client(ScriptedModel(calls(SAMPLE), plan_answer())) as client:
+        run_id, _ = plan_page(client)
+        page = client.get("/?mode=ask").text
+
+    assert PLAN_MARKER in page and f'hx-post="/ask/{run_id}/execute"' in page
+
+
+def test_plan_buttons_need_the_pages_own_htmx_request_and_a_known_planned_run() -> None:
+    script = ScriptedModel(calls(SAMPLE), plan_answer(), final_answer())
+    with open_planning_client(script) as client:
+        run_id, _ = plan_page(client)
+        not_from_the_page = client.post(f"/ask/{run_id}/execute")
+        unknown = client.post("/ask/unknown/execute", headers=HTMX)
+        first = client.post(f"/ask/{run_id}/execute", headers=HTMX)
+        poll_to_the_end(client, run_id)
+        twice = client.post(f"/ask/{run_id}/execute", headers=HTMX)
+
+    assert not_from_the_page.status_code == 403
+    assert unknown.status_code == 404
+    assert first.status_code == 200 and twice.status_code == 409
+    assert len(script.requests) == 3  # a sample, the plan, the answer
+
+
+def test_a_filter_search_waits_while_the_plan_is_being_made() -> None:
+    carousell = GatedCarousell()
+    carousell.gate = threading.Event()
+    script = ScriptedModel(calls(SAMPLE), plan_answer())
+    with open_planning_client(script, carousell) as client:
+        try:
+            run_id = run_id_of(start_planning(client).text)
+            assert carousell.search_entered.wait(POLL_TIMEOUT_SECONDS)
+            waiting = client.get(SEARCH)
+        finally:
+            carousell.gate.set()
+        poll_until(client, run_id, lambda text: PLAN_MARKER in text)
+
+    assert "An Ask run is in progress" in waiting.text
+    assert carousell.overlaps == 0
+
+
+def test_a_planning_failure_ends_the_run_calmly() -> None:
+    def fails(messages, info):
+        raise ModelHTTPError(status_code=500, model_name="gpt-5.4-mini", body="server error")
+
+    with open_planning_client(ScriptedModel(fails)) as client:
+        _, page = plan_page(client)
+
+    assert "The agent run failed." in page and "server error" not in page
+
+
+def test_the_ask_page_offers_the_method_templates_as_starting_points() -> None:
+    with open_ask_client(ScriptedModel(final_answer())) as client:
+        page = client.get("/?mode=ask").text
+
+    for template in METHOD_TEMPLATES:
+        prefill = template.example_request.replace("<", "&lt;").replace(">", "&gt;")
+        assert f'data-prefill="{prefill}"' in page
+        assert f">{template.name.replace('_', ' ')}</button>" in page
+    assert "Run first shows the plan" in page
+
+
+def test_a_suggested_note_is_saved_to_knowledge_only_when_asked(tmp_path: Path) -> None:
+    suggestion = "applies_to: iphone 15 pro\nSellers state battery health as a percentage."
+    script = ScriptedModel(answer_with([], suggestion))
+    with open_ask_client(script) as client:
+        services_of(client).knowledge_dir = tmp_path / "knowledge"
+        run_id = run_id_of(post_ask(client).text)
+        page = poll_to_the_end(client, run_id)
+        nothing_yet = list((tmp_path / "knowledge").glob("*")) if (tmp_path / "knowledge").exists() else []
+        saved = client.post(f"/ask/{run_id}/knowledge", headers=HTMX)
+        again = client.post(f"/ask/{run_id}/knowledge", headers=HTMX)
+        page_after = client.get(f"/ask/{run_id}").text
+
+    assert nothing_yet == []
+    assert "Suggested note" in page and f'hx-post="/ask/{run_id}/knowledge"' in page
+    assert saved.status_code == 200
+    assert "knowledge/a-second-hand-household-item-sold-in-several-sizes.md" in saved.text
+    (note_file,) = (tmp_path / "knowledge").iterdir()
+    assert note_file.read_text() == (
+        "---\napplies_to: iphone 15 pro\n---\nSellers state battery health as a percentage.\n"
+    )
+    assert note_file.name in again.text and note_file.name in page_after
+
+
+def test_saving_a_note_is_refused_when_the_answer_has_none() -> None:
+    with open_ask_client(ScriptedModel(final_answer())) as client:
+        run_id = run_id_of(post_ask(client).text)
+        poll_to_the_end(client, run_id)
+        refused = client.post(f"/ask/{run_id}/knowledge", headers=HTMX)
+
+    assert refused.status_code == 409 and "no suggested note" in refused.text
+
+
+def test_a_plan_made_without_sampling_says_so() -> None:
+    with open_planning_client(ScriptedModel(plan_answer())) as client:  # reminded once, then accepted
+        _, page = plan_page(client)
+
+    assert "The planner sampled no listings: its attributes rest on its own knowledge." in page

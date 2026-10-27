@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 
 from carousearch import storage
 from carousearch.agent.judge_cache import SqliteJudgementCache
+from carousearch.agent.knowledge import DEFAULT_KNOWLEDGE_DIR
 from carousearch.agent.settings import AgentSettings
 from carousearch.carousell.client import CarousellClient, create_carousell_client
 from carousearch.config import DATABASE_FILE_NAME, ScreeningSettings
@@ -34,6 +35,7 @@ class WebSettings:
     screening: ScreeningSettings
     max_detail_fetches: int = DEFAULT_MAX_DETAIL_FETCHES
     agent: AgentSettings = field(default_factory=AgentSettings)  # Ask mode's model, budgets and provider keys
+    knowledge_dir: Path | None = DEFAULT_KNOWLEDGE_DIR  # the owner's notes the Ask planner reads and saves to
 
 
 def create_app(settings: WebSettings, services_factory: ServicesFactory | None = None) -> FastAPI:
@@ -89,6 +91,7 @@ def build_web_services(settings: WebSettings, carousell_client: CarousellClient)
         agent=settings.agent,
         judgement_cache=SqliteJudgementCache(database),
         runs_root=settings.data_dir,
+        knowledge_dir=settings.knowledge_dir,
     )
 
 

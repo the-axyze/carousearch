@@ -1,11 +1,25 @@
 """Plain-text rendering of listings for the terminal. Pure functions: models in, strings out."""
 
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING
 
-from carousearch.agent.cost import format_cost_line
-from carousearch.agent.result import AgentAnswer, DroppedListing, KeptListing, ToolCall, tool_call_counts
+from carousearch.agent.cost import ModelUsage, format_cost_line
+from carousearch.agent.plan import PlanItemStatus, SearchPlan, review_item_label
+from carousearch.agent.result import (
+    NOT_SAMPLED_WARNING,
+    AgentAnswer,
+    DroppedListing,
+    KeptListing,
+    ToolCall,
+    planning_sampled_listings,
+    tool_call_counts,
+)
 from carousearch.filters.schema import Listing, ListingDetail, SearchResult, SellerVerification
 from carousearch.screening.models import PriceSource, ResolvedPrice, ScreenedListing, format_sgd
+
+if TYPE_CHECKING:
+    from carousearch.agent.evals import EvalOutcome, EvalPrompt
 
 SINGAPORE_TIME = timezone(timedelta(hours=8), "SGT")
 
@@ -97,17 +111,140 @@ def render_listing_detail(detail: ListingDetail) -> str:
 
 
 def render_agent_answer(answer: AgentAnswer) -> str:
-    """`carousearch ask`: the tool trace, the kept listings as a table, the dropped ones with reasons, how many more
-    were seen, the notes and the estimated cost."""
-    sections = [
-        render_tool_trace(answer.tool_trace),
+    """`carousearch ask`: the execution's tool trace, the plan (with the planning calls), the kept listings as a
+    table, the dropped ones with reasons, how many more were seen, the plan review, the notes, a suggested knowledge
+    note and the estimated cost of both phases."""
+    sections = [render_tool_trace(answer.tool_trace)]
+    if answer.plan is not None:
+        sections.append(render_plan(answer.plan, answer.planning_trace))
+    sections += [
         render_kept_listings(answer.kept),
         render_dropped_listings(answer.dropped),
         f"Not shortlisted: {answer.not_shortlisted} more listings seen.",
-        render_notes(answer.notes),
-        format_cost_line(answer.usage),
     ]
+    if answer.plan_review:
+        sections.append(render_plan_review(answer.plan_review, answer.plan))
+    sections.append(render_notes(answer.notes))
+    if answer.suggested_knowledge:
+        sections.append("Suggested knowledge note:\n" + _indent(answer.suggested_knowledge))
+    sections.append(format_cost_line(answer.usage))
     return "\n\n".join(sections)
+
+
+def render_planned_search(plan: SearchPlan, planning_trace: list[ToolCall], usage: list[ModelUsage]) -> str:
+    """`carousearch ask --plan-only`: the plan, the planning calls and what planning cost."""
+    return "\n\n".join([render_plan(plan, planning_trace), format_cost_line(usage)])
+
+
+def render_plan(plan: SearchPlan, planning_trace: list[ToolCall] | None = None) -> str:
+    """The plan in readable sections, headed by a count of the planning tool calls (and a warning when planning
+    read no listings; a plan from a file has no planning trace)."""
+    lines = [f"Plan ({render_tool_counts('planning tool call', planning_trace or [])}):"]
+    if planning_trace and not planning_sampled_listings(planning_trace):
+        lines.append(f"Warning: {NOT_SAMPLED_WARNING}")
+    lines.append(_field("Goal", plan.goal))
+    lines.append(_field("Item class", plan.item_class))
+    lines.append(_field("Value drivers", "; ".join(plan.value_drivers) or "-"))
+    lines.append(f"Attributes ({len(plan.attributes)}):")
+    for attribute in plan.attributes:
+        unit = f" ({attribute.unit})" if attribute.unit else ""
+        source = attribute.source.value
+        lines.append(f"  {attribute.name}{unit} [{source}]: {attribute.detail}. For: {attribute.purpose}")
+    lines.append(_field("Benchmark", describe_benchmark(plan)))
+    lines.append(f"Exclusions ({len(plan.exclusions)}):")
+    lines += [f"  {number}. {exclusion.rule}. Why: {exclusion.reason}"
+              for number, exclusion in enumerate(plan.exclusions, start=1)]
+    lines.append(_field("Ranking", plan.ranking))
+    lines.append(_field("Template", plan.template or "none"))
+    estimate = plan.budget_estimate
+    lines.append(_field("Estimate", f"{estimate.searches} searches, {estimate.details} details, "
+                                    f"{estimate.photos} photos, {estimate.judgements} worker calls"))
+    lines.append("Assumptions:")
+    lines += [f"  - {assumption}" for assumption in plan.assumptions] or ["  - none"]
+    return "\n".join(lines)
+
+
+def describe_benchmark(plan: SearchPlan) -> str:
+    """ "median over <population>, grouped by a, b, normalised as <formula>", or "none"."""
+    benchmark = plan.benchmark
+    if benchmark is None:
+        return "none"
+    text = f"{benchmark.statistic} over {benchmark.population}"
+    if benchmark.grouping:
+        text += f", grouped by {', '.join(benchmark.grouping)}"
+    if benchmark.normalisation:
+        text += f", normalised as {benchmark.normalisation}"
+    return text
+
+
+def render_plan_review(review: list[PlanItemStatus], plan: SearchPlan | None) -> str:
+    lines = ["Plan review:"]
+    lines += [f"  {status.status:<8}  {review_item_label(plan, status.item)}: {status.note}" for status in review]
+    return "\n".join(lines)
+
+
+def render_eval_prompts(prompts: "Sequence[EvalPrompt]") -> str:
+    """`carousearch eval` without --live: each prompt and the plan properties it is checked for."""
+    blocks = [f"{prompt.name}: {prompt.prompt}\n  expects: {', '.join(prompt.expect)}" for prompt in prompts]
+    return "\n".join(blocks) + f"\n\n{len(prompts)} prompts. Run them once for real with --live (costs money)."
+
+
+def render_eval_outcome(outcome: "EvalOutcome") -> str:
+    """One live eval prompt: its plan in brief, the checks, the plan review, the tool counts and the cost."""
+    from carousearch.agent.evals import attribute_sources, review_counts
+
+    lines = [f"== {outcome.prompt.name} ==", f"Prompt: {outcome.prompt.prompt}"]
+    answer = outcome.answer
+    if answer is None:
+        return "\n".join([*lines, f"No answer: {outcome.error}"])
+    if answer.plan is not None:
+        sources = ", ".join(f"{source} {count}" for source, count in attribute_sources(answer.plan).items())
+        lines.append(_field("Item class", answer.plan.item_class))
+        lines.append(_field("Attributes", sources))
+        lines.append(_field("Benchmark", describe_benchmark(answer.plan)))
+        lines.append(_field("Template", answer.plan.template or "none"))
+    lines.append(_field("Sampled", "yes" if planning_sampled_listings(answer.planning_trace) else "no"))
+    passed = sum(check.passed for check in outcome.checks)
+    failed = [check.name for check in outcome.checks if not check.passed]
+    lines.append(_field("Checks", f"{passed} of {len(outcome.checks)} passed"
+                                  + (f"; failed: {', '.join(failed)}" if failed else "")))
+    review = ", ".join(f"{status} {count}" for status, count in review_counts(answer).items())
+    lines.append(_field("Review", review or "none"))
+    lines.append(_field("Result", f"{len(answer.kept)} kept, {len(answer.dropped)} dropped, "
+                                  f"{answer.not_shortlisted} not shortlisted"))
+    lines.append(_field("Planning", render_tool_counts("tool call", answer.planning_trace)))
+    lines.append(_field("Execution", render_tool_counts("tool call", answer.tool_trace)))
+    lines.append(_field("Cost", f"about US${outcome.cost_usd:.4f}"))
+    return "\n".join(lines)
+
+
+def render_eval_summary(outcomes: "Sequence[EvalOutcome]") -> str:
+    """The table at the end of a live eval: per prompt, checks passed, review statuses and cost; then the total."""
+    from carousearch.agent.evals import review_counts
+
+    columns = [("PROMPT", 30), ("CHECKS", 7), ("REVIEW", 30), ("COST US$", 0)]
+    rows = [[header for header, _ in columns]]
+    for outcome in outcomes:
+        if outcome.answer is None:
+            rows.append([outcome.prompt.name, "-", (outcome.error or "")[:30], "-"])
+            continue
+        passed = f"{sum(check.passed for check in outcome.checks)}/{len(outcome.checks)}"
+        review = " ".join(f"{status} {count}" for status, count in review_counts(outcome.answer).items())
+        rows.append([outcome.prompt.name, passed, review or "-", f"{outcome.cost_usd:.4f}"])
+    total = sum(outcome.cost_usd for outcome in outcomes)
+    table = "\n".join(_format_row(row, columns) for row in rows)
+    return f"{table}\nTotal: about US${total:.4f} (estimate, list prices)"
+
+
+def render_tool_counts(noun: str, tool_trace: list[ToolCall]) -> str:
+    """ "3 planning tool calls: category_fields 1, sample_descriptions 2" or "0 planning tool calls"."""
+    counts = ", ".join(f"{name} {count}" for name, count in tool_call_counts(tool_trace))
+    label = f"{len(tool_trace)} {noun}{'' if len(tool_trace) == 1 else 's'}"
+    return f"{label}: {counts}" if counts else label
+
+
+def _indent(text: str) -> str:
+    return "\n".join(f"  {line}" for line in text.strip().splitlines())
 
 
 def render_tool_trace(tool_trace: list[ToolCall]) -> str:

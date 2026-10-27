@@ -1,6 +1,6 @@
 # carousearch
 
-Carousearch is a planned personal Telegram bot for searching [Carousell Singapore](https://www.carousell.sg) in plain English. A cheap LLM turns a prompt like "lightly used Aeron chair under $600, meet-up near Tampines, newest first" into Carousell's own search filters (Level 1). It then fills the search keywords and category-specific fields such as phone model, storage or shoe size (Level 2). Finally it screens the listings it finds: plain rules for seller rating, account age, price outliers and keyword blocklists, plus a vision model for subjective calls like low-effort photos or reseller-template descriptions (Level 3). It ranks results and shows them in Telegram with editable filter buttons. **Phase 1 is built** (2026-10-24): a tested Python client and command line for structured Carousell searches, listing details and a breakage canary. **Phase 2 task 1** adds a single-user Telegram bot that builds a search one question at a time with buttons (see [Running the Telegram bot](#running-the-telegram-bot)). **Phase 3a** adds [screening](#screening) for multi-item "catalogue" posts, with an optional price lookup by the worker model; prompt-to-filters has no LLM yet. **Phase 3b** adds a local [web app](#web-app) for searching with filters and reading screened results in a card grid; the Telegram bot stays for quick lookups and future alerts. An [MCP server](#mcp-server) lets agent hosts such as Claude Code search Carousell through the same client. **Phase B** adds [`carousearch ask`](#ask-the-agent): carousearch's own agent, which answers a plain-English shopping prompt by calling that server's tools with a model of your choice. **Phase C** adds the same agent to the web app as [Ask mode](#ask-mode), with live progress and the answer as cards, and lists the posts "Hide multi-item posts" hides, with their reasons. The **tiered agent** (2026-10-27) splits the agent into a planner model and a cheap worker model, and adds a Python sandbox over the run's listings, judge tools, photo metrics, category discovery, capped web search and a cost estimate per run.
+Carousearch is a planned personal Telegram bot for searching [Carousell Singapore](https://www.carousell.sg) in plain English. A cheap LLM turns a prompt like "lightly used Aeron chair under $600, meet-up near Tampines, newest first" into Carousell's own search filters (Level 1). It then fills the search keywords and category-specific fields such as phone model, storage or shoe size (Level 2). Finally it screens the listings it finds: plain rules for seller rating, account age, price outliers and keyword blocklists, plus a vision model for subjective calls like low-effort photos or reseller-template descriptions (Level 3). It ranks results and shows them in Telegram with editable filter buttons. **Phase 1 is built** (2026-10-24): a tested Python client and command line for structured Carousell searches, listing details and a breakage canary. **Phase 2 task 1** adds a single-user Telegram bot that builds a search one question at a time with buttons (see [Running the Telegram bot](#running-the-telegram-bot)). **Phase 3a** adds [screening](#screening) for multi-item "catalogue" posts, with an optional price lookup by the worker model; prompt-to-filters has no LLM yet. **Phase 3b** adds a local [web app](#web-app) for searching with filters and reading screened results in a card grid; the Telegram bot stays for quick lookups and future alerts. An [MCP server](#mcp-server) lets agent hosts such as Claude Code search Carousell through the same client. **Phase B** adds [`carousearch ask`](#ask-the-agent): carousearch's own agent, which answers a plain-English shopping prompt by calling that server's tools with a model of your choice. **Phase C** adds the same agent to the web app as [Ask mode](#ask-mode), with live progress and the answer as cards, and lists the posts "Hide multi-item posts" hides, with their reasons. The **tiered agent** (2026-10-27) splits the agent into a planner model and a cheap worker model, and adds a Python sandbox over the run's listings, judge tools, photo metrics, category discovery, capped web search and a cost estimate per run. The **planning layer** (2026-10-27) makes the agent plan first, for any kind of item: it samples what sellers actually write, shows a plan (attributes and where each comes from, benchmark, exclusions, ranking) before spending anything else, and reports on every plan item afterwards.
 
 - [docs/FEASIBILITY.md](docs/FEASIBILITY.md): full feasibility study: verdict, recommended stack, costs, risks, architecture
 - [docs/CAROUSELL_ACCESS_NOTES.md](docs/CAROUSELL_ACCESS_NOTES.md): raw technical findings on Carousell's endpoints, filters, response shapes and anti-bot behaviour
@@ -47,24 +47,34 @@ src/carousearch/
   bot/app.py             builds the Application, runs polling, and the `whoami` helper
   web/app.py             create_app(settings): FastAPI app, services built once at startup, static files
   web/routes.py          the page (/), the results partial (/results), the detail partial (/listing/{id}),
-                         and Ask mode's POST /ask and GET /ask/{run_id}
+                         and Ask mode's POST /ask, GET /ask/{run_id} and the plan's execute, revise, cancel and
+                         knowledge (save a suggested note) POSTs
   web/query_params.py    URL query string <-> SearchRequest, Load-more counts, the page mode (pure)
   web/view_models.py     price row, badges, meta line, results line, hidden posts, form and detail views (pure)
-  web/prompt_view_models.py  Ask mode's form, progress, answer, failure and waiting views (pure)
-  web/prompt_runs.py     PromptRun and the in-memory registry of Ask runs; runs the agent as a background task
+  web/prompt_view_models.py  Ask mode's form (with method templates), progress, plan, answer (with the plan
+                         review), failure, cancellation and waiting views (pure)
+  web/prompt_runs.py     PromptRun and the in-memory registry of Ask runs; plans, then executes on Execute, as
+                         background tasks; saves a suggested knowledge note when asked
   web/services.py        WebServices; the screened search and listing detail (blocking, run one at a time)
   web/templates/, web/static/  Jinja2 templates; app.css, app.js, htmx.min.js (2.0.11, vendored)
   mcp_server.py          build_server(services): the MCP tools (search, details, photo, screening tags, category
-                         fields, usage notes)
+                         fields, sample descriptions, usage notes)
   mcp_instructions.md    the usage notes the MCP server sends to hosts
   agent/settings.py      planner and worker models, the per-run budgets, provider keys, the price table
-  agent/prompt.py        the agent's system prompt
-  agent/result.py        AgentAnswer: kept, dropped, not_shortlisted, notes, tool_trace, usage (`ask --json`)
+  agent/prompt.py        the planning and execution instructions (method only: no item knowledge)
+  agent/plan.py          SearchPlan, PlanItemStatus, the plan checks and the plan review (pure)
+  agent/templates.py     generic method templates the planner may follow (pure)
+  agent/knowledge.py     the owner's knowledge/ notes: parsing and keyword selection (pure), loading and saving
+  agent/planning.py      plan_prompt: the planning phase (discovery tools, small budget, plan checks)
+  agent/evals.py         the cross-category eval prompts and their plan checks (pure), the live runner
+  agent/result.py        AgentAnswer: kept, dropped, not_shortlisted, notes, plan, plan_review,
+                         suggested_knowledge, tool_trace, planning_trace, usage (`ask --json`)
   agent/budget.py        ToolBudget: counts a run's tool calls, photos and listings against the caps (pure)
   agent/trace.py         the tool trace, from a run's message history (pure)
   agent/progress.py      ToolCallEvent: what an observer is told as each tool call starts and finishes (pure)
   agent/cost.py          token usage per model and the cost estimate (pure)
-  agent/local_tools.py   run_python, judge_listings, judge_photos, photo_metrics (Pydantic AI function tools)
+  agent/local_tools.py   run_python, extract_fields, judge_listings, judge_photos, photo_metrics (function tools)
+  agent/extraction.py    extract_fields' field specs, regexes, typing and worker prompt (pure)
   agent/sandbox.py, sandbox_bootstrap.py  run_python's confined subprocess (Landlock, network namespace, limits)
   agent/listings_db.py   the run's listings.db and listings.json (row building is pure)
   agent/tool_results.py  the shorter tool results the planner reads (pure)
@@ -72,11 +82,14 @@ src/carousearch/
   agent/photo_metrics.py, run_photos.py  sharpness and brightness of a photo (pure), a run's photo files
   agent/web_search.py    the provider's hosted web search, capped per run
   agent/run_directory.py data/runs/<time>-<id>/, one folder per run
-  agent/run_prompt.py    run_prompt: the Pydantic AI agent loop, the gate every tool call passes through
+  agent/toolsets.py      ToolCallGate, the hook every tool call passes through, and the toolsets built on it
+  agent/run_prompt.py    execute_plan (the execution phase) and run_prompt (plan, then execute)
   canary.py              the health check behind `carousearch canary`
   fixture_capture.py     the dev command behind `carousearch capture-fixtures`
   text_render.py, cli.py terminal output and the `carousearch` command
 tests/                   pytest; fixtures/ holds trimmed real responses captured 2026-10-24
+knowledge/               your own notes for the planner (gitignored except README.md, which has the format)
+evals/prompts.json       the cross-category eval prompts behind `carousearch eval`
 ```
 
 ## Setup
@@ -341,24 +354,32 @@ Requests: a search costs one Carousell search plus, for flagged listings, up to 
 
 Settings are the ones `carousearch ask` reads, from `.env` or the environment: `AGENT_PLANNER_MODEL`, `AGENT_WORKER_MODEL`, the `AGENT_MAX_*` budgets, and each model's provider key (`OPENAI_API_KEY` for the defaults). There are no `--model` or `--max-photos` overrides here. Under the prompt box the page shows the two models ("Models: openai:gpt-5.4-mini plans, openai:gpt-5.4-nano judges") and the budgets. Without the provider's key it names the missing variable, says to add it to `.env` and restart `carousearch web`, and **Run** is disabled. `carousearch web` reads `.env` once at start-up, so restart it after any change; a malformed `AGENT_*` value stops it from starting (exit code 2), as it does for `ask`.
 
-A prompt can be up to 2,000 characters. **Run** starts the agent in the background of the web process, and the page asks for its progress every second:
+A prompt can be up to 2,000 characters. Under the prompt box, **Start from a method** offers the five method templates (under benchmark, best under budget, neglected listings, compare variants, watch for); pressing one puts an example request with `<placeholders>` in the box, with the first placeholder selected, and runs nothing.
 
-- While it runs: "Running · 12 s · 2 tool calls", the budget used so far ("calls 2 of 40 · photos 0 of 15 · listings 48 of 200"), and one line per tool call with its status (`running`, `ok`, `failed` or `refused`) and duration.
-- When it ends, the answer replaces the progress: a summary line ("2 kept · 5 dropped · 30 not shortlisted · 6 tool calls · 14 s"), the agent's **Notes** ending with the cost estimate line, a card for each kept listing, then two collapsed sections, **Dropped (n)** and **Tool calls (n)**.
+**Run** first plans, in the background of the web process, and the page asks for its progress every second ("Planning · 6 s · 2 tool calls", against the planning budget of 6 tool calls). Planning only discovers: the category and its filters, and a sample of what sellers write. Then the **plan** replaces the progress, and nothing more is spent until you decide:
+
+- the goal, the item class, the value drivers, the method template and the ranking;
+- **Attributes**, each with its source (structured filter, card field, text extraction, derived, external fact), how it is read and why the goal needs it;
+- **Benchmark** (population, grouping, statistic, normalisation), **Exclusions** with their reasons, **Assumptions**, the owner's notes used, and the estimate against the run budget;
+- what planning cost so far, the planning calls, and a warning if the planner sampled no listings.
+
+Three buttons: **Execute** runs the plan (the progress shows again: "Running · 12 s · 2 tool calls", the budget used so far, one line per tool call with its status and duration); **Edit** opens a box for a change in plain words ("compare within each size", "keep posts listing several items"), which goes back to the planner once and shows the revised plan; **Cancel** drops the plan. A reload shows a plan still waiting for a decision.
+
+When the run ends, the answer replaces the progress: a summary line ("2 kept · 5 dropped · 30 not shortlisted · 6 tool calls · 14 s"), the plan's item class, the agent's **Notes** ending with the cost estimate line (planning and execution together), the **Plan review** (every attribute, the benchmark, each exclusion and the ranking marked done, partial or not done, with what was done; an item the agent did not report on is marked not done), a card for each kept listing, then the collapsed sections **Dropped (n)**, **Planning calls (n)** and **Tool calls (n)**. When the agent learned something reusable about this kind of item, a **Suggested note** box shows it with **Save to knowledge/**, which writes it as `knowledge/<item class>.md` (never overwriting a file); nothing is saved unless you press it.
 
 A kept card is built from what Carousell's search returned, not from the model's text: the thumbnail, the listed price and condition · likes · seller, plus the agent's reason and a **Details** button that opens the same panel as in Filters mode. A kept listing that no search in the run returned gets an **Unverified** badge and a warning that its title, price and link are the model's. **Dropped** lists the shortlisted listings that failed one of your criteria: the title (linked to Carousell), the price when a search returned the listing, and the reason. Everything else the agent saw is only counted, as "not shortlisted". When Carousell blocks a tool call, that call shows as `failed`; the agent is told and can still answer with what it has. When the run itself fails (the model's API refuses the key or errors, or a model setting is unusable), the page says so calmly and lists the calls made before it stopped; the details go to the terminal running `carousearch web`.
 
-One run at a time. A second **Run** while one is in progress is refused with a message, and the first run's progress keeps showing. A run holds the web app's Carousell client from start to end, so meanwhile a filter search shows "An Ask run is in progress; your search will run when it finishes." (a **Details** panel says the same of its details) and asks again every 2 seconds, then shows the real results once the run has ended. It never overlaps an agent tool call. Only the page itself can start a run: `POST /ask` is refused without the `HX-Request` header the page's HTMX form sends, so another website cannot post a form to your localhost and spend your API budget. Runs are kept in memory, the last 10, until `carousearch web` restarts, and stopping the web app stops a run in flight. After a reload, Ask mode shows a run that is still in progress, but not the answer of a finished one.
+One run at a time. A second **Run** while one is planning or running is refused with a message, and the first run's progress keeps showing. Planning and execution each hold the web app's Carousell client from start to end, so meanwhile a filter search shows "An Ask run is in progress; your search will run when it finishes." (a **Details** panel says the same of its details) and asks again every 2 seconds, then shows the real results once the run has ended. It never overlaps an agent tool call. Only the page itself can start a run: `POST /ask` and the plan's buttons are refused without the `HX-Request` header the page's HTMX sends, so another website cannot post a form to your localhost and spend your API budget. Runs are kept in memory, the last 10, until `carousearch web` restarts, and stopping the web app stops a run in flight. After a reload, Ask mode shows a run that is still in progress, or a plan waiting for a decision, but not the answer of a finished one.
 
 Keyboard: `/` puts the cursor in the current mode's box (the search box or the prompt box); Ctrl+Enter (Cmd+Enter on a Mac) in the prompt box runs it.
 
 Requests and cost are as for `carousearch ask`: every Carousell request goes through the rate limiter (1.0 s ± 0.3 s apart), so a run with 20 tool calls takes at least 20 seconds plus the models' time. Each run's files go to `data/runs/<time>-<run id>/`.
 
-Status (2026-10-27): Ask mode is tested with scripted models only and has not been opened in a real browser; the agent behind it has run live through `carousearch ask` (see below). The screenshot above predates the Filters | Ask switch.
+Status (2026-10-27): Ask mode, with its plan step, is tested with scripted models only and has not been opened in a real browser; the agent behind it has run live through `carousearch ask` and `carousearch eval --live` (see below). The screenshot above predates the Filters | Ask switch.
 
 ## MCP server
 
-`carousearch mcp` lets an agent host (Claude Code, Codex CLI, the Claude desktop app, or ChatGPT through a tunnel) search Carousell through this client: `search_listings` (optionally only some fields per listing), `listing_details` (12-hour cache), `listing_photo` (downsized, Carousell's media host only), the optional `screening_tags`, `category_fields` (the categories, their subcategories and the filters each offers) and `usage_notes`. It is only a connector: the host filters, ranks, looks at photos and plans; the server does none of that. Over stdio by default; `--transport http --port 8766` serves streamable HTTP on 127.0.0.1 for tunnelling.
+`carousearch mcp` lets an agent host (Claude Code, Codex CLI, the Claude desktop app, or ChatGPT through a tunnel) search Carousell through this client: `search_listings` (optionally only some fields per listing), `listing_details` (12-hour cache), `listing_photo` (downsized, Carousell's media host only), the optional `screening_tags`, `category_fields` (the categories, their subcategories and the filters each offers), `sample_descriptions` (one search page as description excerpts and seller-entered fields, to learn what sellers in a category state) and `usage_notes`. Search results carry each card's `description_snippet` and details the seller-entered `attributes`. It is only a connector: the host filters, ranks, looks at photos and plans; the server does none of that. Over stdio by default; `--transport http --port 8766` serves streamable HTTP on 127.0.0.1 for tunnelling.
 
 ```bash
 claude mcp add --scope user carousearch -- /home/moses/carousearch/.venv/bin/carousearch mcp
@@ -368,21 +389,32 @@ claude mcp add --scope user carousearch -- /home/moses/carousearch/.venv/bin/car
 
 ## Ask the agent
 
-`carousearch ask` answers a shopping prompt in plain English, including multi-step ones such as "work out the market price, take 80% as a benchmark, then find bikes 50% below it with about 2 years of COE and low-effort photos". It runs an agent built with [Pydantic AI](https://pydantic.dev/docs/ai/). The web app's [Ask mode](#ask-mode) runs the same agent from the browser.
+`carousearch ask` answers a request in plain English about any kind of item, including multi-step ones such as "work out the market price, take 80% as a benchmark, then find listings 50% below it". It runs an agent built with [Pydantic AI](https://pydantic.dev/docs/ai/), in two phases: it plans, then it carries the plan out. The web app's [Ask mode](#ask-mode) runs the same agent from the browser, with a stop to approve the plan.
 
 ```bash
-.venv/bin/carousearch ask "Find the average market price of the r15 motorcycle (well used), take 80% of that as the benchmark, and find bikes priced 50% below it with about 2 years of COE"
-.venv/bin/carousearch ask "used Aeron chair under S\$600, meet-up" --json         # the answer as AgentAnswer JSON
-.venv/bin/carousearch ask "road bike under S\$800" --model openai:gpt-5.4 --worker-model openai:gpt-5.4-nano --max-photos 5
+.venv/bin/carousearch ask "a standing desk under S\$300, two motors, frame at least 140 cm"
+.venv/bin/carousearch ask "used Aeron chair under S\$600, meet-up" --json        # the answer as AgentAnswer JSON
+.venv/bin/carousearch ask "road bike under S\$800" --plan-only                   # plan, print it, save plan.json, stop
+.venv/bin/carousearch ask "road bike under S\$800" --plan-file data/runs/<run>/plan.json   # execute a saved plan
+.venv/bin/carousearch ask "..." --model openai:gpt-5.4 --worker-model openai:gpt-5.4-nano --max-photos 5
 ```
 
-**Two models.** The planner (`AGENT_PLANNER_MODEL`, default `openai:gpt-5.4-mini`) runs the agent loop: it plans, calls tools and writes the answer. The worker (`AGENT_WORKER_MODEL`, default `openai:gpt-5.4-nano`) does the many small jobs: one-line judgements per listing and photo scores, and screening's price lookup. Any Pydantic AI model string works for either (`anthropic:claude-haiku-5-5`, `openai:gpt-5.4`, ...); each needs its provider's key in `.env` or the environment (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`), and `ask` exits before any request when one is missing. The older `AGENT_MODEL` still works as a deprecated alias that sets both tiers (a tier set on its own wins), and `ask` warns while it is used.
+**No item knowledge.** Nothing in the code, the prompts or the tool descriptions knows any kind of item (a test checks every model-facing text for item and domain words). The agent works out the meta-information itself: what drives value for this kind of item, what the listings actually contain, which attributes the goal needs and where each comes from, how to compare fairly, what to leave out and why, and how to rank. What it knows comes only from the model's general knowledge, web search, the listings it samples, and your own [knowledge notes](#knowledge-notes).
 
-**Tools.** The [MCP server](#mcp-server)'s tools run inside the same process: `search_listings` (with `fields`, so the planner reads only, say, id, title and price), `listing_details` (the planner sees the first 300 characters of the description), `listing_photo`, `screening_tags` and `category_fields`. Four local tools work on the run's own data:
+**The plan.** The planning phase runs the planner model with three discovery tools on a small budget (`AGENT_PLAN_MAX_TOOL_CALLS`, default 6 tool calls, no photos, two search pages, two web searches): `category_fields`, `search_listings` and `sample_descriptions` (one search page shown as description excerpts and seller-entered fields). A first plan made without reading a single listing is sent back once with a reminder to sample. The plan (`SearchPlan`, `agent/plan.py`) has: the goal, the item class (the planner's reading of what is searched), the value drivers, the attributes (each with its source: `structured_filter`, `card_field`, `text_extraction`, `derived` or `external_fact`, and how it is read), an optional benchmark (population, grouping, statistic, normalisation), exclusions each with a reason tied to the goal, the ranking, the method template followed if any, a budget estimate and every assumption. Plans whose parts do not fit together (a grouping that names no attribute, an unknown template, text extraction with no worker calls budgeted) go back to the planner to be fixed. `--plan-only` stops here, prints the plan and saves it as `plan.json` in the run folder; edit it and run it with `--plan-file`.
+
+**The execution and its review.** The execution phase gets the request, the plan as JSON and the list of plan items it must review, and runs with the full toolset and the run budget. Its answer includes a `plan_review`: every attribute, the benchmark, each exclusion and the ranking marked `done`, `partial` or `not_done` with what was done and its numbers; an item it leaves out is filled in as `not_done`. It may also return `suggested_knowledge`, a short note of reusable facts, which `ask` prints and the web app offers to save.
+
+**Method templates.** `agent/templates.py` holds five generic shapes of a plan, with slots and a sentence the planner fills: `under_benchmark` (priced well below comparable listings), `best_under_budget`, `neglected_listings` (up a long time, little interest), `compare_variants` and `watch_for` (an alert condition; planning only, alerts are not built yet). The planner picks one or none; the web app offers them as starting points.
+
+**Two models.** The planner (`AGENT_PLANNER_MODEL`, default `openai:gpt-5.4-mini`) runs the agent loop: it plans, calls tools and writes the answer. The worker (`AGENT_WORKER_MODEL`, default `openai:gpt-5.4-nano`) does the many small jobs: one-line judgements per listing, photo scores, `extract_fields` and screening's price lookup. Any Pydantic AI model string works for either (`anthropic:claude-haiku-5-5`, `openai:gpt-5.4`, ...); each needs its provider's key in `.env` or the environment (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`), and `ask` exits before any request when one is missing. The older `AGENT_MODEL` still works as a deprecated alias that sets both tiers (a tier set on its own wins), and `ask` warns while it is used. Both phases ask the provider to enforce their output's schema (strict structured output), and each planner request has a 180-second deadline, after which the run fails with a clear error.
+
+**Tools.** The [MCP server](#mcp-server)'s tools run inside the same process: `search_listings` (with `fields`, so the planner reads only, say, id, title and price), `listing_details` (the planner sees the first 300 characters of the description), `listing_photo`, `screening_tags` and `category_fields`; `sample_descriptions` is the planning phase's. Five local tools work on the run's own data:
 
 | Tool | What it does | Cost |
 |---|---|---|
 | `run_python(code)` | Runs a Python snippet in a sandbox whose working directory holds `listings.db` (SQLite, table `listings`) and `listings.json`: every listing the run's searches and details returned, with card columns (price, condition, likes, seller, posted_at, bumped_at, category, raw_json) and detail columns (description, seller_rating, review_count, image_urls, meetup_locations, ...). The agent does all arithmetic, medians, benchmarks and regexes here. Standard library only (pandas only if installed). | no tokens, no Carousell request |
+| `extract_fields(listing_ids, field_specs, fetch_details)` | Reads named fields from titles and descriptions into typed columns of `listings.db`. Each spec has a name, a type (`str`, `int`, `float`, `date`, `bool`, `enum`), a unit, a hint, an optional regex (tried first) and the allowed values of an enum. What the regex does not find goes to the worker model in batches of 12 with a strict schema; anything the text does not state stays null, never guessed. Values land in columns `x_<name>` and in the JSON column `extracted`, so `run_python` can `SELECT id, price, x_size_cm FROM listings`. Without `fetch_details` it reads the title and the card's ~300-character snippet. Cached per listing, spec and worker model. | worker tokens for what the regex misses; with `fetch_details`, one request per uncached detail |
 | `judge_listings(listing_ids, criterion)` | The worker model answers yes, no or unsure with a one-line reason per listing, from title, price and description, 12 listings per model call. Missing details are fetched first. | worker tokens; one Carousell request per uncached detail |
 | `judge_photos(listing_ids, criterion)` | The worker model scores each main photo 1 to 5 against the criterion (the photo is downsized to 512 px), plus the metrics below. Uses the full-size photo once details are known, else the thumbnail. | worker tokens; one request per photo not yet downloaded in the run |
 | `photo_metrics(listing_ids)` | Width, height, sharpness (Laplacian variance at 512 px; under about 100 looks blurry) and brightness (0 to 255), with no model. | one request per photo not yet downloaded |
@@ -391,18 +423,21 @@ Judgements are cached in `data/carousearch.db` (`judgement_cache`) by listing, c
 
 **The sandbox.** `run_python` starts `python -I -S` (no site-packages, no `PYTHON*` variables) in the run folder with an empty environment, so no API key is visible. On Linux 5.13 and later it confines itself with Landlock before running the snippet: it can read only the interpreter and system libraries and write only inside the run folder, and TCP connections are refused (verified on this machine: reading `../../../.env` from the run folder raises `PermissionError`). Where unprivileged user namespaces exist it also runs under `unshare -rn`, with no network at all. Limits: 20 s wall clock (the process group is killed), 512 MB of memory, 64 MB per written file, and only the first few thousand characters of output come back. Without Landlock (an older kernel, macOS) only the working directory, the empty environment, the limits and the network namespace remain; the tests skip the confinement checks there and say why. Each snippet and its output stay in `python/NNN.*` in the run folder.
 
-**Run folders.** Each run writes `data/runs/<UTC time>-<id>/`: `listings.db`, `listings.json`, `photos/` and `python/`. Nothing deletes old run folders.
+**Run folders.** Each run writes `data/runs/<UTC time>-<id>/`: `listings.db`, `listings.json`, `photos/`, `python/` and, with `--plan-only`, `plan.json`. Planning and execution share the folder, so the pages the planner read are already in `listings.db`. Nothing deletes old run folders.
 
 The output, top to bottom:
 
-- **Tool calls**: a count per tool, then one line per call with its duration, the tool and its arguments, and `[refused]` (over a budget, never sent to Carousell), `[failed]` (the tool reported an error, such as Carousell blocking) or `[not run]`. Hosted web searches appear as `web_search`.
+- **Tool calls**: the execution's calls: a count per tool, then one line per call with its duration, the tool and its arguments, and `[refused]` (over a budget, never sent to Carousell), `[failed]` (the tool reported an error, such as Carousell blocking) or `[not run]`. Hosted web searches appear as `web_search`.
+- **Plan**: headed by the planning calls ("Plan (3 planning tool calls: category_fields 1, sample_descriptions 2)"), then the plan's sections as above; a warning line if the planner sampled no listings.
 - **Kept**: a table of price, title, seller, URL and the agent's reason, which quotes the numbers it computed (benchmark, percent below) and what it checked.
 - **Dropped**: only shortlisted listings that failed one of your criteria, each with that criterion and its number.
 - **Not shortlisted**: how many more listings the agent saw; they are not listed.
+- **Plan review**: one line per plan item: `done`, `partial` or `not_done`, the item and what was done.
 - **Notes**: the agent's assumptions (how it read a vague criterion, what the benchmark was computed from) and what you should check, plus a line for each budget that stopped or shortened the run.
-- **Cost (estimate)**: tokens per model (input, of which cached, and output), web searches, and US$ at list prices, for example `Cost (estimate, list prices of 2026-10-27): about US$0.0255. planner openai:gpt-5.4-mini: 6 requests, 92,483 input tokens (76,032 cached), 1,531 output; worker openai:gpt-5.4-nano: 1 request, 1,237 input tokens (0 cached), 260 output.` The prices are in `agent/settings.py` (`MODEL_PRICES`, checked 2026-10-27); a model not in the table is reported as "no price".
+- **Suggested knowledge note**, when the agent has one.
+- **Cost (estimate)**: both phases together; tokens per model (input, of which cached, and output), web searches, and US$ at list prices, for example `Cost (estimate, list prices of 2026-10-27): about US$0.0255. planner openai:gpt-5.4-mini: 6 requests, 92,483 input tokens (76,032 cached), 1,531 output; worker openai:gpt-5.4-nano: 1 request, 1,237 input tokens (0 cached), 260 output.` The prices are in `agent/settings.py` (`MODEL_PRICES`, checked 2026-10-27); a model not in the table is reported as "no price".
 
-`--json` prints the same as one `AgentAnswer` object: `kept`, `dropped`, `not_shortlisted`, `notes`, `tool_trace` and `usage` (per model: `role`, `model`, `requests`, `input_tokens`, `cached_input_tokens`, `output_tokens`, `web_searches`, `estimated_cost_usd`).
+`--json` prints the same as one `AgentAnswer` object: `kept`, `dropped`, `not_shortlisted`, `notes`, `plan`, `plan_review`, `suggested_knowledge`, `tool_trace`, `planning_trace` and `usage` (per model, both phases: `role`, `model`, `requests`, `input_tokens`, `cached_input_tokens`, `output_tokens`, `web_searches`, `estimated_cost_usd`). With `--plan-only`, `--json` prints the `SearchPlan` alone.
 
 | Setting (`.env` or environment) | Default | Meaning |
 |---|---|---|
@@ -412,11 +447,28 @@ The output, top to bottom:
 | `AGENT_MAX_TOOL_CALLS` | 40 | Tool calls per run, plus each Carousell request a local tool makes (details, photos). |
 | `AGENT_MAX_PHOTOS` | 15 | Photos looked at or measured. `--max-photos` overrides it. |
 | `AGENT_MAX_LISTINGS` | 200 | Listings asked for across all search pages. A page that would pass it is cut short. |
-| `AGENT_MAX_WEB_SEARCHES` | 3 | Hosted web searches per run; 0 turns web search off. |
+| `AGENT_MAX_WEB_SEARCHES` | 3 | Hosted web searches in the execution phase; 0 turns web search off. |
+| `AGENT_PLAN_MAX_TOOL_CALLS` | 6 | Tool calls in the planning phase (which also has no photos, at most 96 listings and 2 web searches). |
 
 The budgets are enforced, not advised. A call over a budget is refused before it reaches Carousell, and the agent is told to finish with what it has; a judge tool that runs out part-way judges the rest on their titles and says so. The notes then say which budget was reached. A model that keeps calling tools anyway is stopped after its tool-call budget plus 5 more model requests. Carousell requests still go through the usual rate limiter (1.0 s ± 0.3 s apart). Details come from the 12-hour cache shared with the other commands.
 
-Status (2026-10-27): run live with the default models on the two motorcycle prompts in docs/NEXT_STEPS.md; each run cost US$0.03 to US$0.04 and made fewer than 20 Carousell requests. The tools worked; how well the answer follows a multi-step prompt depends on the planner model (gpt-5.4-mini sometimes computes one benchmark across different models; a larger planner such as `openai:gpt-5.4` costs about three times as much).
+### Knowledge notes
+
+`knowledge/` at the repo root holds optional notes of your own, one topic per short markdown file, with front matter naming the words that select it (`applies_to: standing desk, desk frame`). The planner is shown, clearly labelled as the owner's notes, every note with a keyword in your request (and, for the execution, in the plan's item class). carousearch ships none; the folder is gitignored except [knowledge/README.md](knowledge/README.md), which has the format. Notes come from you, or from the web app's **Save to knowledge/** button under an answer's suggested note.
+
+### Evaluating the planner
+
+`evals/prompts.json` holds seven requests about unrelated kinds of items (phones by storage tier, an office chair under a budget, neglected camera listings, console variants, the owner's two motorcycle prompts, and one vague request), each with the generic plan properties a good plan has: a benchmark grouped by an attribute, a text extraction attribute, an exclusion with a reason, stated assumptions, and so on. The tests check them offline against scripted plans.
+
+```bash
+.venv/bin/carousearch eval                       # list the prompts and their checks; no request
+.venv/bin/carousearch eval --live                # run each once: planner, Carousell and worker requests
+.venv/bin/carousearch eval --live --only vague_request
+```
+
+`--live` runs each prompt once through `run_prompt` and prints, per prompt, the item class, the attributes by source, the benchmark, whether the planner sampled listings, the checks passed, the plan review statuses, the tool counts of both phases and the cost; then a table and the total cost. It writes everything to `data/evals/<UTC time>.json`, and stops early if Carousell blocks a request.
+
+Status (2026-10-27): run live with the default models: `carousearch eval --live` once over the seven prompts (about US$0.40; every plan sampled the listings and 25 of 26 plan checks passed after one fix and a re-run), and the owner's R15 prompt through `--plan-only` and `--plan-file`. Planning is consistent; execution quality still depends on the planner model (gpt-5.4-mini once spent its whole listing budget on search pages, and its plan review said so). docs/NEXT_STEPS.md, section 4.7, has the table.
 
 ## Running the Telegram bot
 

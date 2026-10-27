@@ -22,7 +22,7 @@ from carousearch.agent.settings import AgentSettings
 from carousearch.filters.schema import SearchResult
 
 from fake_mcp_services import DETAIL, SEARCH_RESULT, FakeCarousellSource, fake_services
-from scripted_model import ScriptedModel, calls
+from scripted_model import PlanFirst, ScriptedModel, calls
 from scripted_worker import ScriptedWorker
 
 PROMPT_A = (
@@ -143,7 +143,8 @@ def run_prompt_a(tmp_path: Path) -> tuple:
         run_directory=tmp_path / "run", judgement_cache=MemoryJudgementCache(), worker_model=FunctionModel(worker),
         network_prefix=(),
     )
-    answer = run_prompt_sync(PROMPT_A, fake_services(carousell), AgentSettings(), FunctionModel(planner), local=local)
+    model = FunctionModel(PlanFirst(planner))
+    answer = run_prompt_sync(PROMPT_A, fake_services(carousell), AgentSettings(), model, local=local)
     return answer, planner, worker, carousell
 
 

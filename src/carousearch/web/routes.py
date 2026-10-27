@@ -1,8 +1,11 @@
 """HTTP routes: the page (Filters or Ask mode), the results partial, the listing-detail partial, and Ask mode's
-POST /ask (start a run) and GET /ask/{run_id} (its progress, then its answer). Thin: read, call, render.
+POST /ask (plan a run), GET /ask/{run_id} (its progress, its plan, then its answer), and the plan's buttons:
+POST /ask/{run_id}/execute, /revise (one round) and /cancel, plus POST /ask/{run_id}/knowledge (save the answer's
+suggested note). Thin: read, call, render.
 
-Only POST /ask starts a model run. While an Ask run holds the Carousell client, the filter-search and detail routes
-answer at once with a "waiting" partial that asks again every 2 s, instead of queueing behind the run for minutes.
+Only the Ask POSTs start model calls, and only POST .../execute spends Carousell requests beyond planning's. While an
+Ask run plans or runs, the filter-search and detail routes answer at once with a "waiting" partial that asks again
+every 2 s, instead of queueing behind the run for minutes.
 """
 
 import logging
@@ -18,17 +21,31 @@ from fastapi.templating import Jinja2Templates
 
 from carousearch.carousell.errors import CarousellError
 from carousearch.filters.schema import SearchRequest
-from carousearch.web.prompt_runs import PromptRun, start_prompt_run
+from carousearch.web.prompt_runs import (
+    PromptRun,
+    save_suggested_note,
+    start_execution,
+    start_planning_run,
+    start_revision,
+)
 from carousearch.web.prompt_view_models import (
+    NO_KNOWLEDGE_FOLDER_MESSAGE,
+    NO_MORE_REVISIONS_MESSAGE,
+    NO_NOTE_MESSAGE,
     NOT_FROM_THE_PAGE_MESSAGE,
+    NOT_PLANNED_MESSAGE,
     RUN_IN_PROGRESS_MESSAGE,
     UNKNOWN_RUN_MESSAGE,
     WAITING_RESULTS_ELEMENT_ID,
+    PlanView,
     ProgressView,
     answer_view,
     ask_form_view,
+    cancelled_view,
+    change_problem,
     failed_view,
     missing_key_message,
+    plan_view,
     progress_view,
     prompt_problem,
     waiting_view,
@@ -67,6 +84,7 @@ def get_services(request: Request) -> WebServices:
 
 
 Services = Annotated[WebServices, Depends(get_services)]
+RunId = Annotated[str, PathParameter(pattern=r"^[A-Za-z0-9_-]{1,32}$")]
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -78,11 +96,13 @@ async def search_page(request: Request, services: Services) -> HTMLResponse:
     search_request = search_request_from_params(params)
     hide_multi_item = hide_multi_item_from_params(params)
     active_run = services.prompt_runs.active()
+    waiting_plan = plan_waiting_for_a_decision(services) if active_run is None else None
     context: dict[str, Any] = {
         "form": search_form_view(search_request, hide_multi_item),
         "mode": mode.value,
         "ask": ask_form_view(services.agent),
         "progress": None if active_run is None else run_progress(active_run, services),
+        "plan": None if waiting_plan is None else run_plan(waiting_plan, services),
     }
     if mode == PageMode.FILTERS and search_request is not None:
         if active_run is not None:
@@ -135,37 +155,112 @@ async def listing_detail_partial(
 
 @router.post("/ask", response_class=HTMLResponse)
 async def start_ask_run(request: Request, services: Services, prompt: Annotated[str, Form()] = "") -> HTMLResponse:
-    """Start one agent run in the background and answer with its progress, which polls GET /ask/{run_id}.
-    Refused, with nothing started: not sent by the page's own HTMX (403), no provider key (409), an empty or too long
-    prompt (422), a run in progress (409)."""
-    # Another site's page can post a form to localhost but cannot add this header, so it cannot spend money here.
-    if request.headers.get("HX-Request") != "true":
-        return ask_message(request, NOT_FROM_THE_PAGE_MESSAGE, status_code=403)
-    missing_key = missing_key_message(services.agent)
-    if missing_key is not None:
-        return ask_message(request, missing_key, status_code=409)
+    """Start planning a run in the background and answer with its progress, which polls GET /ask/{run_id} until the
+    plan is ready. Refused, with nothing started: not sent by the page's own HTMX (403), no provider key (409), an
+    empty or too long prompt (422), a run in progress (409)."""
+    refusal = refuse_unless_from_the_page(request) or refuse_without_a_key(request, services)
+    if refusal is not None:
+        return refusal
     problem = prompt_problem(prompt)
     if problem is not None:
         return ask_message(request, problem, status_code=422)
-    active_run = services.prompt_runs.active()
-    if active_run is not None:
-        progress = run_progress(active_run, services)
-        return ask_message(request, RUN_IN_PROGRESS_MESSAGE, status_code=409, progress=progress)
-    run = start_prompt_run(prompt.strip(), services)
-    logger.info("Ask run %s started", run.run_id)
+    busy = refuse_while_busy(request, services)
+    if busy is not None:
+        return busy
+    run = start_planning_run(prompt.strip(), services)
+    logger.info("Ask run %s planning", run.run_id)
     return TEMPLATES.TemplateResponse(request, "partials/ask_progress.html", {"progress": run_progress(run, services)})
 
 
 @router.get("/ask/{run_id}", response_class=HTMLResponse)
-async def ask_run_partial(
-    request: Request, services: Services, run_id: Annotated[str, PathParameter(pattern=r"^[A-Za-z0-9_-]{1,32}$")]
-) -> HTMLResponse:
-    """A run's progress while it runs (the partial polls again), then its answer or its failure (polling stops)."""
+async def ask_run_partial(request: Request, services: Services, run_id: RunId) -> HTMLResponse:
+    """A run's progress while it plans or runs (the partial polls again), its plan while it waits for a decision,
+    then its answer, its failure or its cancellation (polling stops)."""
     run = services.prompt_runs.get(run_id)
     if run is None:
         return ask_message(request, UNKNOWN_RUN_MESSAGE, status_code=404)
-    if run.running:
-        return TEMPLATES.TemplateResponse(request, "partials/ask_progress.html", {"progress": run_progress(run, services)})
+    return render_run(request, run, services)
+
+
+@router.post("/ask/{run_id}/execute", response_class=HTMLResponse)
+async def execute_ask_plan(request: Request, services: Services, run_id: RunId) -> HTMLResponse:
+    """Execute a planned run's plan (the first Carousell requests beyond planning), answering with its progress."""
+    run, refusal = planned_run_or_refusal(request, services, run_id)
+    if refusal is not None:
+        return refusal
+    start_execution(run, services)
+    logger.info("Ask run %s executing", run.run_id)
+    return TEMPLATES.TemplateResponse(request, "partials/ask_progress.html", {"progress": run_progress(run, services)})
+
+
+@router.post("/ask/{run_id}/revise", response_class=HTMLResponse)
+async def revise_ask_plan(
+    request: Request, services: Services, run_id: RunId, change: Annotated[str, Form()] = ""
+) -> HTMLResponse:
+    """Send the plan back to the planner with the owner's change, once; answers with the planning progress."""
+    run, refusal = planned_run_or_refusal(request, services, run_id)
+    if refusal is not None:
+        return refusal
+    if not run.can_revise:
+        return ask_message(request, NO_MORE_REVISIONS_MESSAGE, status_code=409, plan=run_plan(run, services))
+    problem = change_problem(change)
+    if problem is not None:
+        return ask_message(request, problem, status_code=422, plan=run_plan(run, services))
+    start_revision(run, change.strip(), services)
+    logger.info("Ask run %s revising its plan", run.run_id)
+    return TEMPLATES.TemplateResponse(request, "partials/ask_progress.html", {"progress": run_progress(run, services)})
+
+
+@router.post("/ask/{run_id}/cancel", response_class=HTMLResponse)
+async def cancel_ask_plan(request: Request, services: Services, run_id: RunId) -> HTMLResponse:
+    """Drop a planned run without executing it."""
+    refusal = refuse_unless_from_the_page(request)
+    if refusal is not None:
+        return refusal
+    run = services.prompt_runs.get(run_id)
+    if run is None:
+        return ask_message(request, UNKNOWN_RUN_MESSAGE, status_code=404)
+    if run.status != "planned":
+        return ask_message(request, NOT_PLANNED_MESSAGE, status_code=409)
+    run.cancel(services.screening.clock())
+    logger.info("Ask run %s cancelled before execution", run.run_id)
+    return render_run(request, run, services)
+
+
+@router.post("/ask/{run_id}/knowledge", response_class=HTMLResponse)
+async def save_ask_note(request: Request, services: Services, run_id: RunId) -> HTMLResponse:
+    """Save a finished run's suggested note to knowledge/ (never overwriting a file) and say where."""
+    refusal = refuse_unless_from_the_page(request)
+    if refusal is not None:
+        return refusal
+    run = services.prompt_runs.get(run_id)
+    if run is None:
+        return ask_message(request, UNKNOWN_RUN_MESSAGE, status_code=404)
+    if run.answer is None or not run.answer.suggested_knowledge:
+        return ask_message(request, NO_NOTE_MESSAGE, status_code=409)
+    if services.knowledge_dir is None:
+        return ask_message(request, NO_KNOWLEDGE_FOLDER_MESSAGE, status_code=409)
+    file_name = await run_in_threadpool(save_suggested_note, run, services.knowledge_dir)
+    logger.info("Ask run %s: suggested note saved to knowledge/%s", run.run_id, file_name)
+    context = {"saved_to": f"knowledge/{file_name}"}
+    return TEMPLATES.TemplateResponse(request, "partials/ask_note_saved.html", context)
+
+
+def plan_waiting_for_a_decision(services: WebServices) -> PromptRun | None:
+    """The newest run when it is planned and waiting for Execute, Edit or Cancel (a reload shows it again)."""
+    newest_run = services.prompt_runs.newest()
+    return newest_run if newest_run is not None and newest_run.status == "planned" else None
+
+
+def render_run(request: Request, run: PromptRun, services: WebServices) -> HTMLResponse:
+    """The partial for a run's current state."""
+    if run.busy:
+        context = {"progress": run_progress(run, services)}
+        return TEMPLATES.TemplateResponse(request, "partials/ask_progress.html", context)
+    if run.status == "planned":
+        return TEMPLATES.TemplateResponse(request, "partials/ask_plan.html", {"plan": run_plan(run, services)})
+    if run.status == "cancelled":
+        return TEMPLATES.TemplateResponse(request, "partials/ask_cancelled.html", {"cancelled": cancelled_view(run)})
     elapsed = elapsed_seconds(run, services)
     if run.answer is not None:
         context = {"answer": answer_view(run, run.answer, services.agent.budget, elapsed)}
@@ -175,16 +270,67 @@ async def ask_run_partial(
     return TEMPLATES.TemplateResponse(request, "partials/ask_failed.html", context)
 
 
+def planned_run_or_refusal(
+    request: Request, services: WebServices, run_id: str
+) -> tuple[PromptRun, None] | tuple[None, HTMLResponse]:
+    """The run behind a plan button, or the refusal to send instead: not from the page (403), no key (409), an
+    unknown run (404), a run not waiting for a decision (409) or another run in progress (409)."""
+    refusal = refuse_unless_from_the_page(request) or refuse_without_a_key(request, services)
+    if refusal is not None:
+        return None, refusal
+    run = services.prompt_runs.get(run_id)
+    if run is None:
+        return None, ask_message(request, UNKNOWN_RUN_MESSAGE, status_code=404)
+    if run.status != "planned":
+        return None, ask_message(request, NOT_PLANNED_MESSAGE, status_code=409)
+    busy = refuse_while_busy(request, services)
+    if busy is not None:
+        return None, busy
+    return run, None
+
+
+def refuse_unless_from_the_page(request: Request) -> HTMLResponse | None:
+    """Another site's page can post a form to localhost but cannot add this header, so it cannot spend money here."""
+    if request.headers.get("HX-Request") != "true":
+        return ask_message(request, NOT_FROM_THE_PAGE_MESSAGE, status_code=403)
+    return None
+
+
+def refuse_without_a_key(request: Request, services: WebServices) -> HTMLResponse | None:
+    missing_key = missing_key_message(services.agent)
+    return ask_message(request, missing_key, status_code=409) if missing_key is not None else None
+
+
+def refuse_while_busy(request: Request, services: WebServices) -> HTMLResponse | None:
+    active_run = services.prompt_runs.active()
+    if active_run is None:
+        return None
+    progress = run_progress(active_run, services)
+    return ask_message(request, RUN_IN_PROGRESS_MESSAGE, status_code=409, progress=progress)
+
+
 def ask_message(
-    request: Request, error: ErrorMessage, status_code: int, progress: ProgressView | None = None
+    request: Request,
+    error: ErrorMessage,
+    status_code: int,
+    progress: ProgressView | None = None,
+    plan: PlanView | None = None,
 ) -> HTMLResponse:
-    """A calm refusal in the Ask run region; with `progress`, the run in flight goes on showing below it."""
-    context = {"error": error, "progress": progress}
+    """A calm refusal in the Ask run region; with `progress` the run in flight, or with `plan` the plan waiting for
+    a decision, goes on showing below it."""
+    context = {"error": error, "progress": progress, "plan": plan}
     return TEMPLATES.TemplateResponse(request, "partials/ask_message.html", context, status_code=status_code)
 
 
 def run_progress(run: PromptRun, services: WebServices) -> ProgressView:
-    return progress_view(run, services.agent.budget, elapsed_seconds(run, services))
+    return progress_view(
+        run, services.agent.budget, elapsed_seconds(run, services), services.agent.planning_budget
+    )
+
+
+def run_plan(run: PromptRun, services: WebServices) -> PlanView:
+    planned_at = run.planned_at or services.screening.clock()
+    return plan_view(run, services.agent.budget, (planned_at - run.started_at).total_seconds())
 
 
 def elapsed_seconds(run: PromptRun, services: WebServices) -> float:

@@ -12,6 +12,7 @@ models.ALLOW_MODEL_REQUESTS = False
 
 ListingAnswer = Callable[[str, str], tuple[str, str]]  # (listing id, its prompt block) -> (verdict, reason)
 PhotoAnswer = Callable[[str], tuple[int, str]]  # listing id -> (score, reason)
+FieldAnswer = Callable[[str, str, str], object]  # (listing id, its prompt block, field name) -> value or None
 
 
 def always_yes(listing_id: str, block: str) -> tuple[str, str]:
@@ -22,27 +23,47 @@ def always_three(listing_id: str) -> tuple[int, str]:
     return 3, "an ordinary photo"
 
 
+def never_stated(listing_id: str, block: str, field_name: str) -> object:
+    return None
+
+
 class ScriptedWorker:
-    """A FunctionModel function for both judge agents; `skip` ids are left out of the answer."""
+    """A FunctionModel function for the judge agents and the extraction agent; `skip` ids are left out of the
+    answer."""
 
     def __init__(
         self,
         listing_answer: ListingAnswer = always_yes,
         photo_answer: PhotoAnswer = always_three,
         skip: frozenset[str] = frozenset(),
+        field_answer: FieldAnswer = never_stated,
     ) -> None:
         self.listing_answer = listing_answer
         self.photo_answer = photo_answer
+        self.field_answer = field_answer
         self.skip = skip
         self.listing_batches: list[list[str]] = []
         self.photo_batches: list[list[str]] = []
+        self.extraction_batches: list[tuple[list[str], list[str]]] = []  # (listing ids, field names) per call
 
     def __call__(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         output_tool = info.output_tools[0].name
         content = user_content(messages)
         if output_tool == "verdicts":
             return ModelResponse(parts=[ToolCallPart(output_tool, {"verdicts": self.verdicts(content[0])})])
+        if output_tool == "extracted":
+            return ModelResponse(parts=[ToolCallPart(output_tool, {"rows": self.extracted_rows(content[0])})])
         return ModelResponse(parts=[ToolCallPart(output_tool, {"scores": self.scores(content)})])
+
+    def extracted_rows(self, prompt: str) -> list[dict]:
+        field_names = re.findall(r"^- (\w+) \(", prompt, re.MULTILINE)
+        blocks = dict(re.findall(r'<listing id="(\d+)">(.*?)</listing>', prompt, re.DOTALL))
+        self.extraction_batches.append((list(blocks), field_names))
+        return [
+            {"listing_id": listing_id, **{name: self.field_answer(listing_id, block, name) for name in field_names}}
+            for listing_id, block in blocks.items()
+            if listing_id not in self.skip
+        ]
 
     def verdicts(self, prompt: str) -> list[dict]:
         blocks = dict(re.findall(r'<listing id="(\d+)">(.*?)</listing>', prompt, re.DOTALL))

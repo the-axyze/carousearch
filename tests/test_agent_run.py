@@ -8,26 +8,29 @@ from pathlib import Path
 
 import pytest
 from pydantic_ai import models
-from pydantic_ai.messages import BinaryContent
+from pydantic_ai.messages import BinaryContent, ModelResponse, ToolCallPart, UserPromptPart
 from pydantic_ai.models.function import FunctionModel
 
 from carousearch.agent.judge_cache import MemoryJudgementCache
+from carousearch.agent.knowledge import parse_note
 from carousearch.agent.local_tools import LocalToolServices
+from carousearch.agent.planning import PlanningOutcome
 from carousearch.agent.progress import ToolCallEvent
 from carousearch.agent.result import AgentAnswer
-from carousearch.agent.run_prompt import OUTPUT_TOOL_NAME, run_prompt_sync
+from carousearch.agent.run_prompt import OUTPUT_TOOL_NAME, execute_plan_sync, run_prompt_sync
 from carousearch.agent.settings import AgentBudget, AgentSettings
 from carousearch.carousell.errors import CarousellBlockedError
 from carousearch.mcp_server import load_usage_notes
 
 from fake_mcp_services import DETAIL, PHOTO_URL, SEARCH_RESULT, FakeCarousellSource, fake_services, jpeg_bytes
-from scripted_model import ScriptedModel, Turn, calls, final_answer
+from plan_examples import EXAMPLE_PLAN
+from scripted_model import PlanFirst, ScriptedModel, Turn, calls, final_answer, is_planning, plan_answer
 
 models.ALLOW_MODEL_REQUESTS = False  # a test that reaches a real provider fails instead of spending money
 
 # usage_notes is left out: its text is already in the instructions.
 MCP_TOOLS = {"search_listings", "listing_details", "listing_photo", "screening_tags", "category_fields"}
-LOCAL_TOOLS = {"run_python", "judge_listings", "judge_photos", "photo_metrics"}
+LOCAL_TOOLS = {"run_python", "extract_fields", "judge_listings", "judge_photos", "photo_metrics"}
 FIRST_LISTING = SEARCH_RESULT.listings[0]
 SECOND_PHOTO_URL = PHOTO_URL.replace(".jpg", "_2.jpg")
 
@@ -52,7 +55,7 @@ def ask(
         network_prefix=(),
     )
     return run_prompt_sync(
-        "Find a used iPhone 15 under S$700.", services, settings, model=FunctionModel(script), local=local,
+        "Find a used iPhone 15 under S$700.", services, settings, model=FunctionModel(PlanFirst(script)), local=local,
         observer=observer,
     )
 
@@ -78,7 +81,9 @@ def test_the_agent_offers_the_mcp_tools_and_the_local_tools_and_reads_the_usage_
     (_, info) = script.requests[0]
     assert {tool.name for tool in info.function_tools} == MCP_TOOLS | LOCAL_TOOLS
     assert [tool.name for tool in info.output_tools] == [OUTPUT_TOOL_NAME]
-    assert "shopping assistant for Carousell Singapore" in info.instructions
+    assert info.output_tools[0].strict is True
+    assert info.model_settings == {"request_timeout": 180.0}  # a provider that stops answering ends the run
+    assert "You carry out an agreed search plan over Carousell Singapore listings" in info.instructions
     assert "40 tool calls in total, 200 listings from search pages, 15 photos" in info.instructions
     assert load_usage_notes().strip() in info.instructions
 
@@ -267,3 +272,92 @@ def test_an_observer_that_raises_is_logged_and_does_not_change_the_answer(caplog
     assert carousell.detail_requests == [DETAIL.id]  # the calls went ahead
     assert len(caplog.records) == 4  # one per event
     assert all("progress observer failed" in record.getMessage() for record in caplog.records)
+
+
+# --- the plan: execution receives it, reviews it, and both phases are reported ------------------------------------
+
+
+def execution_user_prompt_of(script: ScriptedModel) -> str:
+    first_request = script.requests[0][0][0]
+    return next(part.content for part in first_request.parts if isinstance(part, UserPromptPart))
+
+
+def answer_with_review(review: list[dict], suggested_knowledge: str | None = None) -> ModelResponse:
+    arguments = {"kept": [], "dropped": [], "notes": "Reviewed.", "plan_review": review,
+                 "suggested_knowledge": suggested_knowledge}
+    return ModelResponse(parts=[ToolCallPart(OUTPUT_TOOL_NAME, arguments)])
+
+
+def test_the_execution_phase_receives_the_plan_and_the_items_to_review() -> None:
+    script = ScriptedModel(final_answer())
+
+    answer = ask(script)
+
+    message = execution_user_prompt_of(script)
+    assert message.startswith("Request:\nFind a used iPhone 15 under S$700.\n\nAgreed plan (JSON):\n")
+    assert EXAMPLE_PLAN.item_class in message
+    assert "Review items for plan_review: attribute:price, attribute:size_cm" in message
+    assert answer.plan == EXAMPLE_PLAN
+
+
+def test_the_plan_review_covers_every_plan_item_even_those_the_model_skipped() -> None:
+    review = [
+        {"item": "benchmark", "status": "partial", "note": "median of 3 groups; 2 groups had under 5 listings"},
+        {"item": "attribute:size_cm", "status": "done", "note": "extracted for 31 of 40, 9 unknown"},
+    ]
+    answer = ask(ScriptedModel(answer_with_review(review, "  applies_to: table\nSizes are in titles.  ")))
+
+    assert [(status.item, status.status) for status in answer.plan_review] == [
+        ("attribute:price", "not_done"), ("attribute:size_cm", "done"), ("attribute:days_listed", "not_done"),
+        ("benchmark", "partial"), ("exclusion:1", "not_done"), ("ranking", "not_done"),
+    ]
+    assert answer.plan_review[3].note.startswith("median of 3 groups")
+    assert answer.suggested_knowledge == "applies_to: table\nSizes are in titles."
+
+
+def test_the_answer_reports_both_phases_traces_and_their_usage_together() -> None:
+    planner = ScriptedModel(calls(("sample_descriptions", {"request": {"query": "x"}, "n": 3})), plan_answer())
+    executor = ScriptedModel(calls(SEARCH_CALL), final_answer())
+
+    def both_phases(messages, info):
+        return planner(messages, info) if is_planning(info) else executor(messages, info)
+
+    answer = ask_with_model(FunctionModel(both_phases))
+
+    assert [call.tool_name for call in answer.planning_trace] == ["sample_descriptions"]
+    assert [call.tool_name for call in answer.tool_trace] == ["search_listings"]
+    (usage,) = answer.usage
+    assert (usage.role, usage.requests) == ("planner", 4)  # two planning and two execution requests
+
+
+def test_a_saved_plan_is_executed_without_any_planning_request(tmp_path: Path) -> None:
+    script = ScriptedModel(final_answer("From the saved plan."))
+    local = LocalToolServices(run_directory=tmp_path, judgement_cache=MemoryJudgementCache(),
+                              worker_model=FunctionModel(ScriptedModel(final_answer())), network_prefix=())
+
+    answer = execute_plan_sync(
+        PlanningOutcome.from_plan(EXAMPLE_PLAN), "a request", fake_services(FakeCarousellSource()), AgentSettings(),
+        FunctionModel(script), local=local,
+    )
+
+    assert all(not is_planning(info) for _, info in script.requests)
+    assert answer.notes == "From the saved plan." and answer.planning_trace == []
+    assert answer.plan == EXAMPLE_PLAN
+
+
+def test_owners_notes_matching_the_plans_item_class_reach_the_execution_phase() -> None:
+    note = parse_note("household.md", "---\napplies_to: household item\n---\nCheck the legs for wobble.")
+    script = ScriptedModel(final_answer())
+
+    ask_with_model(FunctionModel(PlanFirst(script)), knowledge=[note])  # the request does not say "household item"
+
+    assert "Check the legs for wobble." in execution_user_prompt_of(script)
+
+
+def ask_with_model(model: FunctionModel, knowledge: list | None = None) -> AgentAnswer:
+    local = LocalToolServices(run_directory=Path(tempfile.mkdtemp()), judgement_cache=MemoryJudgementCache(),
+                              worker_model=FunctionModel(ScriptedModel(final_answer())), network_prefix=())
+    return run_prompt_sync(
+        "Find a used iPhone 15 under S$700.", fake_services(FakeCarousellSource()), AgentSettings(), model,
+        local=local, knowledge=knowledge or [],
+    )

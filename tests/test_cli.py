@@ -3,6 +3,7 @@ import io
 import json
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import anyio
@@ -14,6 +15,7 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from carousearch import cli
+from carousearch.agent.evals import EvalPrompt
 from carousearch.agent.result import AgentAnswer
 from carousearch.agent.run_prompt import OUTPUT_TOOL_NAME
 from carousearch.agent.settings import AgentBudget, AgentSettings
@@ -26,6 +28,8 @@ from carousearch.screening.price_resolver import NoopPriceResolver, PriceResolve
 
 from fake_carousell import FakeCarousell
 from fixture_files import load_json_fixture
+from plan_examples import EXAMPLE_PLAN
+from scripted_model import PlanFirst, is_planning
 
 NO_WAIT = ["--min-interval", "0", "--jitter", "0"]
 
@@ -542,11 +546,13 @@ def unused_worker(messages: list[ModelMessage], info: AgentInfo) -> ModelRespons
 
 
 def run_ask(
-    carousell: FakeCarousell, data_dir: Path, as_json: bool, model: FunctionModel, settings: AgentSettings | None = None
+    carousell: FakeCarousell, data_dir: Path, as_json: bool, script: Callable, plan_only: bool = False
 ) -> int:
+    """`ask` with the planning phase answered by PlanFirst and the execution phase by `script`; no owner's notes."""
     return cli.run_ask_command(
-        "Find an iPhone 15 under S$600.", settings or AgentSettings(), data_dir, carousell.client, RateLimiter(0, 0),
-        as_json, sys.stdout, sys.stderr, model=model, worker_model=FunctionModel(unused_worker),
+        "Find an iPhone 15 under S$600.", AgentSettings(), data_dir, carousell.client, RateLimiter(0, 0),
+        as_json, sys.stdout, sys.stderr, model=FunctionModel(PlanFirst(script)),
+        worker_model=FunctionModel(unused_worker), plan_only=plan_only, knowledge_dir=None,
     )
 
 
@@ -588,7 +594,7 @@ def test_ask_without_the_models_provider_key_exits_with_a_clear_message(
 def test_ask_json_output_parses_back_into_an_agent_answer(tmp_path: Path, capsys) -> None:
     carousell = FakeCarousell()
 
-    exit_code = run_ask(carousell, tmp_path, as_json=True, model=FunctionModel(search_then_details_twice_then_answer))
+    exit_code = run_ask(carousell, tmp_path, as_json=True, script=search_then_details_twice_then_answer)
 
     answer = AgentAnswer.model_validate_json(capsys.readouterr().out)
     assert exit_code == 0
@@ -604,7 +610,7 @@ def test_ask_json_output_parses_back_into_an_agent_answer(tmp_path: Path, capsys
 
 
 def test_ask_prints_the_trace_then_kept_dropped_and_notes(tmp_path: Path, capsys) -> None:
-    exit_code = run_ask(FakeCarousell(), tmp_path, as_json=False, model=FunctionModel(search_then_details_twice_then_answer))
+    exit_code = run_ask(FakeCarousell(), tmp_path, as_json=False, script=search_then_details_twice_then_answer)
 
     output = capsys.readouterr().out
     assert exit_code == 0
@@ -619,7 +625,7 @@ def test_ask_reports_a_failed_model_request_and_exits_with_failure(tmp_path: Pat
     def refused_key(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         raise ModelHTTPError(status_code=401, model_name="claude-haiku-5-5", body="invalid x-api-key")
 
-    exit_code = run_ask(FakeCarousell(), tmp_path, as_json=False, model=FunctionModel(refused_key))
+    exit_code = run_ask(FakeCarousell(), tmp_path, as_json=False, script=refused_key)
 
     captured = capsys.readouterr()
     assert exit_code == 1
@@ -656,3 +662,140 @@ def test_ask_options_are_checked_before_anything_runs() -> None:
         cli.agent_settings_from_arguments(AgentSettings(), parser.parse_args(["ask", "x", "--max-photos", "-1"]))
     with pytest.raises(ValueError, match="provider:model"):
         cli.agent_settings_from_arguments(AgentSettings(), parser.parse_args(["ask", "x", "--model", "gpt-5"]))
+
+
+# --- ask: the plan step -------------------------------------------------------------------------------------------
+
+
+def execution_must_not_run(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    raise AssertionError("--plan-only must stop before the execution phase")
+
+
+def test_ask_plan_only_prints_the_plan_and_spends_nothing_on_execution(tmp_path: Path, capsys) -> None:
+    carousell = FakeCarousell()
+
+    exit_code = run_ask(carousell, tmp_path, as_json=False, script=execution_must_not_run, plan_only=True)
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert output.startswith("Plan (0 planning tool calls):\nGoal:")
+    assert "Item class:     a second-hand household item sold in several sizes" in output
+    assert "  size_cm (cm) [text_extraction]: stated in titles" in output
+    assert "Benchmark:      median over single-item sale listings with a plain price, grouped by size_cm" in output
+    assert "  1. posts offering several items at one price. Why: their price is not the price of one item" in output
+    assert "Cost (estimate, list prices of " in output
+    (run_directory,) = (tmp_path / "runs").iterdir()
+    assert output.rstrip().endswith(f"Plan saved to {run_directory / 'plan.json'}; edit it if you like, then run it "
+                                    "with --plan-file.")
+    assert cli.read_plan_file(run_directory / "plan.json") == EXAMPLE_PLAN
+    assert carousell.api_requests == []
+
+
+def test_ask_plan_only_json_is_a_plan_that_plan_file_executes(tmp_path: Path, capsys) -> None:
+    run_ask(FakeCarousell(), tmp_path, as_json=True, script=execution_must_not_run, plan_only=True)
+    plan_file = tmp_path / "plan.json"
+    plan_file.write_text(capsys.readouterr().out)
+    planning_requests = []
+
+    def no_planning(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        planning_requests.append(is_planning(info))
+        return ModelResponse(parts=[ToolCallPart(OUTPUT_TOOL_NAME, {"kept": [], "dropped": [], "notes": "Done."})])
+
+    exit_code = cli.run_ask_command(
+        "Find a table.", AgentSettings(), tmp_path, FakeCarousell().client, RateLimiter(0, 0), True, sys.stdout,
+        sys.stderr, model=FunctionModel(no_planning), worker_model=FunctionModel(unused_worker),
+        saved_plan=cli.read_plan_file(plan_file), knowledge_dir=None,
+    )
+
+    answer = AgentAnswer.model_validate_json(capsys.readouterr().out)
+    assert exit_code == 0 and planning_requests == [False]
+    assert answer.plan == EXAMPLE_PLAN and answer.planning_trace == []
+    assert [status.status for status in answer.plan_review] == ["not_done"] * 6
+
+
+def test_ask_prints_the_plan_and_its_review(tmp_path: Path, capsys) -> None:
+    run_ask(FakeCarousell(), tmp_path, as_json=False, script=search_then_details_twice_then_answer)
+
+    output = capsys.readouterr().out
+    assert output.index("Tool calls (3)") < output.index("Plan (0 planning tool calls):") < output.index("Kept (1):")
+    assert output.index("Plan review:\n  not_done  Attribute price:") < output.index("Notes:")
+
+
+def test_ask_passes_the_owners_matching_notes_to_the_planner(tmp_path: Path, capsys) -> None:
+    knowledge = tmp_path / "knowledge"
+    knowledge.mkdir()
+    (knowledge / "phones.md").write_text("---\napplies_to: iphone 15\n---\nBattery health matters.")
+    planner = PlanFirst(execution_must_not_run)
+
+    cli.run_ask_command(
+        "Find an iPhone 15 under S$600.", AgentSettings(), tmp_path, FakeCarousell().client, RateLimiter(0, 0),
+        False, sys.stdout, sys.stderr, model=FunctionModel(planner), worker_model=FunctionModel(unused_worker),
+        plan_only=True, knowledge_dir=knowledge,
+    )
+
+    first_messages, _ = planner.planning_requests[0]
+    assert "Battery health matters." in str(first_messages[0].parts)
+
+
+def test_ask_rejects_an_invalid_plan_file_before_any_request(tmp_path: Path, capsys) -> None:
+    plan_file = tmp_path / "plan.json"
+    plan_file.write_text('{"goal": "x"}')
+
+    exit_code = cli.main(["--data-dir", str(tmp_path), "ask", "find a table", "--plan-file", str(plan_file)],
+                         client_factory=client_factory_that_must_not_run)
+
+    assert exit_code == 2
+    assert capsys.readouterr().err.startswith("error: ")
+    assert cli.main(["--data-dir", str(tmp_path), "ask", "x", "--plan-file", str(tmp_path / "missing.json")],
+                    client_factory=client_factory_that_must_not_run) == 2
+
+
+def test_plan_only_and_plan_file_cannot_be_combined(capsys) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        cli.build_argument_parser().parse_args(["ask", "x", "--plan-only", "--plan-file", "plan.json"])
+    assert exit_info.value.code == 2
+
+
+# --- eval ---------------------------------------------------------------------------------------------------------
+
+
+def test_eval_without_live_lists_the_prompts_and_makes_no_request(capsys) -> None:
+    exit_code = cli.main(["eval"], client_factory=client_factory_that_must_not_run)
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert output.startswith("phones_under_benchmark: Find used iPhone 15 Pro listings")
+    assert "  expects: has_benchmark, benchmark_grouped" in output
+    assert "7 prompts. Run them once for real with --live" in output
+
+
+def test_eval_only_rejects_an_unknown_prompt_name(capsys) -> None:
+    assert cli.main(["eval", "--only", "nothing_like_this"], client_factory=client_factory_that_must_not_run) == 2
+    assert "no eval prompt named nothing_like_this" in capsys.readouterr().err
+
+
+def test_eval_live_runs_each_prompt_once_and_writes_a_report(tmp_path: Path, capsys) -> None:
+    prompts = [EvalPrompt(name="first", prompt="Find a table.", expect=["has_benchmark", "source:structured_filter"]),
+               EvalPrompt(name="second", prompt="Find a lamp.", expect=["ranking_stated"])]
+    answer = ModelResponse(parts=[ToolCallPart(OUTPUT_TOOL_NAME, {"kept": [], "dropped": [], "notes": "Done.",
+                                                                  "plan_review": []})])
+
+    exit_code = cli.run_eval_command(
+        prompts, True, AgentSettings(), tmp_path, FakeCarousell().client, RateLimiter(0, 0), sys.stdout, sys.stderr,
+        model=FunctionModel(PlanFirst(lambda messages, info: answer)), worker_model=FunctionModel(unused_worker),
+        knowledge_dir=None,
+    )
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert output.index("== first ==") < output.index("== second ==") < output.index("PROMPT ")
+    assert "Checks:         1 of 2 passed; failed: source:structured_filter" in output
+    assert "Review:         not_done 6" in output
+    assert "Planning:       0 tool calls" in output
+    assert "Total: about US$" in output
+    (report,) = (tmp_path / "evals").iterdir()
+    summaries = json.loads(report.read_text())
+    assert [summary["name"] for summary in summaries] == ["first", "second"]
+    assert summaries[0]["checks"] == [{"name": "has_benchmark", "passed": True},
+                                      {"name": "source:structured_filter", "passed": False}]
+    assert len(list((tmp_path / "runs").iterdir())) == 2
