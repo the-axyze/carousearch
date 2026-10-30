@@ -974,11 +974,10 @@ def run_outreach_send_command(
         print(f"Run {run_id} has no unsent drafts. Draft some first: carousearch outreach draft {run_id} --below 25",
               file=output)
         return EXIT_OK
-    prefix = "(dry run) " if dry_run else ""
 
     def show(event: ProgressEvent) -> None:
         if event.kind != "finished":
-            print(prefix + event.text, file=output, flush=True)
+            print(event.text, file=output, flush=True)
 
     report = service.approve_and_send(run_id, message_ids, dry_run, on_progress=show)
     print(render_send_report(report), file=output)

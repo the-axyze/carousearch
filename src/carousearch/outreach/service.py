@@ -8,7 +8,7 @@ dry-run transport). Pydantic AI and Playwright are imported only when drafting o
 import random
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
@@ -106,9 +106,11 @@ class OutreachService:
         message_ids: Sequence[int] | None,
         dry_run: bool,
         on_progress: ProgressCallback = lambda event: None,
+        sleep: Callable[[float], None] | None = None,
     ) -> SendReport:
         """Approve the chosen drafts (all of the run's unsent ones when `message_ids` is None) and send them. A dry
-        run changes nothing in the store, waits no time and sends nothing."""
+        run changes nothing in the store, waits no time and sends nothing. `sleep` replaces the service's own for
+        this batch (the web app passes one that a shutdown or the Stop button interrupts)."""
         candidates = self.store.list_for_run(run_id, ("drafted", "approved"))
         if message_ids is not None:
             chosen = set(message_ids)
@@ -116,14 +118,14 @@ class OutreachService:
         if dry_run:
             sender = OutreachSender(
                 ReadOnlyRecorder(self.store), DryRunChatTransport(), self.policy, self.clock, lambda seconds: None,
-                self.rng,
+                self.rng, dry_run=True,
             )
-            return replace(sender.send_batch(candidates, on_progress), dry_run=True)
+            return sender.send_batch(candidates, on_progress)
         self.store.approve([message.id for message in candidates if message.status == "drafted"], self.clock())
         approved = self.store.get_many([message.id for message in candidates])
         transport = self.transport_factory()
         try:
-            sender = OutreachSender(self.store, transport, self.policy, self.clock, self.sleep, self.rng)
+            sender = OutreachSender(self.store, transport, self.policy, self.clock, sleep or self.sleep, self.rng)
             return sender.send_batch(approved, on_progress)
         finally:
             transport.close()

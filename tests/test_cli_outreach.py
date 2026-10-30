@@ -114,8 +114,9 @@ def test_a_dry_run_send_shows_the_policy_and_records_nothing(tmp_path: Path, cap
 
     output = capsys.readouterr().out
     assert exit_code == 0 and factory.transports == []
-    assert "(dry run) Skipped Listing 3: the daily cap on new conversations is reached" in output
-    assert "(dry run) Sent to user1" in output and "(dry run) Waiting" in output
+    assert "Skipped Listing 3: the daily cap on new conversations is reached" in output
+    assert "Would send to user1: Listing 1" in output and "Dry run, not sent: user1" in output
+    assert "Would wait" in output
     assert "Dry run: nothing was sent and nothing was recorded." in output
     assert "2 would be sent, 1 skipped." in output
     run(tmp_path, "list", "--status", "sent")

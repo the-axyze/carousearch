@@ -53,6 +53,7 @@ class OutreachSender:
     clock: Callable[[], datetime]
     sleep: Callable[[float], None]
     rng: random.Random = field(default_factory=random.Random)
+    dry_run: bool = False  # only words the progress and the report as a rehearsal; the transport decides what is sent
 
     def send_batch(
         self, messages: Sequence[OutreachMessage], on_progress: ProgressCallback = lambda event: None
@@ -66,13 +67,14 @@ class OutreachSender:
             report_skipped.append((message.id, reason.value))
             on_progress(ProgressEvent("skipped", f"Skipped {message.listing_title}: {reason.value}", message.id))
         if not to_send:
-            return self._finish(SendReport(skipped=report_skipped), sent_today, on_progress)
+            return self._finish(SendReport(skipped=report_skipped, dry_run=self.dry_run), sent_today, on_progress)
 
         session = self.transport.status()
         if not session.logged_in or session.blocked:
             on_progress(ProgressEvent("aborted", f"Nothing sent. {session.detail}"))
             report = SendReport(
-                skipped=report_skipped, aborted=session.detail, not_attempted=[message.id for message in to_send]
+                skipped=report_skipped, aborted=session.detail, not_attempted=[message.id for message in to_send],
+                dry_run=self.dry_run,
             )
             return self._finish(report, sent_today, on_progress)
         return self._send_in_turn(to_send, report_skipped, sent_today, on_progress)
@@ -90,15 +92,18 @@ class OutreachSender:
         for position, message in enumerate(to_send):
             if position > 0:
                 gap = next_gap_seconds(self.policy, self.rng)
-                on_progress(ProgressEvent("waiting", f"Waiting {gap:.0f} s before the next message"))
+                verb = "Would wait" if self.dry_run else "Waiting"
+                on_progress(ProgressEvent("waiting", f"{verb} {gap:.0f} s before the next message"))
                 self.sleep(gap)
-            sending_line = f"Sending to {seller_label(message)}: {message.listing_title}"
+            verb = "Would send" if self.dry_run else "Sending"
+            sending_line = f"{verb} to {seller_label(message)}: {message.listing_title}"
             on_progress(ProgressEvent("sending", sending_line, message.id))
             outcome = self.transport.send(message.listing_id, message.body)
             if outcome.result == "sent":
                 self.store.mark_sent(message.id, self.clock(), outcome.chat_url)
                 sent.append(message.id)
-                on_progress(ProgressEvent("sent", f"Sent to {seller_label(message)}", message.id))
+                sent_line = f"Dry run, not sent: {seller_label(message)}" if self.dry_run else f"Sent to {seller_label(message)}"
+                on_progress(ProgressEvent("sent", sent_line, message.id))
                 continue
             error = outcome.error or "the send failed"
             if outcome.result == "unconfirmed":  # it may have gone out: never send it again
@@ -111,10 +116,10 @@ class OutreachSender:
             on_progress(ProgressEvent("failed", stopped, message.id))
             report = SendReport(
                 sent=sent, skipped=report_skipped, failed=failed, stopped=stopped,
-                not_attempted=[later.id for later in to_send[position + 1:]],
+                not_attempted=[later.id for later in to_send[position + 1:]], dry_run=self.dry_run,
             )
             return self._finish(report, sent_today + len(sent), on_progress)
-        report = SendReport(sent=sent, skipped=report_skipped, failed=failed)
+        report = SendReport(sent=sent, skipped=report_skipped, failed=failed, dry_run=self.dry_run)
         return self._finish(report, sent_today + len(sent), on_progress)
 
     def _finish(self, report: SendReport, sent_today: int, on_progress: ProgressCallback) -> SendReport:
@@ -128,9 +133,10 @@ def seller_label(message: OutreachMessage) -> str:
 
 
 def finished_line(report: SendReport) -> str:
-    parts = [f"{len(report.sent)} sent", f"{len(report.skipped)} skipped"]
+    parts = [f"{len(report.sent)} {'would be sent' if report.dry_run else 'sent'}", f"{len(report.skipped)} skipped"]
     if report.failed:
         parts.append(f"{len(report.failed)} failed")
     if report.not_attempted:
         parts.append(f"{len(report.not_attempted)} left approved for later")
-    return "Done: " + ", ".join(parts) + f". {report.cap_remaining} more new conversations allowed in the next 24 hours."
+    head = "Dry run done (nothing sent or recorded): " if report.dry_run else "Done: "
+    return head + ", ".join(parts) + f". {report.cap_remaining} more new conversations allowed in the next 24 hours."
