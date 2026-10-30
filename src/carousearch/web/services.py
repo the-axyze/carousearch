@@ -17,8 +17,10 @@ from typing import TYPE_CHECKING, Protocol
 from carousearch.agent.judge_cache import JudgementCache, MemoryJudgementCache
 from carousearch.agent.settings import AgentSettings
 from carousearch.filters.schema import CategoryFilter, ListingDetail, SearchRequest, SearchResult
+from carousearch.outreach.service import OutreachService
 from carousearch.screening.models import ScreenedListing
 from carousearch.screening.pipeline import ScreeningServices, screen_listings
+from carousearch.web.outreach_runs import OutreachBatchRegistry
 from carousearch.web.prompt_runs import PromptRunRegistry
 from carousearch.web.view_models import ScreenedPage
 
@@ -108,6 +110,9 @@ class WebServices:
     runs_root: Path | None = None  # Ask runs keep their files in <runs_root>/runs/...; None: a temporary folder
     knowledge_dir: Path | None = None  # the owner's knowledge notes (knowledge/); None: none are read or saved
     prompt_runs: PromptRunRegistry = field(default_factory=PromptRunRegistry)  # Ask mode's recent runs
+    outreach: OutreachService | None = None  # drafting and sending offer messages; None: the panel is hidden
+    outreach_missing_key: str | None = None  # the variable the drafting model needs and lacks, if any
+    outreach_batches: OutreachBatchRegistry = field(default_factory=OutreachBatchRegistry)
 
 
 def search_and_screen(request: SearchRequest, services: WebServices) -> ScreenedPage:

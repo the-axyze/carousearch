@@ -51,6 +51,10 @@
   <p class="notice ask-none">The agent kept no listings.</p>
   {%- endif %}
 
+  {%- if outreach %}
+  {% include "partials/outreach_panel.html" %}
+  {%- endif %}
+
   <details class="ask-section">
     <summary>Dropped ({{ answer.dropped | length }})</summary>
     {%- if answer.dropped %}

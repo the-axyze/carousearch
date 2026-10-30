@@ -1,0 +1,51 @@
+{#- The drafts to review: tick, edit, then one press sends the batch. Drafts a send would skip start unticked. -#}
+{%- if drafts.notice %}<p class="ask-warning">{{ drafts.notice }}</p>{% endif %}
+{%- if drafts.rows %}
+<form id="outreach-review" class="outreach-review" hx-post="{{ drafts.send_url }}" hx-target="this"
+      hx-swap="outerHTML" hx-disabled-elt="find button[type=submit]">
+  <table class="outreach-table">
+    <thead><tr><th>Send</th><th>Listing</th><th>Asking</th><th>Offer</th><th>Message</th></tr></thead>
+    <tbody>
+      {%- for row in drafts.rows %}
+      <tr>
+        <td><input type="checkbox" name="message_id" value="{{ row.message_id }}" data-outreach-check
+                   aria-label="Send to {{ row.seller }}"{% if row.checked %} checked{% endif %}></td>
+        <td>
+          {%- if row.listing_url %}<a href="{{ row.listing_url }}" target="_blank" rel="noopener noreferrer">{{ row.title }}</a>
+          {%- else %}{{ row.title }}{% endif %}
+          <span class="muted outreach-seller">{{ row.seller }}</span>
+          {%- if row.skip_label %}<span class="outreach-skip">Would be skipped: {{ row.skip_label }}</span>{% endif %}
+        </td>
+        <td class="outreach-money">{{ row.asking }}</td>
+        <td class="outreach-money">{{ row.offer }}</td>
+        <td><textarea class="outreach-body" name="body_{{ row.message_id }}" rows="3"
+                      aria-label="Message to {{ row.seller }}">{{ row.body }}</textarea></td>
+      </tr>
+      {%- endfor %}
+    </tbody>
+  </table>
+  <div id="outreach-review-error"></div>
+  <div class="outreach-actions">
+    <button id="outreach-send" class="search-button" type="submit" data-outreach-send
+            {%- if not drafts.send_count %} disabled{% endif %}>{{ drafts.send_label }}</button>
+    <label class="outreach-dry-run"><input type="checkbox" name="dry_run" value="1"> Dry run (send nothing)</label>
+    <span class="muted">{{ drafts.cap_line }}</span>
+  </div>
+</form>
+{%- else %}
+<p class="muted">No drafts: every listing was passed over.</p>
+{%- endif %}
+{%- if drafts.passed_over %}
+<details class="ask-section">
+  <summary>Passed over ({{ drafts.passed_over | length }})</summary>
+  <ul class="dropped">
+    {%- for row in drafts.passed_over %}
+    <li class="dropped-row">
+      {%- if row.listing_url %}<a href="{{ row.listing_url }}" target="_blank" rel="noopener noreferrer">{{ row.title }}</a>
+      {%- else %}<span>{{ row.title }}</span>{% endif %}
+      <span class="dropped-reason">{{ row.reason }}</span>
+    </li>
+    {%- endfor %}
+  </ul>
+</details>
+{%- endif %}

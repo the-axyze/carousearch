@@ -15,10 +15,12 @@ from carousearch.agent.judge_cache import SqliteJudgementCache
 from carousearch.agent.knowledge import DEFAULT_KNOWLEDGE_DIR
 from carousearch.agent.settings import AgentSettings
 from carousearch.carousell.client import CarousellClient, create_carousell_client
-from carousearch.config import DATABASE_FILE_NAME, ScreeningSettings
+from carousearch.config import DATABASE_FILE_NAME, OutreachSettings, ScreeningSettings
+from carousearch.outreach.service import build_outreach_service
 from carousearch.screening.pipeline import DEFAULT_MAX_DETAIL_FETCHES, ScreeningServices
 from carousearch.screening.price_resolver import NoopPriceResolver, build_price_resolver
 from carousearch.screening.store import SqliteScreeningStore
+from carousearch.web.outreach_routes import router as outreach_router
 from carousearch.web.routes import RequestAbandoned, router
 from carousearch.web.services import WebServices
 
@@ -36,6 +38,7 @@ class WebSettings:
     max_detail_fetches: int = DEFAULT_MAX_DETAIL_FETCHES
     agent: AgentSettings = field(default_factory=AgentSettings)  # Ask mode's model, budgets and provider keys
     knowledge_dir: Path | None = DEFAULT_KNOWLEDGE_DIR  # the owner's notes the Ask planner reads and saves to
+    outreach: OutreachSettings = field(default_factory=OutreachSettings)  # drafting model, caps, browser profile
 
 
 def create_app(settings: WebSettings, services_factory: ServicesFactory | None = None) -> FastAPI:
@@ -53,10 +56,12 @@ def create_app(settings: WebSettings, services_factory: ServicesFactory | None =
             yield
         finally:
             await services.prompt_runs.stop()  # an Ask run in flight must not outlive the client it uses
+            await services.outreach_batches.stop()  # a batch stops at its next wait; the rest stay approved
             services.close()
 
     app = FastAPI(title="Carousearch", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.include_router(router)
+    app.include_router(outreach_router)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     app.add_exception_handler(RequestAbandoned, answer_no_one)
     return app
@@ -79,9 +84,12 @@ def build_web_services(settings: WebSettings, carousell_client: CarousellClient)
         max_detail_fetches=settings.max_detail_fetches,
     )
 
+    outreach = build_outreach_service(settings.outreach, settings.data_dir, utc_now)
+
     def close() -> None:
         carousell_client.close()
         database.close()
+        outreach.store.close()
 
     return WebServices(
         carousell=carousell_client,
@@ -92,6 +100,8 @@ def build_web_services(settings: WebSettings, carousell_client: CarousellClient)
         judgement_cache=SqliteJudgementCache(database),
         runs_root=settings.data_dir,
         knowledge_dir=settings.knowledge_dir,
+        outreach=outreach,
+        outreach_missing_key=settings.outreach.missing_key_variable(),
     )
 
 

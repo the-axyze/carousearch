@@ -1,6 +1,6 @@
 // Requests, debouncing and swaps are HTMX attributes in the templates. This file adds the "/", Esc and Ctrl+Enter
 // keys, the Filters | Ask switch's address, Ask's method templates, Ask's refusal messages, the Details toggle and
-// Close button, and the form state that HTMX's history snapshots need.
+// Close button, the form state that HTMX's history snapshots need, and outreach's Send button count.
 (() => {
   const askMode = () => document.getElementById("mode-ask")?.checked;
   document.addEventListener("keydown", (event) => {
@@ -42,7 +42,21 @@
     if (event.detail.elt.closest(".ask-mode") && [403, 404, 409, 422].includes(event.detail.xhr.status)) {
       event.detail.shouldSwap = true;
       event.detail.isError = false;
+      // A refused send keeps the drafts on the page and shows its reason above the Send button.
+      if (event.detail.elt.id === "outreach-review") {
+        event.detail.target = document.getElementById("outreach-review-error");
+        event.detail.swapOverride = "innerHTML";
+      }
     }
+  });
+  // Outreach: the Send button says how many drafts are ticked, and is off when none are.
+  document.addEventListener("change", (event) => {
+    if (!event.target.matches("[data-outreach-check]")) return;
+    const form = event.target.closest("form");
+    const count = form.querySelectorAll("[data-outreach-check]:checked").length;
+    const button = form.querySelector("[data-outreach-send]");
+    button.textContent = `Send ${count} message${count === 1 ? "" : "s"}`;
+    button.disabled = count === 0;
   });
   const closeDetail = (button) => {
     button.setAttribute("aria-expanded", "false");

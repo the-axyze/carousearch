@@ -461,3 +461,29 @@ code { padding: 1px 5px; font-family: ui-monospace, SFMono-Regular, Menlo, Conso
   .loading-bar.htmx-request::before { animation-duration: 3s; }
   .ask-spinner { animation-duration: 3s; }
 }
+
+/* Outreach: the "Message sellers" panel, the review table, a batch's progress and the /outreach page. */
+.outreach-panel { margin-top: 28px; padding-top: 18px; border-top: 1px solid var(--border); }
+.outreach-form { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: end; margin: 12px 0; font-size: 13.5px; }
+.outreach-number { width: 72px; height: 36px; padding: 0 8px; font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border-strong); border-radius: 8px; }
+.outreach-note { display: grid; gap: 4px; flex: 1 1 260px; }
+.outreach-note-input { height: 36px; min-height: 0; padding: 0 10px; }
+.outreach-indicator { display: none; align-items: center; gap: 8px; }
+.outreach-indicator.htmx-request { display: inline-flex; }
+.outreach-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.outreach-table th { text-align: left; font-weight: 600; color: var(--muted); padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.outreach-table td { vertical-align: top; padding: 8px; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.outreach-money, .outreach-when { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.outreach-seller, .outreach-skip { display: block; font-size: 12.5px; }
+.outreach-skip { color: var(--amber-text); }
+.outreach-body { width: 100%; min-width: 220px; padding: 6px 8px; font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border-strong); border-radius: 8px; resize: vertical; }
+.outreach-actions { display: flex; flex-wrap: wrap; gap: 12px 18px; align-items: center; margin-top: 14px; font-size: 13.5px; }
+.outreach-batch { margin-top: 14px; display: grid; gap: 10px; }
+.outreach-line { grid-template-columns: 1fr; }
+.outreach-status { font-weight: 600; }
+.outreach-status-sent { color: var(--ok); }
+.outreach-status-failed { color: var(--failed); }
+.outreach-filter { margin: 4px 0 16px; font-size: 13.5px; }
+.outreach-filter a[aria-current="page"] { color: var(--text); font-weight: 600; }
+.outreach-run code { font-size: 12px; }
+#outreach-review-error .error-box { margin: 12px 0 0; }

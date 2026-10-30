@@ -1,7 +1,8 @@
 """HTTP routes: the page (Filters or Ask mode), the results partial, the listing-detail partial, and Ask mode's
-POST /ask (plan a run), GET /ask/{run_id} (its progress, its plan, then its answer), and the plan's buttons:
-POST /ask/{run_id}/execute, /revise (one round) and /cancel, plus POST /ask/{run_id}/knowledge (save the answer's
-suggested note). Thin: read, call, render.
+POST /ask (plan a run), GET /ask/{run_id} (its progress, its plan, then its answer, with outreach's "Message
+sellers" panel), and the plan's buttons: POST /ask/{run_id}/execute, /revise (one round) and /cancel, plus POST
+/ask/{run_id}/knowledge (save the answer's suggested note). Outreach's own routes are in outreach_routes.py.
+Thin: read, call, render.
 
 Only the Ask POSTs start model calls, and only POST .../execute spends Carousell requests beyond planning's. While an
 Ask run plans or runs, the filter-search and detail routes answer at once with a "waiting" partial that asks again
@@ -21,6 +22,7 @@ from fastapi.templating import Jinja2Templates
 
 from carousearch.carousell.errors import CarousellError
 from carousearch.filters.schema import SearchRequest
+from carousearch.web.outreach_view_models import OutreachPanelView, outreach_panel_for
 from carousearch.web.prompt_runs import (
     PromptRun,
     save_suggested_note,
@@ -263,11 +265,23 @@ def render_run(request: Request, run: PromptRun, services: WebServices) -> HTMLR
         return TEMPLATES.TemplateResponse(request, "partials/ask_cancelled.html", {"cancelled": cancelled_view(run)})
     elapsed = elapsed_seconds(run, services)
     if run.answer is not None:
-        context = {"answer": answer_view(run, run.answer, services.agent.budget, elapsed)}
+        context = {
+            "answer": answer_view(run, run.answer, services.agent.budget, elapsed),
+            "outreach": outreach_panel(run, services),
+        }
         return TEMPLATES.TemplateResponse(request, "partials/ask_answer.html", context)
     error = run.error or GENERIC_ERROR_MESSAGE
     context = {"failed": failed_view(run, error, services.agent.budget)}
     return TEMPLATES.TemplateResponse(request, "partials/ask_failed.html", context)
+
+
+def outreach_panel(run: PromptRun, services: WebServices) -> OutreachPanelView | None:
+    """The "Message sellers" panel under a finished answer, when outreach is set up."""
+    if services.outreach is None or run.answer is None:
+        return None
+    return outreach_panel_for(
+        run.run_directory, services.runs_root, len(run.answer.kept), services.outreach_missing_key
+    )
 
 
 def planned_run_or_refusal(

@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="page">
+  <header class="site-header"><h1 class="brand"><a href="/">Carousearch</a></h1></header>
+  <h2 class="ask-heading">Outreach messages</h2>
+  <nav class="outreach-filter muted">Show:
+    <a href="/outreach"{% if not status %} aria-current="page"{% endif %}>all</a>
+    {%- for choice in statuses %} · <a href="/outreach?status={{ choice }}"{% if status == choice %} aria-current="page"{% endif %}>{{ choice }}</a>{% endfor %}
+  </nav>
+  {%- if not configured %}
+  <p class="notice">Outreach is not set up in this web app.</p>
+  {%- elif rows %}
+  <table class="outreach-table">
+    <thead><tr><th>Status</th><th>When</th><th>Listing</th><th>Offer</th><th>Message</th><th>Run</th></tr></thead>
+    <tbody>
+      {%- for row in rows %}
+      <tr>
+        <td><span class="outreach-status outreach-status-{{ row.status }}">{{ row.status }}</span>
+          {%- if row.chat_url %} <a href="{{ row.chat_url }}" target="_blank" rel="noopener noreferrer">chat</a>{% endif %}</td>
+        <td class="outreach-when">{{ row.when }}</td>
+        <td>
+          {%- if row.listing_url %}<a href="{{ row.listing_url }}" target="_blank" rel="noopener noreferrer">{{ row.title }}</a>
+          {%- else %}{{ row.title }}{% endif %}
+          <span class="muted outreach-seller">{{ row.seller }}</span>
+        </td>
+        <td class="outreach-money">{{ row.offer }}</td>
+        <td>{{ row.body }}{% if row.note %}<span class="outreach-skip">{{ row.note }}</span>{% endif %}</td>
+        <td class="outreach-run"><code>{{ row.run_id }}</code></td>
+      </tr>
+      {%- endfor %}
+    </tbody>
+  </table>
+  {%- else %}
+  <p class="notice">No messages yet. Draft some from a finished Ask run's "Message sellers" panel.</p>
+  {%- endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,20 @@
+{#- A batch being sent. It asks for itself again every 3 s while it runs; the finished state has no polling. -#}
+<div id="outreach-batch" class="outreach-batch"
+     {%- if batch.running %} hx-get="{{ batch.poll_url }}" hx-trigger="every 3s" hx-swap="outerHTML" hx-target="this"{% endif %}>
+  <p class="ask-status">
+    {%- if batch.running %}<span class="ask-spinner" aria-hidden="true"></span>{% endif -%}
+    {%- if batch.dry_run %}Dry run: nothing is sent. {% endif -%}
+    {%- if batch.running %}Sending…{% elif batch.error %}{{ batch.error }}{% else %}{{ batch.summary }}{% endif -%}
+  </p>
+  {%- if batch.lines %}
+  <ol class="trace">
+    {%- for line in batch.lines %}<li class="trace-row outreach-line">{{ line }}</li>{% endfor %}
+  </ol>
+  {%- endif %}
+  {%- if batch.running %}
+  <button class="secondary-button" type="button" hx-post="{{ batch.stop_url }}" hx-target="#outreach-batch"
+          hx-swap="outerHTML">Stop after the current message</button>
+  {%- else %}
+  <p class="muted"><a href="/outreach">All messages</a></p>
+  {%- endif %}
+</div>
