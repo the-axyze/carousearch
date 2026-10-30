@@ -3,7 +3,7 @@
      {%- if batch.running %} hx-get="{{ batch.poll_url }}" hx-trigger="every 3s" hx-swap="outerHTML" hx-target="this"{% endif %}>
   <p class="ask-status">
     {%- if batch.running %}<span class="ask-spinner" aria-hidden="true"></span>{% endif -%}
-    {%- if batch.dry_run %}Dry run: nothing is sent. {% endif -%}
+    {%- if batch.dry_run and batch.running %}Dry run: nothing is sent. {% endif -%}
     {%- if batch.running %}Sending…{% elif batch.error %}{{ batch.error }}{% else %}{{ batch.summary }}{% endif -%}
   </p>
   {%- if batch.lines %}
