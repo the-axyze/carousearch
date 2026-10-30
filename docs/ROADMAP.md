@@ -402,3 +402,11 @@ Built on branch `feature/generic-planning` (from `main`, not pushed): the agent 
 - Tests: 1061 offline (896 before), ruff clean. H2 done.
 
 Live check: `carousearch eval --live` once over the seven prompts with `openai:gpt-5.4-mini` and `openai:gpt-5.4-nano` (US$0.40), plus the owner's R15 prompt through `ask --plan-only` and `--plan-file`; about US$0.63 in all. Every plan sampled the listings; 25 of 26 plan checks passed after one fix (strict structured output) and its re-run; the execution phase is where quality still varies (one prompt spent its listing budget on search pages and kept nothing, and said so in its review). The web app's plan step has not been opened in a real browser.
+
+## Outreach phase 1 status (2026-10-30)
+
+Built on branch `feature/outreach` (from `feature/generic-planning`): after an Ask run, carousearch drafts one offer message per kept listing with the worker model, the owner reviews the batch once, and one press sends it from the owner's own Carousell account through a Chromium profile the owner logged into by hand. [OUTREACH.md](OUTREACH.md) has the guide and the safety policy; [NEXT_STEPS.md](NEXT_STEPS.md), section 4.8, has what changed and the deviations.
+
+- `outreach/` package: store (`data/outreach.db`, reply columns reserved), pure policy (de-duplication by listing and seller across all runs, a daily cap of 10, a 30 to 60 second gap), generic drafter, Playwright transport with every selector in one file, a dry-run transport, the sender and the service. `execute_plan` now saves `answer.json` in each run folder.
+- CLI `account login | status` and `outreach draft | send | list`; the web app's Message sellers panel and `/outreach`.
+- Tests: 1183 offline (1061 before), ruff clean. No real message sent; drafting checked live on `openai:gpt-5.4-nano`.

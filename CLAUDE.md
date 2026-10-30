@@ -1,15 +1,15 @@
 # carousearch: working rules for Claude Code
 
-Carousearch is a single-user, personal tool for searching Carousell Singapore (carousell.sg) through its undocumented internal JSON endpoints, and for flagging listings whose shown price does not apply to what was searched. It has a local web app (the main interface), a Telegram bot, a CLI, an MCP server for external agent hosts, and an in-app agent (`carousearch ask`, the web app's Ask mode) that uses the same MCP tools. The agent plans first and executes an agreed plan; it has no knowledge of any kind of item built in (see "Agent: no item knowledge" below).
+Carousearch is a single-user, personal tool for searching Carousell Singapore (carousell.sg) through its undocumented internal JSON endpoints, and for flagging listings whose shown price does not apply to what was searched. It has a local web app (the main interface), a Telegram bot, a CLI, an MCP server for external agent hosts, an in-app agent (`carousearch ask`, the web app's Ask mode) that uses the same MCP tools, and outreach, which drafts and sends offer messages to a run's sellers from the owner's own logged-in account (docs/OUTREACH.md). The agent plans first and executes an agreed plan; it has no knowledge of any kind of item built in (see "Agent: no item knowledge" below).
 
 The live plan, current state and open questions are in [docs/NEXT_STEPS.md](docs/NEXT_STEPS.md). Read it before starting work.
 
 ## Architecture
 
-Every front end builds a `SearchRequest` and calls `CarousellClient`. Nothing else talks to Carousell.
+Every front end builds a `SearchRequest` and calls `CarousellClient`. Nothing else talks to Carousell, except outreach's browser (`outreach/browser.py`), which sends chat messages from the owner's logged-in Chromium profile under its own rules (see Hard constraints).
 
 ```
-front ends   cli.py (12 commands) · bot/ · web/ · mcp_server.py · agent/ (via mcp_server's tools)
+front ends   cli.py (14 commands) · bot/ · web/ · mcp_server.py · agent/ (via mcp_server's tools)
                  │
                  ▼
 shared core  SearchRequest (filters/schema.py) ──> CarousellClient (carousell/client.py) ──> carousell.sg
@@ -28,11 +28,12 @@ shared core  SearchRequest (filters/schema.py) ──> CarousellClient (carousel
 | `canary.py`, `fixture_capture.py` | daily health check; dev command that refreshes `tests/fixtures/` |
 | `config.py`, `text_render.py`, `cli.py` | settings from `.env`, data dir, ports; terminal output; the `carousearch` command |
 | `bot/` | Telegram wizard: `state.py`, `keyboard.py`, `messages.py`, `price_input.py` (pure), `session_store.py` (in memory), `handlers.py` (I/O), `app.py` |
-| `web/` | FastAPI + Jinja2 + HTMX: `app.py`, `routes.py` (thin), `services.py` (blocking work, one call at a time), `query_params.py`, `view_models.py` and `prompt_view_models.py` (pure), `prompt_runs.py` (Ask mode's runs: plan, then execute on the owner's word; in-memory registry), `templates/`, `static/` (no build step) |
+| `web/` | FastAPI + Jinja2 + HTMX: `app.py`, `routes.py` (thin), `outreach_routes.py` + `outreach_runs.py` + `outreach_view_models.py` (the Message sellers panel, send batches in a worker thread, `/outreach`), `services.py` (blocking work, one call at a time), `query_params.py`, `view_models.py` and `prompt_view_models.py` (pure), `prompt_runs.py` (Ask mode's runs: plan, then execute on the owner's word; in-memory registry), `templates/`, `static/` (no build step) |
 | `mcp_server.py` | `build_server(McpServices)`: `search_listings`, `listing_details`, `listing_photo`, `screening_tags`, `category_fields`, `sample_descriptions`, `usage_notes`. A connector only: no filtering, ranking or LLM calls |
 | `agent/` planning layer | `plan.py` (`SearchPlan`, `PlanItemStatus`, checks; pure), `templates.py` (generic method templates; pure), `knowledge.py` (the owner's `knowledge/` notes), `planning.py` (`plan_prompt`: planner with the discovery tools on a small budget), `prompt.py` (method-only instructions), `evals.py` (the cross-category eval set and its plan checks) |
 | `agent/` execution | `run_prompt.py` (`execute_plan`, and `run_prompt` for both phases), `toolsets.py` (`ToolCallGate`, the hook every tool call passes through), `local_tools.py` (`run_python`, `extract_fields`, `judge_listings`, `judge_photos`, `photo_metrics`), `extraction.py`, `judging.py`, `worker.py`, `judge_cache.py`, `sandbox.py`, `listings_db.py`, `photo_metrics.py`, `run_photos.py`, `web_search.py`, `run_directory.py` |
 | `agent/` bookkeeping | `settings.py` (models, per-run and planning budgets, keys, prices), `budget.py`, `trace.py`, `progress.py`, `cost.py`, `tool_results.py` (pure), `result.py` (`AgentAnswer` with the plan, its review and both phases' traces) |
+| `outreach/` | `models.py` (`OfferRule`, `ShortlistedListing`, `OutreachDraft`, `OutreachMessage`, `OutreachPolicy`, `SendOutcome`), `run_shortlist.py` (a run's kept listings from `answer.json` + `listings.db`), `policy.py` (de-duplication, daily cap, gap; pure), `prompt.py` + `drafting.py` (generic drafter instructions; offer price and prompt pure; worker-model calls), `store.py` (`data/outreach.db`, reply columns reserved), `selectors.py` (every carousell.sg selector), `browser.py` (`ChatTransport`: Playwright over the profile, or `DryRunChatTransport`), `sender.py` (one batch), `service.py` (wiring, login wait) |
 
 Outside `src/`: `knowledge/` (the owner's optional notes; gitignored except its README) and `evals/prompts.json` (the eval prompts).
 
@@ -41,6 +42,8 @@ Outside `src/`: `knowledge/` (the owner's optional notes; gitignored except its 
 ```bash
 uv venv --python 3.14 .venv                                  # python3 -m venv fails on the owner's machine (no ensurepip)
 uv pip install --python .venv/bin/python pip -e ".[dev,llm]" # llm = the anthropic SDK for screening's price lookup
+uv pip install --python .venv/bin/python -e ".[outreach]"    # Playwright, for outreach; then:
+.venv/bin/playwright install chromium                        # the browser outreach drives (tests never need it)
 cp .env.example .env                                         # the owner fills in secrets; never commit .env
 ```
 
@@ -63,6 +66,10 @@ All of these except `whoami` and `--help` can reach carousell.sg. See the hard c
 .venv/bin/carousearch mcp [--transport http --port 8766]   # stdio by default; http has no auth
 .venv/bin/carousearch ask "<prompt>" [--json] [--model provider:model] [--max-photos N] [--plan-only | --plan-file plan.json]
 .venv/bin/carousearch eval [--live] [--only NAME]   # lists the eval prompts; --live runs each once (models and Carousell)
+.venv/bin/carousearch account login | status        # the owner logs in by hand in the window; status checks the profile
+.venv/bin/carousearch outreach draft <run id> --below 25 [--round-to 50] [--limit N] [--note "..."]   # model calls only
+.venv/bin/carousearch outreach send <run id> (--all | --ids ID ...) [--dry-run]   # sends from the owner's account
+.venv/bin/carousearch outreach list [--run <run id>] [--status sent]
 ```
 
 On the owner's machine the bot and web app run under `nohup` (commands in docs/NEXT_STEPS.md, section 3). Do not stop or restart them unless asked.
@@ -70,12 +77,12 @@ On the owner's machine the bot and web app run under `nohup` (commands in docs/N
 ## Tests and checks
 
 ```bash
-.venv/bin/pytest                 # offline; 1061 passed, 1 deselected at 2026-10-27
+.venv/bin/pytest                 # offline; 1183 passed, 1 deselected at 2026-10-30
 .venv/bin/pytest -m live         # 1 test, about 5 real Carousell requests; owner's home machine only
 .venv/bin/ruff check src tests   # must print "All checks passed!"
 ```
 
-There is no type checker yet (adding pyright is hardening task H1 in NEXT_STEPS). Test helpers: `tests/fake_carousell.py` (`FakeCarousell` over `httpx.MockTransport`, fixture-backed), `tests/fake_mcp_services.py` (fakes behind `McpServices`), `tests/fixture_files.py`, `tests/scripted_model.py` (`ScriptedModel`, and `PlanFirst`, which answers the planning phase with a fixed plan), `tests/scripted_worker.py`, `tests/plan_examples.py` (`EXAMPLE_PLAN`). Agent tests use Pydantic AI's `FunctionModel` with `models.ALLOW_MODEL_REQUESTS = False`; web tests use FastAPI's `TestClient`; bot tests use a fake bot. Fixtures in `tests/fixtures/` are trimmed real responses captured 2026-10-24.
+There is no type checker yet (adding pyright is hardening task H1 in NEXT_STEPS). Test helpers: `tests/fake_carousell.py` (`FakeCarousell` over `httpx.MockTransport`, fixture-backed), `tests/fake_mcp_services.py` (fakes behind `McpServices`), `tests/fixture_files.py`, `tests/scripted_model.py` (`ScriptedModel`, and `PlanFirst`, which answers the planning phase with a fixed plan), `tests/scripted_worker.py`, `tests/plan_examples.py` (`EXAMPLE_PLAN`), `tests/outreach_examples.py` (drafts, messages, shortlisted listings). Outreach tests use `DryRunChatTransport`, a fake clock and sleep, and a `FunctionModel` drafter. Agent tests use Pydantic AI's `FunctionModel` with `models.ALLOW_MODEL_REQUESTS = False`; web tests use FastAPI's `TestClient`; bot tests use a fake bot. Fixtures in `tests/fixtures/` are trimmed real responses captured 2026-10-24.
 
 ## Code rules
 
@@ -120,6 +127,10 @@ There is no type checker yet (adding pyright is hardening task H1 in NEXT_STEPS)
 
 - Never commit `.env` or `data/` (both are gitignored). Secrets live only in `.env`. Never print or log API keys or the bot token.
 - Carousell's Terms of Service ban automated access. The owner accepts that risk on these terms only: home IP, at most 1 request per second through `CarousellClient`'s rate limiter, request budgets, caches and the canary. Never bypass the limiter, add parallel requests, solve challenges, evade blocks or log in. When Carousell blocks, stop; do not retry in a loop.
+- Outreach (sending chats from the owner's account): searching stays anonymous. Outreach uses a separate persistent Chromium profile at `data/browser-profile/` (gitignored) that the owner logs into by hand once (`carousearch account login`). Never store, read or type Carousell credentials; never automate login, OTP, captcha or any challenge. If the page is not logged in or shows a challenge or block, stop the whole batch and report: no retries, no loops.
+- Outreach policy: at most `OUTREACH_DAILY_CAP` (default 10) new conversations in any 24 hours; a gap between sends drawn evenly from `OUTREACH_MIN_GAP_SECONDS` to `OUTREACH_MAX_GAP_SECONDS` (30 to 60); de-duplication by listing id and seller id across the whole outreach store. This is policy, not disguise: no humanised typing or mouse movement, nothing spoofed.
+- Outreach messages: one per listing, drafted by the worker model for that listing; no fixed template text sent verbatim across listings; never the owner's phone number or email, nothing about this tool. Every batch needs the owner's one approval (web: Send; CLI: `outreach send`).
+- Never send a real outreach message during development or verification: use `DryRunChatTransport` (`--dry-run`, the tests). The first real send is the owner's.
 - On a cloud, CI or any machine other than the owner's home WSL2: no live Carousell requests at all (`pytest -m live`, `capture-fixtures` and every command that reaches carousell.sg).
 - Keep live requests in tests to a minimum, and never add one to the default test run.
 - One tool layer: tools are defined once, in `mcp_server.py`, and every agent path uses them (`ask`, the planned web prompt mode, external hosts). Do not add a second tool layer.

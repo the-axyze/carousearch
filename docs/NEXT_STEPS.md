@@ -1,6 +1,6 @@
 # Carousearch: next steps
 
-Written 2026-10-26 against commit `26f68c9` on `main` (identical to `origin/main`); updated the same day for phase C, on branch `feature/phase-c-prompt-mode`, on 2026-10-27 for the tiered agent (section 4.6), on branch `feature/tiered-agent-tools`, and again on 2026-10-27 for the generic planning layer (section 4.7), on branch `feature/generic-planning`. This is the live plan. [ROADMAP.md](ROADMAP.md) keeps the original milestones and the dated status history; [CLAUDE.md](../CLAUDE.md) has the working rules.
+Written 2026-10-26 against commit `26f68c9` on `main` (identical to `origin/main`); updated the same day for phase C, on branch `feature/phase-c-prompt-mode`, on 2026-10-27 for the tiered agent (section 4.6), on branch `feature/tiered-agent-tools`, again on 2026-10-27 for the generic planning layer (section 4.7), on branch `feature/generic-planning`, and on 2026-10-30 for outreach phase 1 (section 4.8), on branch `feature/outreach`. This is the live plan. [ROADMAP.md](ROADMAP.md) keeps the original milestones and the dated status history; [CLAUDE.md](../CLAUDE.md) has the working rules.
 
 Labels used below: **verified** means checked against the code, or run, while this file was written on 2026-10-26. **Unverified** means taken from the docs or the owner's account and not re-checked. **Estimate** means a number nobody has measured.
 
@@ -10,8 +10,8 @@ Phase letters: phases C and D below continue the MCP and agent track in ROADMAP.
 
 ## 1. Current state (2026-10-26)
 
-- Head: phase C (PR #4) and the tiered agent (PR #5) are merged into `main`. The generic planning layer (section 4.7) is on `feature/generic-planning`, branched from `main` on 2026-10-27, not pushed.
-- Tests: `.venv/bin/pytest` gives 1061 passed, 1 deselected (the live test), in about 15 s on the owner's machine (verified 2026-10-27 on `feature/generic-planning`; 896 before it). `ruff check src tests` is clean.
+- Head: phase C (PR #4) and the tiered agent (PR #5) are merged into `main`. The generic planning layer (section 4.7) is on `feature/generic-planning` (PR #6, open). Outreach phase 1 (section 4.8) is on `feature/outreach`, branched from `feature/generic-planning` on 2026-10-30, with its PR based on that branch.
+- Tests: `.venv/bin/pytest` gives 1183 passed, 1 deselected (the live test), in about 17 s on the owner's machine (verified 2026-10-30 on `feature/outreach`; 1061 before it). `ruff check src tests` is clean.
 - No type checker runs (see H1).
 
 ### 1.1 Components
@@ -143,6 +143,9 @@ How the requirements map to the code today:
 | `data/carousearch.db` | SQLite: `seen_listings`, `listing_detail_cache`, `saved_searches`, `price_resolution_cache`, `listings`, `listing_changes`, `harvest_runs`, `harvest_run_listings` | Never |
 | `data/bot.log`, `data/web.log` | Output of the `nohup` processes | Never |
 | `data/canary.log` | One line per canary run | Never |
+| `data/runs/<run id>/` | One agent run: `listings.db`, `listings.json`, `photos/`, `python/`, `plan.json` (plan-only), `answer.json` (since 2026-10-30) | Never |
+| `data/outreach.db` | SQLite: `outreach_messages`, every drafted, skipped, sent and failed message (reply columns reserved) | Never |
+| `data/browser-profile/` | The Chromium profile the owner logged into by hand for outreach | Never |
 | `tests/fixtures/` | Trimmed real Carousell responses (2026-10-24) | Yes |
 | `docs/examples/` | Example analysis spec, web screenshots | Yes |
 
@@ -170,6 +173,10 @@ Each process has its own Carousell session and rate limiter, and they all share 
 | `AGENT_WORKER_MODEL` | the judge tools and screening's price resolver | `openai:gpt-5.4-nano` |
 | `AGENT_MODEL` | deprecated alias: fills whichever of the two above is unset | unset |
 | `AGENT_MAX_TOOL_CALLS`, `AGENT_MAX_PHOTOS`, `AGENT_MAX_LISTINGS`, `AGENT_MAX_WEB_SEARCHES` | `ask`, the web app's Ask mode | 40, 15, 200, 3 |
+| `OUTREACH_DAILY_CAP` | outreach: new conversations in any 24 hours | 10 |
+| `OUTREACH_MIN_GAP_SECONDS`, `OUTREACH_MAX_GAP_SECONDS` | outreach: the wait between two sends | 30, 60 |
+| `OUTREACH_DRAFT_MODEL` | outreach's drafter | blank: the worker model |
+| `OUTREACH_PROFILE_DIR` | outreach's browser profile | blank: `<data dir>/browser-profile` |
 | `CAROUSEARCH_DATA_DIR` | everything | `~/carousearch/data` |
 
 The web app reads its settings once at start-up, so it needs a restart after `.env` changes.
@@ -205,6 +212,7 @@ README.md documents the bot's `nohup` line; the web line above matches the runni
 - Register the MCP server with a host: `claude mcp add --scope user carousearch -- /home/moses/carousearch/.venv/bin/carousearch mcp` (docs/MCP.md has Codex CLI, Claude desktop and ChatGPT).
 - Anything needing `sudo` or Windows: `loginctl enable-linger`, a Windows Task Scheduler task that starts WSL at logon, `wsl --shutdown`.
 - Approve live runs (`pytest -m live`, `capture-fixtures`, the phase L checklist), any tunnel, and pushes.
+- Outreach: log in by hand (`carousearch account login`), check the selectors (docs/OUTREACH.md, "Verifying the selectors"), and make the first real send. If Chromium lacks system libraries: `sudo .venv/bin/playwright install-deps chromium`.
 
 ---
 
@@ -226,6 +234,8 @@ Effort is in solo-developer days, as in ROADMAP.md, and is a rough estimate.
 | H3, H10 | systemd user services; scheduled canary with a Telegram alert | 1 day | nothing | yes: linger, Task Scheduler |
 | H4 to H7 | MCP auth, photo cache, bot sessions in SQLite, external request budget (H11, the vendor-neutral resolver, is done) | 2 to 3 days | as listed | H4 only if a tunnel is wanted |
 | M | Saved searches over MCP (optional) | 0.5 day | D | decide Q9 |
+| O1 | Outreach phase 1: draft, review and send offer messages from the owner's account | **Done** (2026-10-30, section 4.8; branch `feature/outreach`) | G | log in, verify selectors, first real send |
+| O2 | Outreach phase 2: read replies, classify them, report negotiability | 1 to 1.5 days | O1 with a few real sends | review the classes on real replies |
 
 Suggested order: review and merge G, then T1 (with `carousearch eval --live` as the yardstick), L's remaining browser check, H1, H8, D (saved prompts can now save the agreed plan), H3 and H10, then the rest as needed.
 
@@ -403,6 +413,32 @@ Total spend for the verification: about US$0.63 (four plan-only runs US$0.060, t
 **Deviations from the brief.** `plan_prompt` returns a `PlanningOutcome` (the plan with its trace, cost, notes and the notes shown), not a bare `SearchPlan`, so the answer can report both phases; `execute_plan` takes that outcome (`PlanningOutcome.from_plan` wraps a saved plan). `sample_descriptions` takes a full `SearchRequest` (query, category and filters) rather than "category or query", and is an MCP tool, so external hosts get it too; the execution phase does not see it. `suggested_knowledge` is plain text whose first line may be `applies_to: ...`; without it the plan's item class becomes the keyword. Existing tests that drove `run_prompt` with execution-only scripts now answer the planning phase with a fixed plan (`tests/scripted_model.PlanFirst`); tests that counted the MCP or local tools, or quoted the old prompt, were updated. Five changes came out of the live runs rather than the brief: the planner is reminded once to sample before planning (its first live plans named regexes from its own knowledge without reading a listing); the executor is told to extract on every page a figure needs and to look into a failing step before stopping short; extraction asks for what the text states (dates) and leaves durations to `run_python`, since the worker does not know today's date; both structured outputs are strict (a live plan arrived without its ranking and budget estimate); and each model request has a 180-second deadline (one planner request went unanswered for minutes). `ask --plan-only` also saves `plan.json` in its run folder. Prompt B's exact wording was not recorded anywhere; `evals/prompts.json` uses a reconstruction from section 4.6.
 
 **Not done or deferred.** Executing alerts (`watch_for` only shapes a plan; phase D). A browser check of the plan step and screenshots. Saving plans with saved prompts (phase D). Cleaning up `data/runs/*` and old extraction answers in `judgement_cache` (T2).
+
+### 4.8 Outreach phase 1 (done 2026-10-30, branch `feature/outreach`)
+
+**Status.** Built and committed on `feature/outreach` (from `feature/generic-planning`). 1183 offline tests pass (1061 before), ruff is clean. Drafting ran live on the worker model; sending was exercised only through the dry-run transport. No real message has been sent; the first one is the owner's (docs/OUTREACH.md).
+
+**The requirement.** After an `ask` run, draft one lowball chat message per kept listing, review the batch once, press one Send, and have the messages go out from the owner's own Carousell account, spaced out, under a daily cap, never twice to the same listing or seller across runs. The owner judges negotiability from the replies later (phase 2).
+
+**What changed.**
+- `execute_plan` saves the answer as `answer.json` in the run folder; `outreach/run_shortlist.py` reads the kept listings back with `listings.db`'s data (a run from before has no `answer.json`: every listing it saw stands in, details first, and the output says so).
+- `outreach/`: models, `SqliteOutreachStore` (`data/outreach.db`, reply columns reserved), the pure policy (`choose_listings_to_draft`, `select_sendable`, `next_gap_seconds`), the drafter (generic instructions in the domain-word test, `compute_offer_price`, structured `DraftedMessage` with an output check for the offer price and no contact details or links), `selectors.py`, `browser.py` (`PlaywrightChatTransport` over a persistent profile, `DryRunChatTransport`), `sender.py` (one session check, random gap, stop at the first failure, "unconfirmed" counts as sent) and `service.py`.
+- CLI: `account login | status`, `outreach draft | send | list`. Web: a Message sellers panel under a finished answer (offer form, review table with tick boxes and editable messages, one "Send N messages" button with a dry-run toggle, progress polled every 3 s, Stop), and `/outreach`.
+- Settings `OUTREACH_DAILY_CAP`, `OUTREACH_MIN_GAP_SECONDS`, `OUTREACH_MAX_GAP_SECONDS`, `OUTREACH_DRAFT_MODEL`, `OUTREACH_PROFILE_DIR`; Playwright as the `outreach` extra.
+
+**Live checks (2026-10-30).** A headless browser got Cloudflare's "Just a moment..." page on the public site; a headed one loaded it. On a public listing page the **Chat** button is there logged out (a button named "Chat" beside "Make Offer"); clicking it opens a Login dialog. `account status` on the fresh profile first reported a block (Cloudflare's check on the first visit), then "Not logged in" on the next run. `outreach draft 20261027-092958-f1ec53 --below 25 --limit 2` on `openai:gpt-5.4-nano` gave two specific drafts (S$45 to S$33, S$35 to S$26); the web app on port 8767 drafted ten for run `20261028-181144-5b8627` and dry-ran them. About US$0.01 in model calls.
+
+**Deviations from the brief.** Runs did not keep their answer, so `execute_plan` now writes `answer.json` (older runs fall back to all listings seen; nothing is fetched from Carousell for drafting). The shortlist reader is its own module (`run_shortlist.py`). The offer is rounded down, and to a finer step (10, 5, 1) when `round_to` is over a tenth of the price. Skipped-before-drafting listings are returned, not stored. The daily cap counts the last 24 hours rather than a calendar day. A dry run neither approves nor records anything and does not wait. Send buttons, batches and `/outreach` are keyed by the run folder's name; the web app has no per-run page, so `/outreach` shows the run id without a link. The login wait watches the page without navigating, so it never interrupts the owner's typing. Added a Stop button for a running batch.
+
+**Not verified.** The logged-in indicator, composer and send button selectors (guesses until the owner logs in), and what Carousell's chat URL looks like.
+
+### 4.9 Outreach phase 2: reply reading and negotiability (not started)
+
+The data is ready: each sent `outreach_messages` row has its `chat_url` and empty `reply_text`, `reply_at`, `reply_class`, `counter_price`.
+- Reader: open each sent conversation's `chat_url` in the same profile (read only; the same pacing, session check and stop-on-block rules), take the seller's first reply after our message and its time. Selectors go in `outreach/selectors.py`.
+- Classifier: the worker model labels a reply (accepts, counter-offer with a price, firm on price, asks a question, no reply after N days) and extracts `counter_price`; pure checks, scripted-model tests.
+- Report: per run and per kind of listing, the share who countered and how far from asking (CLI table and a column on `/outreach`), to choose the next round's percentage.
+- Open: how often to read (a manual `outreach replies` command first, no background job), and whether a counter-offer should draft a follow-up for approval.
 
 ---
 
