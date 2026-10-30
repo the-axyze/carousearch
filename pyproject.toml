@@ -31,6 +31,11 @@ dev = [
     "pytest>=8",
     "ruff>=0.17",
 ]
+# Outreach's browser (`carousearch account`, `outreach send`): Playwright drives a logged-in Chromium profile.
+# After installing, run `.venv/bin/playwright install chromium` once.
+outreach = [
+    "playwright>=1.50",
+]
 # Kept so older install commands still work: screening's price lookup now runs on the worker model through
 # pydantic-ai-slim, which already brings the anthropic and openai SDKs.
 llm = []
@@ -55,5 +60,6 @@ line-length = 120
 known-first-party = ["carousearch"]
 # Helper modules that pytest imports from the tests/ folder.
 known-local-folder = [
-    "fake_carousell", "fake_mcp_services", "fixture_files", "plan_examples", "scripted_model", "scripted_worker",
+    "fake_carousell", "fake_mcp_services", "fixture_files", "outreach_examples", "plan_examples", "scripted_model",
+    "scripted_worker",
 ]
