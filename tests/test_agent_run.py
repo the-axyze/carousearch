@@ -345,6 +345,20 @@ def test_a_saved_plan_is_executed_without_any_planning_request(tmp_path: Path) -
     assert answer.plan == EXAMPLE_PLAN
 
 
+def test_the_answer_is_saved_in_the_run_folder_for_outreach(tmp_path: Path) -> None:
+    script = ScriptedModel(final_answer("Saved.", kept=[KEPT]))
+    local = LocalToolServices(run_directory=tmp_path, judgement_cache=MemoryJudgementCache(),
+                              worker_model=FunctionModel(ScriptedModel(final_answer())), network_prefix=())
+
+    answer = execute_plan_sync(
+        PlanningOutcome.from_plan(EXAMPLE_PLAN), "a request", fake_services(FakeCarousellSource()), AgentSettings(),
+        FunctionModel(script), local=local,
+    )
+
+    saved = AgentAnswer.model_validate_json((tmp_path / "answer.json").read_text(encoding="utf-8"))
+    assert saved == answer and saved.kept[0].listing_id == FIRST_LISTING.id
+
+
 def test_owners_notes_matching_the_plans_item_class_reach_the_execution_phase() -> None:
     note = parse_note("household.md", "---\napplies_to: household item\n---\nCheck the legs for wobble.")
     script = ScriptedModel(final_answer())
