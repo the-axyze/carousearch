@@ -64,7 +64,7 @@ def test_only_unsent_bodies_can_be_edited(store: SqliteOutreachStore) -> None:
 
 
 def test_already_contacted_matches_a_sent_listing_or_seller_only(store: SqliteOutreachStore) -> None:
-    sent, drafted = store.add_drafts([draft("1", seller_id="s1"), draft("2", seller_id="s2")], START)
+    sent, _never_sent = store.add_drafts([draft("1", seller_id="s1"), draft("2", seller_id="s2")], START)
     store.mark_sent(sent.id, START, None)
 
     assert store.already_contacted("1", "someone-else")
