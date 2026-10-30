@@ -61,7 +61,7 @@ def test_the_prompt_carries_the_listings_details_and_the_offer() -> None:
     assert "Listing title: Listing 1 in walnut finish" in prompt
     assert "Asking price: $120" in prompt and "Condition: Lightly used" in prompt
     assert "Seller-entered fields: colour: brown" in prompt and "empty" not in prompt
-    assert "Values read from the description: height_cm: 60" in prompt
+    assert "Values read from the description (1 means yes, 0 means no): height_cm: 60" in prompt
     assert "Why the buyer shortlisted it: lowest price with a solid top" in prompt
     assert "<<<\nBarely used, small scratch on the left side." in prompt
     assert "Offer price: $90" in prompt

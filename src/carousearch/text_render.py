@@ -332,7 +332,8 @@ def render_send_report(report: SendReport) -> str:
     if report.not_attempted:
         counts += f", {len(report.not_attempted)} left approved for a later batch"
     lines.append(counts + ".")
-    lines.append(f"Daily cap: {report.cap_remaining} new conversations left in the next 24 hours.")
+    left = "would be left" if report.dry_run else "left"
+    lines.append(f"Daily cap: {report.cap_remaining} new conversations {left} in the next 24 hours.")
     return "\n".join(lines)
 
 

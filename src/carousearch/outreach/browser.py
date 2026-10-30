@@ -24,10 +24,13 @@ if TYPE_CHECKING:
     from playwright.sync_api import BrowserContext, Locator, Page, Playwright
 
 DEFAULT_TIMEOUT_MS = 15_000
-PAGE_SETTLE_MS = 2_000  # Carousell renders its header and buttons after the first paint
+PAGE_SETTLE_MS = 3_000  # Carousell renders its header and buttons after the first paint
 
 NOT_LOGGED_IN_DETAIL = "Not logged in. Run `carousearch account login` and log in by hand in the window it opens."
-BLOCKED_DETAIL = "Carousell showed a challenge or block page. Stop here; try again another day, by hand first."
+BLOCKED_DETAIL = (
+    "Carousell showed a challenge or block page (e.g. Cloudflare's \"Just a moment...\"); nothing was done. Open the "
+    "profile by hand with `carousearch account login` and let the page finish; if it stays, stop for the day."
+)
 INSTALL_HINT = (
     "Playwright is not installed. Run: uv pip install --python .venv/bin/python -e \".[outreach]\" and then "
     ".venv/bin/playwright install chromium"

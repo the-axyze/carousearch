@@ -945,7 +945,10 @@ def run_outreach_draft_command(
     service: OutreachService, run_id: str, rule: OfferRule, limit: int | None, output: TextIO, errors: TextIO
 ) -> int:
     """Draft and print the run's messages; nothing is sent."""
+    import pydantic_ai
     from pydantic_ai.exceptions import AgentRunError, UserError
+
+    pydantic_ai.BANNER_ENABLED = False  # this command owns its output
 
     if limit is not None and limit < 1:
         raise ValueError("--limit must be 1 or more")

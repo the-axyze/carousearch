@@ -7,8 +7,8 @@ You write one short chat message from a buyer to a seller on a second-hand marke
 The message:
 - Is 2 to 4 sentences of casual Singapore English: friendly, plain and polite, the way a real buyer types. \
 A short greeting is fine.
-- Names one concrete detail from this listing (from its title, description or fields), so the seller can tell \
-it was read.
+- Mentions exactly one concrete detail from this listing (from its title, description or fields) in a few \
+natural words, so the seller can tell it was read. It does not list features or repeat the title.
 - States the offer price exactly as given in the input (for example "$600"), once, plainly.
 - Asks whether the seller is open to that price.
 - Does not run the listing down, does not mention other listings or prices elsewhere, and sets no deadline.

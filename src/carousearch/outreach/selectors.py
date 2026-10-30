@@ -7,7 +7,9 @@ Checked 2026-10-30 on the public pages while logged out (docs/OUTREACH.md, "Veri
 - the header shows "Login" (a[href="/login/"]) and "Register" links;
 - a listing page has a button named "Chat" beside "Make Offer"; logged out, clicking it opens a dialog titled
   "Login" (QR code, Facebook, email/username/mobile);
-- a headless browser got Cloudflare's "Just a moment..." page instead of the site; a headed one did not.
+- a headless browser got Cloudflare's "Just a moment..." page instead of the site. A headed one with a fresh profile
+  saw it once on its first visit (outreach reported a block and stopped, as it should); the next visit, with the
+  check's cookie kept in the profile, loaded the site normally.
 
 NOT verified, because they appear only when logged in: LOGGED_IN_INDICATOR, USERNAME_LINK, COMPOSER, SEND_BUTTON
 and the inbox address. `carousearch account status` and one `outreach send --dry-run` after the owner's first

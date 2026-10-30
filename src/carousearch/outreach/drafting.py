@@ -75,7 +75,7 @@ def build_drafter_prompt(listing: ShortlistedListing, offer_price: float, note_t
     if listing.condition:
         lines.append(f"Condition: {listing.condition}")
     lines += field_lines("Seller-entered fields", listing.attributes)
-    lines += field_lines("Values read from the description", listing.extracted)
+    lines += field_lines("Values read from the description (1 means yes, 0 means no)", listing.extracted)
     if listing.kept_reason:
         lines.append(f"Why the buyer shortlisted it: {listing.kept_reason}")
     if listing.description:
