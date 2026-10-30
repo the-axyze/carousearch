@@ -83,7 +83,17 @@ src/carousearch/
   agent/web_search.py    the provider's hosted web search, capped per run
   agent/run_directory.py data/runs/<time>-<id>/, one folder per run
   agent/toolsets.py      ToolCallGate, the hook every tool call passes through, and the toolsets built on it
-  agent/run_prompt.py    execute_plan (the execution phase) and run_prompt (plan, then execute)
+  agent/run_prompt.py    execute_plan (the execution phase, which saves answer.json) and run_prompt (plan, then execute)
+  outreach/models.py     OfferRule, ShortlistedListing, OutreachDraft, OutreachMessage, OutreachPolicy, SendOutcome
+  outreach/run_shortlist.py  a run's kept listings from answer.json and listings.db (row conversion is pure)
+  outreach/policy.py     what to draft, what a send may send (de-duplication, daily cap), the gap (pure)
+  outreach/prompt.py, drafting.py  the drafter's generic instructions; the offer price and prompt (pure), model calls
+  outreach/store.py      data/outreach.db: every drafted and sent message (with empty reply columns for later)
+  outreach/selectors.py  every carousell.sg selector outreach uses, in one place
+  outreach/browser.py    ChatTransport: Playwright over the logged-in profile, or a dry run that sends nothing
+  outreach/sender.py     one batch: policy, one session check, sends spaced by the gap, stop at the first failure
+  outreach/service.py    wiring: draft for a run, preview, approve and send, the login wait
+  web/outreach_routes.py, outreach_runs.py, outreach_view_models.py  the Message sellers panel, batches, /outreach
   canary.py              the health check behind `carousearch canary`
   fixture_capture.py     the dev command behind `carousearch capture-fixtures`
   text_render.py, cli.py terminal output and the `carousearch` command
@@ -469,6 +479,21 @@ The budgets are enforced, not advised. A call over a budget is refused before it
 `--live` runs each prompt once through `run_prompt` and prints, per prompt, the item class, the attributes by source, the benchmark, whether the planner sampled listings, the checks passed, the plan review statuses, the tool counts of both phases and the cost; then a table and the total cost. It writes everything to `data/evals/<UTC time>.json`, and stops early if Carousell blocks a request.
 
 Status (2026-10-27): run live with the default models: `carousearch eval --live` once over the seven prompts (about US$0.40; every plan sampled the listings and 25 of 26 plan checks passed after one fix and a re-run), and the owner's R15 prompt through `--plan-only` and `--plan-file`. Planning is consistent; execution quality still depends on the planner model (gpt-5.4-mini once spent its whole listing budget on search pages, and its plan review said so). docs/NEXT_STEPS.md, section 4.7, has the table.
+
+## Outreach: offer messages to sellers
+
+After an Ask run, outreach drafts one short offer per kept listing (a percentage below the asking price, specific to that listing), lets you review the batch once, and sends it from your own Carousell account through a browser profile you logged into by hand: one message at a time, 30 to 60 seconds apart, at most 10 new conversations a day, and never twice to the same listing or seller. The full guide, the safety policy and how to check the page selectors after your first login are in [docs/OUTREACH.md](docs/OUTREACH.md).
+
+```bash
+uv pip install --python .venv/bin/python -e ".[dev,llm,outreach]" && .venv/bin/playwright install chromium
+.venv/bin/carousearch account login                       # log in by hand in the window; once
+.venv/bin/carousearch outreach draft <run id> --below 25  # run id = the folder name under data/runs/
+.venv/bin/carousearch outreach send <run id> --all --dry-run
+.venv/bin/carousearch outreach send <run id> --ids 12 14
+.venv/bin/carousearch outreach list
+```
+
+In the web app, a finished Ask answer has a **Message sellers** panel (draft, review, **Send N messages**), and **/outreach** lists every message.
 
 ## Running the Telegram bot
 
