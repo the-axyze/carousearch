@@ -28,10 +28,18 @@ PAGE_SETTLE_MS = 2_000  # Carousell renders its header and buttons after the fir
 
 NOT_LOGGED_IN_DETAIL = "Not logged in. Run `carousearch account login` and log in by hand in the window it opens."
 BLOCKED_DETAIL = "Carousell showed a challenge or block page. Stop here; try again another day, by hand first."
+INSTALL_HINT = (
+    "Playwright is not installed. Run: uv pip install --python .venv/bin/python -e \".[outreach]\" and then "
+    ".venv/bin/playwright install chromium"
+)
 UNKNOWN_SESSION_DETAIL = (
     "Neither the Login link nor the logged-in indicator was found; the selectors in outreach/selectors.py may need "
     "updating (docs/OUTREACH.md)."
 )
+
+
+class BrowserError(RuntimeError):
+    """The browser could not start, or its window went away."""
 
 
 class ChatTransport(Protocol):
@@ -73,6 +81,15 @@ def confirmation_snippet(body: str) -> str:
     if len(first_line) <= selectors.CONFIRMATION_SNIPPET_CHARACTERS:
         return first_line
     return first_line[: selectors.CONFIRMATION_SNIPPET_CHARACTERS].rsplit(" ", 1)[0]
+
+
+def browser_errors() -> tuple[type[Exception], ...]:
+    """The exceptions a browser call can raise: BrowserError, and Playwright's own when it is installed."""
+    try:
+        from playwright.sync_api import Error as PlaywrightError
+    except ImportError:
+        return (BrowserError,)
+    return (BrowserError, PlaywrightError)
 
 
 # --- the dry run (no I/O) -----------------------------------------------------------------------------------------
@@ -119,36 +136,46 @@ class PlaywrightChatTransport:
     # --- session ---
 
     def status(self) -> SessionStatus:
-        """Open the home page and read the session state from it."""
-        page = self._page()
-        page.goto(selectors.HOME_URL, wait_until="domcontentloaded")
-        page.wait_for_timeout(PAGE_SETTLE_MS)
-        return self.current_status()
+        """Open the home page and read the session state from it. A browser that cannot start is reported as
+        not logged in, with the reason."""
+        try:
+            page = self._page()
+            page.goto(selectors.HOME_URL, wait_until="domcontentloaded")
+            page.wait_for_timeout(PAGE_SETTLE_MS)
+            return self.current_status()
+        except browser_errors() as error:
+            return SessionStatus(logged_in=False, detail=f"The browser could not check: {first_line(str(error))}")
 
     def current_status(self) -> SessionStatus:
-        """The session state of the page as it is now, without navigating (the login poll uses this)."""
-        page = self._page()
-        username_link = self._find(page, selectors.USERNAME_LINK)
-        return classify_session(
-            title=page.title(),
-            challenge_found=self._visible(page, selectors.CHALLENGE_INDICATOR),
-            logged_out_found=self._visible(page, selectors.LOGGED_OUT_INDICATOR),
-            logged_in_found=self._visible(page, selectors.LOGGED_IN_INDICATOR),
-            username=username_from_link(username_link.first.get_attribute("href")) if username_link.count() else None,
-        )
+        """The session state of the page as it is now, without navigating (the login poll uses this). Raises
+        BrowserError when the window was closed."""
+        try:
+            page = self._page()
+            username_link = self._find(page, selectors.USERNAME_LINK)
+            username_href = username_link.first.get_attribute("href") if username_link.count() else None
+            return classify_session(
+                title=page.title(),
+                challenge_found=self._visible(page, selectors.CHALLENGE_INDICATOR),
+                logged_out_found=self._visible(page, selectors.LOGGED_OUT_INDICATOR),
+                logged_in_found=self._visible(page, selectors.LOGGED_IN_INDICATOR),
+                username=username_from_link(username_href),
+            )
+        except browser_errors() as error:
+            raise BrowserError(first_line(str(error))) from error
 
     def open_login_page(self) -> None:
-        """Show Carousell's login page; the owner logs in by hand."""
-        self._page().goto(selectors.LOGIN_URL, wait_until="domcontentloaded")
+        """Show Carousell's login page; the owner logs in by hand. Raises BrowserError if the browser fails."""
+        try:
+            self._page().goto(selectors.LOGIN_URL, wait_until="domcontentloaded")
+        except browser_errors() as error:
+            raise BrowserError(first_line(str(error))) from error
 
     # --- sending ---
 
     def send(self, listing_id: str, body: str) -> SendOutcome:
         """Open the listing, press Chat, type the message, press Send, and look for it in the thread."""
-        from playwright.sync_api import Error as PlaywrightError
-
-        page = self._page()
         try:
+            page = self._page()
             page.goto(selectors.LISTING_PAGE_URL_TEMPLATE.format(listing_id=listing_id), wait_until="domcontentloaded")
             page.wait_for_timeout(PAGE_SETTLE_MS)
             if self._blocked(page):
@@ -169,17 +196,15 @@ class PlaywrightChatTransport:
             if send_button is None:
                 return missing(selectors.SEND_BUTTON)
             send_button.click()
-        except PlaywrightError as error:
+        except browser_errors() as error:
             return SendOutcome("failed", error=f"browser error before sending: {first_line(str(error))}")
         return self._confirm(page, body)
 
     def _confirm(self, page: "Page", body: str) -> SendOutcome:
         """Send was pressed: from here on the message may have gone out, so a failure is "unconfirmed"."""
-        from playwright.sync_api import Error as PlaywrightError
-
         try:
             page.get_by_text(confirmation_snippet(body), exact=False).last.wait_for(timeout=self._timeout_ms)
-        except PlaywrightError as error:
+        except browser_errors() as error:
             return SendOutcome(
                 "unconfirmed", chat_url=page.url, error=f"message not seen in the thread: {first_line(str(error))}"
             )
@@ -188,25 +213,42 @@ class PlaywrightChatTransport:
     # --- plumbing ---
 
     def close(self) -> None:
-        if self._context is not None:
-            self._context.close()
-            self._context = None
-        if self._playwright is not None:
-            self._playwright.stop()
-            self._playwright = None
+        """End the browser; quietly, since the owner may have closed its window already."""
+        context, playwright = self._context, self._playwright
+        self._context, self._playwright = None, None
+        try:
+            if context is not None:
+                context.close()
+        except browser_errors():
+            pass
+        finally:
+            if playwright is not None:
+                playwright.stop()
 
     def _page(self) -> "Page":
         if self._context is None:
-            from playwright.sync_api import sync_playwright
-
-            self._profile_dir.mkdir(parents=True, exist_ok=True)
-            self._playwright = sync_playwright().start()
-            self._context = self._playwright.chromium.launch_persistent_context(
-                str(self._profile_dir), headless=not self._headed, locale="en-SG"
-            )
-            self._context.set_default_timeout(self._timeout_ms)
+            self._context = self._start()
         pages = self._context.pages
         return pages[-1] if pages else self._context.new_page()
+
+    def _start(self) -> "BrowserContext":
+        """Launch Chromium on the persistent profile; BrowserError when Playwright or Chromium is missing."""
+        try:
+            from playwright.sync_api import Error as PlaywrightError
+            from playwright.sync_api import sync_playwright
+        except ImportError as error:
+            raise BrowserError(INSTALL_HINT) from error
+        self._profile_dir.mkdir(parents=True, exist_ok=True)
+        self._playwright = sync_playwright().start()
+        try:
+            context = self._playwright.chromium.launch_persistent_context(
+                str(self._profile_dir), headless=not self._headed, locale="en-SG"
+            )
+        except PlaywrightError as error:
+            self.close()
+            raise BrowserError(f"Chromium could not start: {first_line(str(error))}") from error
+        context.set_default_timeout(self._timeout_ms)
+        return context
 
     def _blocked(self, page: "Page") -> bool:
         title = page.title().strip()
