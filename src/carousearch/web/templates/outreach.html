@@ -15,17 +15,17 @@
     <tbody>
       {%- for row in rows %}
       <tr>
-        <td><span class="outreach-status outreach-status-{{ row.status }}">{{ row.status }}</span>
+        <td class="outreach-status-cell"><span class="outreach-status outreach-status-{{ row.status }}">{{ row.status }}</span>
           {%- if row.chat_url %} <a href="{{ row.chat_url }}" target="_blank" rel="noopener noreferrer">chat</a>{% endif %}</td>
         <td class="outreach-when">{{ row.when }}</td>
-        <td>
+        <td class="outreach-listing">
           {%- if row.listing_url %}<a href="{{ row.listing_url }}" target="_blank" rel="noopener noreferrer">{{ row.title }}</a>
           {%- else %}{{ row.title }}{% endif %}
           <span class="muted outreach-seller">{{ row.seller }}</span>
         </td>
-        <td class="outreach-money">{{ row.offer }}</td>
-        <td>{{ row.body }}{% if row.note %}<span class="outreach-skip">{{ row.note }}</span>{% endif %}</td>
-        <td class="outreach-run"><code>{{ row.run_id }}</code></td>
+        <td class="outreach-money" data-label="Offer">{{ row.offer }}</td>
+        <td class="outreach-message" data-label="Message">{{ row.body }}{% if row.note %}<span class="outreach-skip">{{ row.note }}</span>{% endif %}</td>
+        <td class="outreach-run" data-label="Run"><code>{{ row.run_id }}</code></td>
       </tr>
       {%- endfor %}
     </tbody>
