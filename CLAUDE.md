@@ -28,7 +28,7 @@ shared core  SearchRequest (filters/schema.py) ──> CarousellClient (carousel
 | `canary.py`, `fixture_capture.py` | daily health check; dev command that refreshes `tests/fixtures/` |
 | `config.py`, `text_render.py`, `cli.py` | settings from `.env`, data dir, ports; terminal output; the `carousearch` command |
 | `bot/` | Telegram wizard: `state.py`, `keyboard.py`, `messages.py`, `price_input.py` (pure), `session_store.py` (in memory), `handlers.py` (I/O), `app.py` |
-| `web/` | FastAPI + Jinja2 + HTMX: `app.py`, `routes.py` (thin), `outreach_routes.py` + `outreach_runs.py` + `outreach_view_models.py` (the Message sellers panel, send batches in a worker thread, `/outreach`), `services.py` (blocking work, one call at a time), `query_params.py`, `view_models.py` and `prompt_view_models.py` (pure), `prompt_runs.py` (Ask mode's runs: plan, then execute on the owner's word; in-memory registry), `templates/`, `static/` (no build step) |
+| `web/` | FastAPI + Jinja2 + HTMX: `app.py`, `access.py` (the WEB_PASSWORD Basic-auth gate), `routes.py` (thin), `outreach_routes.py` + `outreach_runs.py` + `outreach_view_models.py` (the Message sellers panel, send batches in a worker thread, `/outreach`), `services.py` (blocking work, one call at a time), `query_params.py`, `view_models.py` and `prompt_view_models.py` (pure), `prompt_runs.py` (Ask mode's runs: plan, then execute on the owner's word; in-memory registry), `templates/`, `static/` (no build step; one stylesheet, phone rules in its 640px blocks) |
 | `mcp_server.py` | `build_server(McpServices)`: `search_listings`, `listing_details`, `listing_photo`, `screening_tags`, `category_fields`, `sample_descriptions`, `usage_notes`. A connector only: no filtering, ranking or LLM calls |
 | `agent/` planning layer | `plan.py` (`SearchPlan`, `PlanItemStatus`, checks; pure), `templates.py` (generic method templates; pure), `knowledge.py` (the owner's `knowledge/` notes), `planning.py` (`plan_prompt`: planner with the discovery tools on a small budget), `prompt.py` (method-only instructions), `evals.py` (the cross-category eval set and its plan checks) |
 | `agent/` execution | `run_prompt.py` (`execute_plan`, and `run_prompt` for both phases), `toolsets.py` (`ToolCallGate`, the hook every tool call passes through), `local_tools.py` (`run_python`, `extract_fields`, `judge_listings`, `judge_photos`, `photo_metrics`), `extraction.py`, `judging.py`, `worker.py`, `judge_cache.py`, `sandbox.py`, `listings_db.py`, `photo_metrics.py`, `run_photos.py`, `web_search.py`, `run_directory.py` |
@@ -62,7 +62,7 @@ All of these except `whoami` and `--help` can reach carousell.sg. See the hard c
 .venv/bin/carousearch capture-fixtures        # dev only, about 5 live requests, overwrites tests/fixtures/
 .venv/bin/carousearch bot                     # needs TELEGRAM_BOT_TOKEN and TELEGRAM_OWNER_ID; one poller at a time
 .venv/bin/carousearch whoami                  # Telegram user ids that messaged the bot recently
-.venv/bin/carousearch web [--port 8765]       # http://localhost:8765, bound to 127.0.0.1
+.venv/bin/carousearch web [--port 8765] [--public]   # http://localhost:8765, bound to 127.0.0.1; --public: see Hard constraints
 .venv/bin/carousearch mcp [--transport http --port 8766]   # stdio by default; http has no auth
 .venv/bin/carousearch ask "<prompt>" [--json] [--model provider:model] [--max-photos N] [--plan-only | --plan-file plan.json]
 .venv/bin/carousearch eval [--live] [--only NAME]   # lists the eval prompts; --live runs each once (models and Carousell)
@@ -77,7 +77,7 @@ On the owner's machine the bot and web app run under `nohup` (commands in docs/N
 ## Tests and checks
 
 ```bash
-.venv/bin/pytest                 # offline; 1183 passed, 1 deselected at 2026-10-30
+.venv/bin/pytest                 # offline; 1218 passed, 1 deselected at 2026-10-31
 .venv/bin/pytest -m live         # 1 test, about 5 real Carousell requests; owner's home machine only
 .venv/bin/ruff check src tests   # must print "All checks passed!"
 ```
@@ -135,6 +135,6 @@ There is no type checker yet (adding pyright is hardening task H1 in NEXT_STEPS)
 - Keep live requests in tests to a minimum, and never add one to the default test run.
 - One tool layer: tools are defined once, in `mcp_server.py`, and every agent path uses them (`ask`, the planned web prompt mode, external hosts). Do not add a second tool layer.
 - Model selection stays vendor-neutral: `AGENT_MODEL` (`provider:model`) through Pydantic AI, with no provider-specific code in agent paths.
-- The MCP HTTP transport has no authentication. Do not expose it through a tunnel until auth exists.
+- Never expose the web app publicly without WEB_PASSWORD and --public; never tunnel the MCP HTTP transport. A temporary quick tunnel (README, "Showing it on a phone") is the only way the web app leaves this machine; `--public` forces outreach sends to dry runs.
 - Single user and local only: no multi-user features, no public hosting.
 - Docs move with the code. A new command or feature gets a README section; a finished phase gets a dated status paragraph in docs/ROADMAP.md and an update to docs/NEXT_STEPS.md.
