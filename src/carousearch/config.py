@@ -1,8 +1,10 @@
-"""Default file locations, the Telegram bot settings and the screening settings.
+"""Default file locations, the Telegram bot settings, the screening settings and the outreach settings.
 
 Set CAROUSEARCH_DATA_DIR to move all runtime data elsewhere. The bot reads TELEGRAM_BOT_TOKEN and
 TELEGRAM_OWNER_ID, and screening's price lookup reads the worker model (AGENT_WORKER_MODEL, see language_models.py)
 and its provider's API key, from the environment or from a `.env` file at the project root (environment wins).
+Outreach reads the OUTREACH_* variables (docs/OUTREACH.md). The web app's password gate and public-demo mode read
+WEB_PASSWORD, WEB_USERNAME and WEB_PUBLIC_DEMO.
 """
 
 import os
@@ -17,6 +19,7 @@ from carousearch.language_models import (
     ProviderKeys,
     choose_models,
     load_provider_keys,
+    parse_model_name,
 )
 
 DATA_DIR_ENVIRONMENT_VARIABLE = "CAROUSEARCH_DATA_DIR"
@@ -92,3 +95,99 @@ def read_setting_values(environment: Mapping[str, str] | None, env_file: Path) -
     """The `.env` file's values overlaid with the environment (the real environment when None)."""
     file_values = {name: value for name, value in dotenv_values(env_file).items() if value is not None}
     return {**file_values, **(os.environ if environment is None else environment)}
+
+
+OUTREACH_DAILY_CAP_VARIABLE = "OUTREACH_DAILY_CAP"
+OUTREACH_MIN_GAP_SECONDS_VARIABLE = "OUTREACH_MIN_GAP_SECONDS"
+OUTREACH_MAX_GAP_SECONDS_VARIABLE = "OUTREACH_MAX_GAP_SECONDS"
+OUTREACH_DRAFT_MODEL_VARIABLE = "OUTREACH_DRAFT_MODEL"
+OUTREACH_PROFILE_DIR_VARIABLE = "OUTREACH_PROFILE_DIR"
+DEFAULT_OUTREACH_DAILY_CAP = 10  # new conversations in any 24 hours
+DEFAULT_OUTREACH_MIN_GAP_SECONDS = 30
+DEFAULT_OUTREACH_MAX_GAP_SECONDS = 60
+DEFAULT_OUTREACH_PROFILE_DIR_NAME = "browser-profile"  # inside the data folder; gitignored with it
+
+
+@dataclass(frozen=True)
+class OutreachSettings:
+    daily_cap: int = DEFAULT_OUTREACH_DAILY_CAP
+    min_gap_seconds: float = DEFAULT_OUTREACH_MIN_GAP_SECONDS
+    max_gap_seconds: float = DEFAULT_OUTREACH_MAX_GAP_SECONDS
+    draft_model: str = DEFAULT_WORKER_MODEL  # OUTREACH_DRAFT_MODEL, else the worker model
+    profile_dir: Path | None = None  # None: <data dir>/browser-profile
+    headed: bool = True  # show the browser window when a display is available
+    keys: ProviderKeys = field(default_factory=ProviderKeys)
+
+    def profile_dir_in(self, data_dir: Path) -> Path:
+        return self.profile_dir or data_dir / DEFAULT_OUTREACH_PROFILE_DIR_NAME
+
+    def missing_key_variable(self) -> str | None:
+        return self.keys.missing_variable(self.draft_model)
+
+
+def load_outreach_settings(
+    environment: Mapping[str, str] | None = None, env_file: Path = DEFAULT_ENV_FILE
+) -> OutreachSettings:
+    """Read the outreach settings; a malformed number raises ValueError."""
+    values = read_setting_values(environment, env_file)
+    min_gap = parse_number(values, OUTREACH_MIN_GAP_SECONDS_VARIABLE, DEFAULT_OUTREACH_MIN_GAP_SECONDS)
+    max_gap = parse_number(values, OUTREACH_MAX_GAP_SECONDS_VARIABLE, DEFAULT_OUTREACH_MAX_GAP_SECONDS)
+    if min_gap > max_gap:
+        raise ValueError(f"{OUTREACH_MIN_GAP_SECONDS_VARIABLE} must not exceed {OUTREACH_MAX_GAP_SECONDS_VARIABLE}")
+    profile_text = values.get(OUTREACH_PROFILE_DIR_VARIABLE, "").strip()
+    return OutreachSettings(
+        daily_cap=int(parse_number(values, OUTREACH_DAILY_CAP_VARIABLE, DEFAULT_OUTREACH_DAILY_CAP, whole=True)),
+        min_gap_seconds=min_gap,
+        max_gap_seconds=max_gap,
+        draft_model=parse_model_name(values.get(OUTREACH_DRAFT_MODEL_VARIABLE, ""), choose_models(values).worker),
+        profile_dir=resolve_project_path(profile_text) if profile_text else None,
+        headed=bool(values.get("DISPLAY") or values.get("WAYLAND_DISPLAY")),
+        keys=load_provider_keys(values),
+    )
+
+
+def parse_number(values: Mapping[str, str], variable: str, default: float, whole: bool = False) -> float:
+    """A non-negative number from settings, or `default` when unset."""
+    text = values.get(variable, "").strip()
+    if not text:
+        return default
+    try:
+        number = int(text) if whole else float(text)
+    except ValueError:
+        number = -1
+    if number < 0:
+        kind = "whole number" if whole else "number"
+        raise ValueError(f"{variable} must be a {kind} of 0 or more, got {text!r}")
+    return number
+
+
+def resolve_project_path(text: str) -> Path:
+    """A path from settings; a relative one is taken from the project root (e.g. data/browser-profile)."""
+    path = Path(text).expanduser()
+    return path if path.is_absolute() else PROJECT_ROOT / path
+
+
+WEB_PASSWORD_VARIABLE = "WEB_PASSWORD"
+WEB_USERNAME_VARIABLE = "WEB_USERNAME"
+WEB_PUBLIC_DEMO_VARIABLE = "WEB_PUBLIC_DEMO"
+DEFAULT_WEB_USERNAME = "owner"
+TRUE_WORDS = frozenset({"1", "true", "yes", "on"})
+
+
+@dataclass(frozen=True)
+class WebAccessSettings:
+    password: str | None = field(default=None, repr=False)  # WEB_PASSWORD; None: no gate (local use); never shown
+    username: str = DEFAULT_WEB_USERNAME
+    public_demo: bool = False  # outreach sends are always dry runs and the pages say so
+
+
+def load_web_access_settings(
+    environment: Mapping[str, str] | None = None, env_file: Path = DEFAULT_ENV_FILE
+) -> WebAccessSettings:
+    """Read the web app's password gate and public-demo switch."""
+    values = read_setting_values(environment, env_file)
+    return WebAccessSettings(
+        password=values.get(WEB_PASSWORD_VARIABLE, "") or None,
+        username=values.get(WEB_USERNAME_VARIABLE, "").strip() or DEFAULT_WEB_USERNAME,
+        public_demo=values.get(WEB_PUBLIC_DEMO_VARIABLE, "").strip().lower() in TRUE_WORDS,
+    )

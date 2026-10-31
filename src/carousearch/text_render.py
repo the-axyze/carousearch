@@ -16,10 +16,12 @@ from carousearch.agent.result import (
     tool_call_counts,
 )
 from carousearch.filters.schema import Listing, ListingDetail, SearchResult, SellerVerification
+from carousearch.outreach.models import OutreachMessage, SendReport
 from carousearch.screening.models import PriceSource, ResolvedPrice, ScreenedListing, format_sgd
 
 if TYPE_CHECKING:
     from carousearch.agent.evals import EvalOutcome, EvalPrompt
+    from carousearch.outreach.service import DraftBatch
 
 SINGAPORE_TIME = timezone(timedelta(hours=8), "SGT")
 
@@ -285,6 +287,73 @@ def render_notes(notes: str) -> str:
     if not lines:
         return "Notes: none."
     return "Notes:\n" + "\n".join(f"  {line}" for line in lines)
+
+
+_DRAFT_TABLE_COLUMNS = [("ID", 6), ("ASKING", 9), ("OFFER", 9), ("SELLER", 18), ("TITLE", 50), ("NOTE", 0)]
+_MESSAGE_TABLE_COLUMNS = [
+    ("ID", 6), ("STATUS", 9), ("WHEN", 20), ("OFFER", 9), ("SELLER", 18), ("TITLE", 36), ("RUN", 28), ("LINK", 0),
+]
+
+
+def render_outreach_drafts(batch: "DraftBatch") -> str:
+    """The drafts as a table, each followed by its message, then what was passed over and the daily allowance."""
+    lines = []
+    if not batch.from_answer:
+        lines.append(
+            "This run has no answer.json (it ran before answers were saved), so every listing it saw stands in for "
+            "the shortlist, those with details first.\n"
+        )
+    lines.append(_format_row([header for header, _ in _DRAFT_TABLE_COLUMNS], _DRAFT_TABLE_COLUMNS))
+    for draft in batch.drafts:
+        cells = [
+            str(draft.id), _money(draft.listing_price), _money(draft.offer_price), draft.seller_username or "-",
+            draft.listing_title, batch.send_preview.get(draft.id, ""),
+        ]
+        lines.append(_format_row(cells, _DRAFT_TABLE_COLUMNS))
+        lines.append(f"       {draft.body}")
+    if not batch.drafts:
+        lines.append("(no drafts)")
+    if batch.skipped:
+        lines.append("\nPassed over:")
+        lines += [f"  {listing.listing_id}  {listing.title}: {reason}" for listing, reason in batch.skipped]
+    lines.append(f"\n{batch.cap_remaining} new conversations allowed in the next 24 hours.")
+    return "\n".join(lines)
+
+
+def render_send_report(report: SendReport) -> str:
+    lines = ["Dry run: nothing was sent and nothing was recorded."] if report.dry_run else []
+    if report.aborted:
+        lines.append(f"Nothing sent: {report.aborted}")
+    if report.stopped:
+        lines.append(report.stopped)
+    counts = f"{len(report.sent)} {'would be sent' if report.dry_run else 'sent'}, {len(report.skipped)} skipped"
+    if report.failed:
+        counts += f", {len(report.failed)} failed"
+    if report.not_attempted:
+        counts += f", {len(report.not_attempted)} left approved for a later batch"
+    lines.append(counts + ".")
+    left = "would be left" if report.dry_run else "left"
+    lines.append(f"Daily cap: {report.cap_remaining} new conversations {left} in the next 24 hours.")
+    return "\n".join(lines)
+
+
+def render_outreach_messages(messages: Sequence[OutreachMessage]) -> str:
+    rows = [_format_row([header for header, _ in _MESSAGE_TABLE_COLUMNS], _MESSAGE_TABLE_COLUMNS)]
+    for message in messages:
+        when = message.sent_at if message.status == "sent" else message.created_at
+        link = message.chat_url or message.skip_reason or message.error or message.listing_url or "-"
+        cells = [
+            str(message.id), message.status, format_datetime(when), _money(message.offer_price),
+            message.seller_username or "-", message.listing_title, message.run_id, link,
+        ]
+        rows.append(_format_row(cells, _MESSAGE_TABLE_COLUMNS))
+    if not messages:
+        rows.append("(no messages)")
+    return "\n".join(rows)
+
+
+def _money(amount: float | None) -> str:
+    return "-" if amount is None else format_sgd(amount)
 
 
 def format_datetime(moment: datetime | None) -> str:

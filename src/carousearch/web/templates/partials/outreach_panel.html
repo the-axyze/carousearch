@@ -1,0 +1,25 @@
+{#- Under a finished answer: draft one offer message per kept listing. Drafting calls the model; nothing is sent until
+    the drafts are reviewed and "Send N messages" is pressed. -#}
+<section class="outreach-panel" aria-label="Message sellers">
+  <h2 class="ask-heading">Message sellers</h2>
+  <p class="muted">Draft one offer per kept listing ({{ outreach.kept_count }}), review them, then send them from your
+    Carousell account with one press. Listings and sellers messaged before are never messaged again.</p>
+  {%- if outreach.missing_key %}
+  {% with error = outreach.missing_key %}{% include "partials/error.html" %}{% endwith %}
+  {%- else %}
+  <form class="outreach-form" hx-post="{{ outreach.draft_url }}" hx-target="#outreach-drafts" hx-swap="innerHTML"
+        hx-indicator="#outreach-drafting" hx-disabled-elt="find button">
+    <label>Offer <input class="outreach-number" type="number" name="percent_below" min="1" max="90"
+           value="{{ outreach.percent_below }}" required>% below asking</label>
+    <label>rounded down to <input class="outreach-number" type="number" name="round_to" min="1"
+           value="{{ outreach.round_to }}" required> SGD</label>
+    <label class="outreach-note">Note for the drafter (optional)
+      <input class="ask-input outreach-note-input" type="text" name="note" maxlength="500"
+             placeholder="e.g. I can collect this weekend"></label>
+    <button class="secondary-button" type="submit">Draft messages</button>
+    <span id="outreach-drafting" class="outreach-indicator muted"><span class="ask-spinner" aria-hidden="true"></span>
+      Drafting…</span>
+  </form>
+  {%- endif %}
+  <div id="outreach-drafts"></div>
+</section>

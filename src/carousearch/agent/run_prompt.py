@@ -13,7 +13,8 @@ Two models: the planner runs both phases' loops, the worker answers the judge to
 gets the provider's hosted web search where it has one (agent/web_search.py) and portable prompt caching
 (Caching). Token usage of both phases and both models is added up for the answer's cost estimate (agent/cost.py).
 
-I/O: the model providers, Carousell through the injected McpServices, and the run directory.
+I/O: the model providers, Carousell through the injected McpServices, and the run directory (where the answer is
+saved as answer.json).
 """
 
 import asyncio
@@ -36,6 +37,7 @@ from carousearch.agent.planning import PlanningOutcome, plan_prompt
 from carousearch.agent.progress import ProgressObserver
 from carousearch.agent.prompt import build_execution_prompt, execution_user_prompt
 from carousearch.agent.result import AgentAnswer, ModelAnswer, build_agent_answer
+from carousearch.agent.run_directory import write_answer_file
 from carousearch.agent.run_photos import RunPhotoStore
 from carousearch.agent.settings import AgentBudget, AgentSettings
 from carousearch.agent.toolsets import (
@@ -148,7 +150,9 @@ async def execute_plan(
         planner_label, supports_hosted_web_search(planner), searches_used, settings.budget.max_web_searches
     )
     trace = build_tool_trace(messages, gate.records, OUTPUT_TOOL_NAME)
-    return build_agent_answer(model_answer, trace, notes, ledger.report(), plan, planning.tool_trace)
+    answer = build_agent_answer(model_answer, trace, notes, ledger.report(), plan, planning.tool_trace)
+    write_answer_file(local.run_directory, answer.model_dump_json(indent=2))
+    return answer
 
 
 def run_prompt_sync(

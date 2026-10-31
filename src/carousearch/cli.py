@@ -1,5 +1,5 @@
 """The `carousearch` command line: search, listing, harvest, analyze, canary, capture-fixtures, bot, whoami, web,
-mcp, ask and eval."""
+mcp, ask, eval, account (login, status) and outreach (draft, send, list)."""
 
 import argparse
 import asyncio
@@ -50,10 +50,15 @@ from carousearch.config import (
     DEFAULT_MCP_HTTP_PORT,
     TELEGRAM_BOT_TOKEN_VARIABLE,
     TELEGRAM_OWNER_ID_VARIABLE,
+    WEB_PASSWORD_VARIABLE,
+    OutreachSettings,
     TelegramSettings,
+    WebAccessSettings,
     default_data_dir,
+    load_outreach_settings,
     load_screening_settings,
     load_telegram_settings,
+    load_web_access_settings,
 )
 from carousearch.filters.schema import MAX_PAGE_SIZE, Condition, DealMethod, SearchRequest, SearchResult, SortOrder
 from carousearch.fixture_capture import capture_fixtures
@@ -68,6 +73,17 @@ from carousearch.market.analysis import AnalysisSpec, analyse
 from carousearch.market.harvest import DEFAULT_REUSE_WINDOW, HarvestOutcome, harvest
 from carousearch.market.limits import HarvestLimits
 from carousearch.market.render import render_analysis_json, render_analysis_text
+from carousearch.outreach.browser import BrowserError
+from carousearch.outreach.models import MessageStatus, OfferRule
+from carousearch.outreach.sender import ProgressEvent
+from carousearch.outreach.service import (
+    LOGIN_TIMEOUT_SECONDS,
+    LoginBrowser,
+    OutreachService,
+    build_browser,
+    build_outreach_service,
+    wait_for_login,
+)
 from carousearch.screening.models import ScreenedListing
 from carousearch.screening.pipeline import DEFAULT_MAX_DETAIL_FETCHES, ScreeningServices, screen_listings
 from carousearch.screening.price_resolver import (
@@ -84,9 +100,12 @@ from carousearch.text_render import (
     render_eval_summary,
     render_listing_detail,
     render_listing_table,
+    render_outreach_drafts,
+    render_outreach_messages,
     render_planned_search,
     render_screened_table,
     render_search_summary,
+    render_send_report,
 )
 from carousearch.web.app import DEFAULT_WEB_HOST, DEFAULT_WEB_PORT, WebSettings, build_web_services, create_app
 
@@ -99,6 +118,9 @@ ClientFactory = Callable[[RateLimiter], CarousellClient]
 PriceResolverFactory = Callable[[], PriceResolver]
 WebServer = Callable[..., None]  # uvicorn.run's shape: (app, host=..., port=...)
 McpServe = Callable[..., None]  # mcp_server.serve's shape: (server, transport, port)
+OutreachServiceFactory = Callable[[OutreachSettings, Path], OutreachService]
+LoginBrowserFactory = Callable[[OutreachSettings, Path], LoginBrowser]
+MESSAGE_STATUSES: tuple[MessageStatus, ...] = ("drafted", "approved", "sent", "failed", "skipped")
 
 # Shorthands accepted by --condition in addition to the exact condition names.
 CONDITION_GROUPS: dict[str, list[Condition]] = {
@@ -123,8 +145,11 @@ def main(
     argv: list[str] | None = None,
     client_factory: ClientFactory = create_carousell_client,
     price_resolver_factory: PriceResolverFactory | None = None,
+    outreach_service_factory: OutreachServiceFactory | None = None,
+    login_browser_factory: LoginBrowserFactory | None = None,
 ) -> int:
-    """`price_resolver_factory` defaults to the resolver the worker model's key selects (build_price_resolver)."""
+    """`price_resolver_factory` defaults to the resolver the worker model's key selects (build_price_resolver);
+    the outreach factories default to the real service and browser (tests pass fakes)."""
     arguments = build_argument_parser().parse_args(argv)
     data_dir: Path = arguments.data_dir or default_data_dir()
     rate_limiter = RateLimiter(arguments.min_interval, arguments.jitter)
@@ -164,8 +189,12 @@ def main(
         if arguments.command == "whoami":
             return run_whoami_command(load_telegram_settings(), sys.stdout, sys.stderr)
         if arguments.command == "web":
+            access = load_web_access_settings()
+            if arguments.public:
+                access = public_web_access(access, arguments.host)
             settings = WebSettings(
-                data_dir=data_dir, screening=load_screening_settings(), agent=load_agent_settings()
+                data_dir=data_dir, screening=load_screening_settings(), agent=load_agent_settings(),
+                outreach=load_outreach_settings(), access=access,
             )
             return run_web_command(settings, client_factory, rate_limiter, arguments.host, arguments.port)
         if arguments.command == "mcp":
@@ -177,6 +206,15 @@ def main(
                 arguments.prompt, settings, data_dir, client_factory, rate_limiter, arguments.json, sys.stdout,
                 sys.stderr, plan_only=arguments.plan_only, saved_plan=saved_plan,
             )
+        if arguments.command == "account":
+            settings = load_outreach_settings()
+            # The login window is always shown; the status check follows the display (OutreachSettings.headed).
+            browser = (login_browser_factory or default_login_browser)(settings, data_dir)
+            if arguments.account_command == "login":
+                return run_account_login_command(browser, sys.stdout, sys.stderr)
+            return run_account_status_command(browser, sys.stdout)
+        if arguments.command == "outreach":
+            return dispatch_outreach_command(arguments, data_dir, outreach_service_factory)
         if arguments.command == "eval":
             prompts = select_eval_prompts(load_eval_prompts(arguments.file), arguments.only)
             return run_eval_command(
@@ -240,6 +278,9 @@ def build_argument_parser() -> argparse.ArgumentParser:
     web = commands.add_parser("web", help="run the local web app (http://localhost:8765 by default)")
     web.add_argument("--port", type=int, default=DEFAULT_WEB_PORT, help="default %(default)s")
     web.add_argument("--host", default=DEFAULT_WEB_HOST, help="default %(default)s (this machine only)")
+    web.add_argument("--public", action="store_true",
+                     help=f"public demo behind a tunnel: needs {WEB_PASSWORD_VARIABLE}, binds 127.0.0.1, and every "
+                          "outreach send is a dry run")
 
     mcp = commands.add_parser("mcp", help="run the MCP server for agent hosts such as Claude Code (docs/MCP.md)")
     mcp.add_argument("--transport", choices=["stdio", "http"], default="stdio",
@@ -264,6 +305,29 @@ def build_argument_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--file", type=Path, default=DEFAULT_EVAL_FILE, help="default evals/prompts.json")
     evaluate.add_argument("--only", action="append", default=[], metavar="NAME",
                           help="run only the prompt with this name (repeatable)")
+    account = commands.add_parser("account", help="the Carousell account outreach sends from (docs/OUTREACH.md)")
+    account_commands = account.add_subparsers(dest="account_command", required=True)
+    account_commands.add_parser("login", help="open a browser window on Carousell's login page; you log in by hand")
+    account_commands.add_parser("status", help="say whether the outreach browser profile is logged in")
+
+    outreach = commands.add_parser("outreach", help="draft, review and send offer messages for a run's shortlist")
+    outreach_commands = outreach.add_subparsers(dest="outreach_command", required=True)
+    draft = outreach_commands.add_parser("draft", help="draft one offer message per listing a run kept")
+    draft.add_argument("run_id", help="the run folder's name under data/runs, e.g. 20261027-092958-f1ec53")
+    draft.add_argument("--below", type=int, required=True, help="offer this many percent below the asking price")
+    draft.add_argument("--round-to", type=int, default=50, help="round the offer down to a multiple of this (SGD)")
+    draft.add_argument("--limit", type=int, help="draft for at most this many listings")
+    draft.add_argument("--note", default="", help="a hint for the drafter, e.g. \"I can collect this weekend\"")
+    send = outreach_commands.add_parser("send", help="approve and send a run's drafts from your account")
+    send.add_argument("run_id")
+    which = send.add_mutually_exclusive_group(required=True)
+    which.add_argument("--all", action="store_true", help="every unsent draft of the run")
+    which.add_argument("--ids", type=int, nargs="+", metavar="ID", help="only these drafts (ids from outreach draft)")
+    send.add_argument("--dry-run", action="store_true", help="apply the policy and show the plan; send nothing")
+    listing_messages = outreach_commands.add_parser("list", help="the messages drafted and sent, newest first")
+    listing_messages.add_argument("--run", help="only this run's messages")
+    listing_messages.add_argument("--status", choices=MESSAGE_STATUSES, help="only messages with this status")
+
     ask.add_argument(
         "--model", help=f"planner model, provider:model (default {AGENT_PLANNER_MODEL_VARIABLE} or {DEFAULT_PLANNER_MODEL})"
     )
@@ -604,6 +668,17 @@ def describe_missing_bot_settings(missing_variables: list[str]) -> str:
     return "\n".join(lines)
 
 
+def public_web_access(access: WebAccessSettings, host: str) -> WebAccessSettings:
+    """The settings for `web --public`: a password is required, the app stays on 127.0.0.1 (the tunnel connects
+    locally) and public-demo mode is on. Raises ValueError, with what to fix, otherwise."""
+    if not access.password:
+        raise ValueError(f"--public needs {WEB_PASSWORD_VARIABLE} set (in .env or the environment) so the page asks "
+                         "for a password")
+    if host != DEFAULT_WEB_HOST:
+        raise ValueError(f"--public binds {DEFAULT_WEB_HOST} only (the tunnel connects locally); drop --host {host}")
+    return replace(access, public_demo=True)
+
+
 def run_web_command(
     settings: WebSettings,
     client_factory: ClientFactory,
@@ -615,6 +690,11 @@ def run_web_command(
     """Serve the web app until Ctrl+C. Its Carousell client and database open when the server starts."""
     logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.INFO)
     app = create_app(settings, services_factory=lambda: build_web_services(settings, client_factory(rate_limiter)))
+    if settings.access.password:
+        logging.getLogger(__name__).info(
+            "Password gate on (username %s)%s", settings.access.username,
+            "; public demo: outreach sends are dry runs" if settings.access.public_demo else "",
+        )
     serve(app, host=host, port=port)
     return EXIT_OK
 
@@ -819,6 +899,129 @@ def describe_missing_agent_key(model: str, variable: str) -> str:
         f"Add it to {DEFAULT_ENV_FILE} or the environment, or choose other models with --model and --worker-model "
         f"or {AGENT_PLANNER_MODEL_VARIABLE} and {AGENT_WORKER_MODEL_VARIABLE} (README: 'Ask the agent')."
     )
+
+
+# --- account and outreach ------------------------------------------------------------------------------------------
+
+
+def default_login_browser(settings: OutreachSettings, data_dir: Path) -> LoginBrowser:
+    return build_browser(settings, data_dir)
+
+
+def default_outreach_service(settings: OutreachSettings, data_dir: Path) -> OutreachService:
+    return build_outreach_service(settings, data_dir, _now)
+
+
+def run_account_login_command(
+    browser: LoginBrowser,
+    output: TextIO,
+    errors: TextIO,
+    monotonic: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> int:
+    """Open the login page in the profile's window and wait until the owner has logged in by hand."""
+    minutes = LOGIN_TIMEOUT_SECONDS // 60
+    print(f"Log in to Carousell by hand in the browser window (waiting up to {minutes} minutes)...", file=output, flush=True)
+    try:
+        status = wait_for_login(browser, monotonic, sleep)
+    except BrowserError as error:
+        print(f"error: the browser stopped before the login was confirmed: {error}", file=errors)
+        return EXIT_FAILURE
+    finally:
+        browser.close()
+    print(status.detail, file=output)
+    return EXIT_OK if status.logged_in else EXIT_FAILURE
+
+
+def run_account_status_command(browser: LoginBrowser, output: TextIO) -> int:
+    """Exit 0 when the profile is logged in; otherwise say why not and exit 1."""
+    try:
+        status = browser.status()
+    finally:
+        browser.close()
+    print(status.detail, file=output)
+    return EXIT_OK if status.logged_in and not status.blocked else EXIT_FAILURE
+
+
+def dispatch_outreach_command(
+    arguments: argparse.Namespace, data_dir: Path, service_factory: OutreachServiceFactory | None
+) -> int:
+    settings = load_outreach_settings()
+    if arguments.outreach_command == "draft" and service_factory is None and settings.missing_key_variable():
+        print(describe_missing_agent_key(settings.draft_model, settings.missing_key_variable() or ""), file=sys.stderr)
+        return EXIT_USAGE_ERROR
+    service = (service_factory or default_outreach_service)(settings, data_dir)
+    try:
+        if arguments.outreach_command == "draft":
+            rule = OfferRule(
+                percent_below_asking=arguments.below, round_to=arguments.round_to, note_to_drafter=arguments.note
+            )
+            return run_outreach_draft_command(service, arguments.run_id, rule, arguments.limit, sys.stdout, sys.stderr)
+        if arguments.outreach_command == "send":
+            message_ids = None if arguments.all else arguments.ids
+            return run_outreach_send_command(service, arguments.run_id, message_ids, arguments.dry_run, sys.stdout)
+        statuses = (arguments.status,) if arguments.status else ()
+        return run_outreach_list_command(service, arguments.run, statuses, sys.stdout)
+    finally:
+        service.store.close()
+
+
+def run_outreach_draft_command(
+    service: OutreachService, run_id: str, rule: OfferRule, limit: int | None, output: TextIO, errors: TextIO
+) -> int:
+    """Draft and print the run's messages; nothing is sent."""
+    import pydantic_ai
+    from pydantic_ai.exceptions import AgentRunError, UserError
+
+    pydantic_ai.BANNER_ENABLED = False  # this command owns its output
+
+    if limit is not None and limit < 1:
+        raise ValueError("--limit must be 1 or more")
+    try:
+        batch = asyncio.run(service.draft_for_run(run_id, rule, limit))
+    except UserError as error:
+        print(f"error: {error}", file=errors)
+        return EXIT_USAGE_ERROR
+    except AgentRunError as error:
+        print(f"error: drafting failed: {type(error).__name__}: {error}", file=errors)
+        return EXIT_FAILURE
+    print(render_outreach_drafts(batch), file=output)
+    print(f"\nNothing was sent. Review, then: carousearch outreach send {run_id} --all [--dry-run]", file=output)
+    return EXIT_OK
+
+
+def run_outreach_send_command(
+    service: OutreachService, run_id: str, message_ids: list[int] | None, dry_run: bool, output: TextIO
+) -> int:
+    """Approve and send (or, with `dry_run`, only rehearse) the run's drafts, printing progress as it happens."""
+    unsent = service.store.list_for_run(run_id, ("drafted", "approved"))
+    if message_ids is not None:
+        unknown = sorted(set(message_ids) - {message.id for message in unsent})
+        if unknown:
+            raise ValueError(f"no unsent draft of run {run_id} has the id {', '.join(map(str, unknown))}")
+    if not unsent:
+        print(f"Run {run_id} has no unsent drafts. Draft some first: carousearch outreach draft {run_id} --below 25",
+              file=output)
+        return EXIT_OK
+
+    def show(event: ProgressEvent) -> None:
+        if event.kind != "finished":
+            print(event.text, file=output, flush=True)
+
+    report = service.approve_and_send(run_id, message_ids, dry_run, on_progress=show)
+    print(render_send_report(report), file=output)
+    return EXIT_FAILURE if report.failed or report.aborted else EXIT_OK
+
+
+def run_outreach_list_command(
+    service: OutreachService, run_id: str | None, statuses: tuple[MessageStatus, ...], output: TextIO
+) -> int:
+    if run_id:
+        messages = list(reversed(service.store.list_for_run(run_id, statuses)))
+    else:
+        messages = service.store.list_recent(statuses=statuses)
+    print(render_outreach_messages(messages), file=output)
+    return EXIT_OK
 
 
 def run_whoami_command(settings: TelegramSettings, output: TextIO, errors: TextIO) -> int:

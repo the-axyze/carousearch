@@ -28,6 +28,7 @@ from carousearch.agent.prompt import (
 from carousearch.agent.settings import AgentBudget
 from carousearch.agent.templates import METHOD_TEMPLATES
 from carousearch.mcp_server import build_server, load_usage_notes
+from carousearch.outreach.prompt import DRAFTER_INSTRUCTIONS
 
 from fake_mcp_services import FakeCarousellSource, fake_services
 from plan_examples import EXAMPLE_PLAN
@@ -63,6 +64,7 @@ MODEL_FACING_TEXTS = {
     "run_python": run_python_description([]),
     "usage notes": load_usage_notes(),
     "templates": "\n".join(f"{t.description} {t.method} {t.example_request}" for t in METHOD_TEMPLATES),
+    "outreach drafter instructions": DRAFTER_INSTRUCTIONS,
 }
 
 

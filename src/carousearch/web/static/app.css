@@ -68,10 +68,14 @@ body {
 }
 
 a { color: inherit; }
+img { max-width: 100%; }
 button, input, select, textarea { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .page { max-width: calc(1240px + 2 * var(--gutter)); margin: 0 auto; padding: 0 var(--gutter) 72px; }
+
+/* Public-demo mode (WEB_PUBLIC_DEMO, `web --public`): one line above the page, in the flow so it covers nothing. */
+.demo-banner { margin: 0; padding: 8px var(--gutter); font-size: 13.5px; text-align: center; color: var(--amber-text); background: var(--amber-bg); }
 
 .visually-hidden {
   position: absolute !important;
@@ -423,6 +427,36 @@ code { padding: 1px 5px; font-family: ui-monospace, SFMono-Regular, Menlo, Conso
 .hidden-price { color: var(--muted); white-space: nowrap; }
 .hidden-reasons { flex-basis: 100%; margin: 2px 0 0; padding: 0; list-style: none; font-size: 12.5px; line-height: 1.45; color: var(--muted); overflow-wrap: anywhere; }
 
+/* --- outreach --- */
+
+/* Outreach: the "Message sellers" panel, the review table, a batch's progress and the /outreach page. */
+.outreach-panel { margin-top: 28px; padding-top: 18px; border-top: 1px solid var(--border); }
+.outreach-form { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: end; margin: 12px 0; font-size: 13.5px; }
+.outreach-number { width: 72px; height: 36px; padding: 0 8px; font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border-strong); border-radius: 8px; }
+.outreach-note { display: grid; gap: 4px; flex: 1 1 260px; }
+.outreach-note-input { height: 36px; min-height: 0; padding: 0 10px; }
+.outreach-indicator { display: none; align-items: center; gap: 8px; }
+.outreach-indicator.htmx-request { display: inline-flex; }
+.outreach-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.outreach-table th { text-align: left; font-weight: 600; color: var(--muted); padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.outreach-table td { vertical-align: top; padding: 8px; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.outreach-money, .outreach-when { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.outreach-seller, .outreach-skip { display: block; font-size: 12.5px; }
+.outreach-skip { color: var(--amber-text); }
+.outreach-body { width: 100%; min-width: 220px; padding: 6px 8px; font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border-strong); border-radius: 8px; resize: vertical; }
+.outreach-actions { display: flex; flex-wrap: wrap; gap: 12px 18px; align-items: center; margin-top: 14px; font-size: 13.5px; }
+.outreach-batch { margin-top: 14px; display: grid; gap: 10px; }
+.outreach-line { grid-template-columns: 1fr; }
+.outreach-status { font-weight: 600; }
+.outreach-status-sent { color: var(--ok); }
+.outreach-status-failed { color: var(--failed); }
+.outreach-filter { margin: 4px 0 16px; font-size: 13.5px; }
+.outreach-filter a[aria-current="page"] { color: var(--text); font-weight: 600; }
+.outreach-run code { font-size: 12px; }
+#outreach-review-error .error-box { margin: 12px 0 0; }
+.outreach-check { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.outreach-check-text { display: none; }  /* the column heading says it on wide screens; phones show it (below) */
+
 /* --- narrow screens --- */
 
 @media (max-width: 760px) {
@@ -430,12 +464,15 @@ code { padding: 1px 5px; font-family: ui-monospace, SFMono-Regular, Menlo, Conso
 }
 
 @media (max-width: 640px) {
+  /* Phones: the general layout. Tap targets and stacked tables are in the blocks after this one. */
+  .page { overflow-wrap: anywhere; }  /* long titles and links wrap instead of widening the page */
   .site-header { padding: 18px 0 12px; }
   .search-input { height: 44px; font-size: 16px; }
   .search-button { height: 44px; padding: 0 16px; }
   .controls { flex-direction: column; align-items: stretch; gap: 8px; }
   /* One swipeable line of filters instead of five wrapped ones. */
-  .filters { flex-wrap: nowrap; margin: 0 calc(-1 * var(--gutter)); padding: 2px var(--gutter); overflow-x: auto; scrollbar-width: none; }
+  /* position: relative keeps the hidden legends inside the scroller, so they do not widen the page. */
+  .filters { position: relative; flex-wrap: nowrap; margin: 0 calc(-1 * var(--gutter)); padding: 2px var(--gutter); overflow-x: auto; scrollbar-width: none; }
   .filters::-webkit-scrollbar { display: none; }
   .filters > * { flex: none; }
   .chips { flex-wrap: nowrap; }
@@ -454,6 +491,40 @@ code { padding: 1px 5px; font-family: ui-monospace, SFMono-Regular, Menlo, Conso
   .ask-bar { align-items: flex-start; }
   .trace-row { grid-template-columns: 56px minmax(0, 1fr); }
   .trace-duration { grid-column: 2; }
+  .plan-actions > button { flex: 1 1 0; }
+  .plan-actions .search-button { height: 44px; }
+  .outreach-form > label:not(.outreach-note) { flex: 1 1 100%; }
+  .outreach-note { flex-basis: 100%; }
+  .outreach-actions .search-button { flex: 1 1 100%; }
+}
+
+@media (max-width: 640px) {
+  /* Phones: 16px text in every field (iOS zooms into smaller ones) and tap targets at least 44px tall. */
+  .price-field input, .select, .outreach-number, .outreach-note-input, .outreach-body { font-size: 16px; }
+  .price-field input { width: 48px; }
+  .controls { font-size: 14px; }
+  .price-field, .chip, .select, .mode-tab, .template-chip, .load-more-button, .secondary-button, .search-button,
+  .outreach-number, .outreach-note-input { height: 44px; }
+  .mode-tab { padding: 0 20px; }
+  .switch, .outreach-check, .outreach-dry-run, .text-button { min-height: 44px; }
+  .switch, .outreach-dry-run { display: inline-flex; align-items: center; gap: 8px; }
+  .details-toggle { display: inline-flex; align-items: center; min-height: 44px; padding: 0 2px; }
+  .brand a, .outreach-filter a { display: inline-flex; align-items: center; min-height: 44px; }
+  .outreach-filter a { padding: 0 6px; }
+  .ask-section summary, .hidden-posts summary { padding: 11px 0; }
+  .outreach-check input, .outreach-dry-run input { width: 22px; height: 22px; margin: 0; }
+}
+
+@media (max-width: 640px) {
+  /* Phones: the outreach tables (drafts to review, /outreach) become one card per row, captioned by data-label. */
+  .outreach-table, .outreach-table tbody, .outreach-table tr, .outreach-table td { display: block; }
+  .outreach-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .outreach-table tr { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 10px; padding: 12px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+  .outreach-table td { flex: 1 1 100%; padding: 0; border: 0; }
+  .outreach-table td.outreach-money, .outreach-table td.outreach-when, .outreach-table td.outreach-state-cell { flex: 1 1 0; }
+  .outreach-table td[data-label]::before { content: attr(data-label); display: block; font-size: 12px; color: var(--muted); }
+  .outreach-check-text { display: inline; }
+  .outreach-body { min-width: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {

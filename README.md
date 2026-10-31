@@ -83,7 +83,17 @@ src/carousearch/
   agent/web_search.py    the provider's hosted web search, capped per run
   agent/run_directory.py data/runs/<time>-<id>/, one folder per run
   agent/toolsets.py      ToolCallGate, the hook every tool call passes through, and the toolsets built on it
-  agent/run_prompt.py    execute_plan (the execution phase) and run_prompt (plan, then execute)
+  agent/run_prompt.py    execute_plan (the execution phase, which saves answer.json) and run_prompt (plan, then execute)
+  outreach/models.py     OfferRule, ShortlistedListing, OutreachDraft, OutreachMessage, OutreachPolicy, SendOutcome
+  outreach/run_shortlist.py  a run's kept listings from answer.json and listings.db (row conversion is pure)
+  outreach/policy.py     what to draft, what a send may send (de-duplication, daily cap), the gap (pure)
+  outreach/prompt.py, drafting.py  the drafter's generic instructions; the offer price and prompt (pure), model calls
+  outreach/store.py      data/outreach.db: every drafted and sent message (with empty reply columns for later)
+  outreach/selectors.py  every carousell.sg selector outreach uses, in one place
+  outreach/browser.py    ChatTransport: Playwright over the logged-in profile, or a dry run that sends nothing
+  outreach/sender.py     one batch: policy, one session check, sends spaced by the gap, stop at the first failure
+  outreach/service.py    wiring: draft for a run, preview, approve and send, the login wait
+  web/outreach_routes.py, outreach_runs.py, outreach_view_models.py  the Message sellers panel, batches, /outreach
   canary.py              the health check behind `carousearch canary`
   fixture_capture.py     the dev command behind `carousearch capture-fixtures`
   text_render.py, cli.py terminal output and the `carousearch` command
@@ -305,16 +315,19 @@ The canary's own log is `~/carousearch/data/canary.log`; `cron.log` only catches
 
 ## Web app
 
-A one-page web app for searching Carousell with filters and spotting catalogue posts whose shown price may not be the price of what you searched for. It runs on this machine only, without a login.
+A one-page web app for searching Carousell with filters and spotting catalogue posts whose shown price may not be the price of what you searched for. It runs on this machine only, without a login unless `WEB_PASSWORD` is set (see [Showing it on a phone](#showing-it-on-a-phone)).
 
 ```bash
 .venv/bin/carousearch web              # then open http://localhost:8765
 .venv/bin/carousearch web --port 9000  # another port; --host 127.0.0.1 is the default
+.venv/bin/carousearch web --public     # behind a tunnel: needs WEB_PASSWORD; outreach sends are dry runs
 ```
 
 On WSL2, open http://localhost:8765 in the Windows browser (WSL forwards localhost). Ctrl+C stops the server. It can run next to the Telegram bot: both use `~/carousearch/data/carousearch.db`, and each has its own Carousell session and rate limiter. The bot stays the tool for quick lookups from your phone and for the alerts planned later.
 
 ![Desktop](docs/examples/web-desktop.png)
+
+Every page also works on a phone (360 to 414 px wide): the filters scroll sideways in one row, the outreach tables become one card per message, and fields are large enough to tap. Screenshots at 390 px: [search](docs/examples/web-mobile.png), [Ask answer with drafts](docs/examples/web-mobile-ask.png), [/outreach](docs/examples/web-mobile-outreach.png).
 
 The controls (all optional; after the first search, changing any of them searches again):
 
@@ -347,6 +360,17 @@ The line above the grid reads like `20 of 10,000+ results · 3 multi-item hidden
 Keyboard: `/` puts the cursor in the search box from anywhere on the page; Esc leaves a field.
 
 Requests: a search costs one Carousell search plus, for flagged listings, up to 10 detail requests (cached for 12 hours, shared with the CLI and the bot), all through one rate limiter and one call at a time. The same search again within 2 minutes (toggling the switch, going Back) is answered from memory, and a search the browser has already replaced is skipped. If Carousell blocks the client the page says "Carousell is rate-limiting us, try again in a minute"; if its response changed shape it says to run `carousearch canary` (see [When Carousell changes](#when-carousell-changes)). Details of any error go to the terminal running `carousearch web`, never to the page.
+
+### Showing it on a phone
+
+To try the web app on a phone or show it to someone, put it behind a temporary Cloudflare quick tunnel. Anyone with the link and the password can search from your home IP and run Ask mode on your API key, so share the password only with people you trust, and stop the tunnel when you are done.
+
+1. Set a password in `.env`: `WEB_PASSWORD=<something long>` (and optionally `WEB_USERNAME`; the default is `owner`).
+2. Start the web app in public mode: `.venv/bin/carousearch web --public`. It refuses to start without `WEB_PASSWORD`, listens on 127.0.0.1 only, and turns on public-demo mode: outreach sends are always dry runs (the service enforces it, whatever the form says), and every page shows "Public demo: messages are not sent". Drafting still works. Logging in to Carousell (`carousearch account login`) is CLI-only and never reachable from the web.
+3. In another terminal: `cloudflared tunnel --url http://localhost:8765`. It prints a `https://<random words>.trycloudflare.com` address; open it on the phone and enter the username and password.
+4. When you are done, stop `cloudflared` (Ctrl+C) and then the web app. Quick-tunnel addresses are temporary: each start gives a new one, and the old one stops working.
+
+If the everyday web app is already running on 8765 (docs/NEXT_STEPS.md, section 3), stop it first or start the public one with `--port 8770` and tunnel that port. Never tunnel the MCP HTTP transport (`carousearch mcp --transport http`): it has no authentication.
 
 ### Ask mode
 
@@ -469,6 +493,21 @@ The budgets are enforced, not advised. A call over a budget is refused before it
 `--live` runs each prompt once through `run_prompt` and prints, per prompt, the item class, the attributes by source, the benchmark, whether the planner sampled listings, the checks passed, the plan review statuses, the tool counts of both phases and the cost; then a table and the total cost. It writes everything to `data/evals/<UTC time>.json`, and stops early if Carousell blocks a request.
 
 Status (2026-10-27): run live with the default models: `carousearch eval --live` once over the seven prompts (about US$0.40; every plan sampled the listings and 25 of 26 plan checks passed after one fix and a re-run), and the owner's R15 prompt through `--plan-only` and `--plan-file`. Planning is consistent; execution quality still depends on the planner model (gpt-5.4-mini once spent its whole listing budget on search pages, and its plan review said so). docs/NEXT_STEPS.md, section 4.7, has the table.
+
+## Outreach: offer messages to sellers
+
+After an Ask run, outreach drafts one short offer per kept listing (a percentage below the asking price, specific to that listing), lets you review the batch once, and sends it from your own Carousell account through a browser profile you logged into by hand: one message at a time, 30 to 60 seconds apart, at most 10 new conversations a day, and never twice to the same listing or seller. The full guide, the safety policy and how to check the page selectors after your first login are in [docs/OUTREACH.md](docs/OUTREACH.md).
+
+```bash
+uv pip install --python .venv/bin/python -e ".[dev,llm,outreach]" && .venv/bin/playwright install chromium
+.venv/bin/carousearch account login                       # log in by hand in the window; once
+.venv/bin/carousearch outreach draft <run id> --below 25  # run id = the folder name under data/runs/
+.venv/bin/carousearch outreach send <run id> --all --dry-run
+.venv/bin/carousearch outreach send <run id> --ids 12 14
+.venv/bin/carousearch outreach list
+```
+
+In the web app, a finished Ask answer has a **Message sellers** panel (draft, review, **Send N messages**), and **/outreach** lists every message. In public-demo mode (`web --public`) every send is a dry run.
 
 ## Running the Telegram bot
 

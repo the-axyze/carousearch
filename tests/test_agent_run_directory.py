@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from carousearch.agent.run_directory import new_run_directory, run_directory_name
+from carousearch.agent.run_directory import new_run_directory, run_directory_name, write_answer_file
 
 
 def test_run_folders_are_named_by_utc_start_time() -> None:
@@ -23,3 +23,9 @@ def test_a_new_run_folder_is_created_and_never_reused(tmp_path: Path) -> None:
     with pytest.raises(FileExistsError):
         new_run_directory(tmp_path, started, "x")
     assert new_run_directory(tmp_path, started).name.startswith("20261027-000000-")
+
+
+def test_the_answer_file_is_written_into_the_run_folder(tmp_path: Path) -> None:
+    path = write_answer_file(tmp_path, '{"kept": []}')
+
+    assert path == tmp_path / "answer.json" and path.read_text(encoding="utf-8") == '{"kept": []}'
