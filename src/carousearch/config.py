@@ -3,7 +3,8 @@
 Set CAROUSEARCH_DATA_DIR to move all runtime data elsewhere. The bot reads TELEGRAM_BOT_TOKEN and
 TELEGRAM_OWNER_ID, and screening's price lookup reads the worker model (AGENT_WORKER_MODEL, see language_models.py)
 and its provider's API key, from the environment or from a `.env` file at the project root (environment wins).
-Outreach reads the OUTREACH_* variables (docs/OUTREACH.md).
+Outreach reads the OUTREACH_* variables (docs/OUTREACH.md). The web app's password gate and public-demo mode read
+WEB_PASSWORD, WEB_USERNAME and WEB_PUBLIC_DEMO.
 """
 
 import os
@@ -164,3 +165,29 @@ def resolve_project_path(text: str) -> Path:
     """A path from settings; a relative one is taken from the project root (e.g. data/browser-profile)."""
     path = Path(text).expanduser()
     return path if path.is_absolute() else PROJECT_ROOT / path
+
+
+WEB_PASSWORD_VARIABLE = "WEB_PASSWORD"
+WEB_USERNAME_VARIABLE = "WEB_USERNAME"
+WEB_PUBLIC_DEMO_VARIABLE = "WEB_PUBLIC_DEMO"
+DEFAULT_WEB_USERNAME = "owner"
+TRUE_WORDS = frozenset({"1", "true", "yes", "on"})
+
+
+@dataclass(frozen=True)
+class WebAccessSettings:
+    password: str | None = field(default=None, repr=False)  # WEB_PASSWORD; None: no gate (local use); never shown
+    username: str = DEFAULT_WEB_USERNAME
+    public_demo: bool = False  # outreach sends are always dry runs and the pages say so
+
+
+def load_web_access_settings(
+    environment: Mapping[str, str] | None = None, env_file: Path = DEFAULT_ENV_FILE
+) -> WebAccessSettings:
+    """Read the web app's password gate and public-demo switch."""
+    values = read_setting_values(environment, env_file)
+    return WebAccessSettings(
+        password=values.get(WEB_PASSWORD_VARIABLE, "") or None,
+        username=values.get(WEB_USERNAME_VARIABLE, "").strip() or DEFAULT_WEB_USERNAME,
+        public_demo=values.get(WEB_PUBLIC_DEMO_VARIABLE, "").strip().lower() in TRUE_WORDS,
+    )

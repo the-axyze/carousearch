@@ -2,7 +2,14 @@ from pathlib import Path
 
 import pytest
 
-from carousearch.config import PROJECT_ROOT, TelegramSettings, load_outreach_settings, load_telegram_settings
+from carousearch.config import (
+    PROJECT_ROOT,
+    TelegramSettings,
+    WebAccessSettings,
+    load_outreach_settings,
+    load_telegram_settings,
+    load_web_access_settings,
+)
 
 
 def test_settings_come_from_the_env_file(tmp_path: Path) -> None:
@@ -67,3 +74,33 @@ def test_outreach_settings_are_read_from_the_environment(tmp_path: Path) -> None
 def test_malformed_outreach_settings_are_refused(tmp_path: Path, environment: dict[str, str]) -> None:
     with pytest.raises(ValueError):
         load_outreach_settings(environment=environment, env_file=tmp_path / "x")
+
+
+def test_web_access_is_open_and_not_a_demo_by_default(tmp_path: Path) -> None:
+    settings = load_web_access_settings(environment={}, env_file=tmp_path / "missing.env")
+
+    assert settings == WebAccessSettings(password=None, username="owner", public_demo=False)
+
+
+def test_web_access_reads_the_password_username_and_demo_switch(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("WEB_PASSWORD=from-file\nWEB_USERNAME=friend\n")
+
+    settings = load_web_access_settings(environment={"WEB_PUBLIC_DEMO": "1"}, env_file=env_file)
+
+    assert settings == WebAccessSettings(password="from-file", username="friend", public_demo=True)
+
+
+@pytest.mark.parametrize(("text", "expected"), [("1", True), ("true", True), ("Yes", True), ("0", False), ("", False)])
+def test_the_public_demo_switch_accepts_common_true_words(tmp_path: Path, text: str, expected: bool) -> None:
+    settings = load_web_access_settings(environment={"WEB_PUBLIC_DEMO": text}, env_file=tmp_path / "missing.env")
+
+    assert settings.public_demo is expected
+
+
+def test_an_empty_password_means_no_gate_and_the_password_never_shows_in_repr(tmp_path: Path) -> None:
+    empty = load_web_access_settings(environment={"WEB_PASSWORD": ""}, env_file=tmp_path / "missing.env")
+    set_one = load_web_access_settings(environment={"WEB_PASSWORD": "s3cret"}, env_file=tmp_path / "missing.env")
+
+    assert empty.password is None
+    assert "s3cret" not in repr(set_one)
