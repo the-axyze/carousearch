@@ -32,6 +32,8 @@ If Chromium will not start for lack of system libraries, run `sudo .venv/bin/pla
 
 Web app: run an Ask search to the end. Under the answer, **Message sellers** has the offer form (percent below, round to, an optional note for the drafter such as "I can collect this weekend"). **Draft messages** shows the drafts; tick, edit, then **Send N messages**. Tick **Dry run** first to see exactly what would happen without sending. Progress shows below and updates every few seconds; **Stop after the current message** ends a batch early. **/outreach** lists every message, newest first, with its status, listing link, chat link and run.
 
+Public demo: when the web app runs with `--public` or `WEB_PUBLIC_DEMO=1` (for showing it through a tunnel; README, "Showing it on a phone"), every send is a dry run. The service enforces it whatever the form says, the Dry run toggle is replaced by a note, and every page says "Public demo: messages are not sent". Drafting still works, and the account login stays CLI-only.
+
 CLI:
 
 ```bash

@@ -410,3 +410,7 @@ Built on branch `feature/outreach` (from `feature/generic-planning`): after an A
 - `outreach/` package: store (`data/outreach.db`, reply columns reserved), pure policy (de-duplication by listing and seller across all runs, a daily cap of 10, a 30 to 60 second gap), generic drafter, Playwright transport with every selector in one file, a dry-run transport, the sender and the service. `execute_plan` now saves `answer.json` in each run folder.
 - CLI `account login | status` and `outreach draft | send | list`; the web app's Message sellers panel and `/outreach`.
 - Tests: 1183 offline (1061 before), ruff clean. No real message sent; drafting checked live on `openai:gpt-5.4-nano`.
+
+## Web app on a phone, password gate and public demo (2026-10-31)
+
+On `feature/outreach`: every page works at 360 to 414 px (stacked outreach tables, 16 px fields, 44 px tap targets, no sideways page scroll; screenshots `docs/examples/web-mobile*.png`). `WEB_PASSWORD` turns on HTTP Basic auth for every request, static files included (`web/access.py`). `carousearch web --public` needs the password, binds 127.0.0.1 only and turns on public-demo mode (`WEB_PUBLIC_DEMO`), in which the outreach service makes every send a dry run and each page carries a banner. README, "Showing it on a phone", has the quick-tunnel steps. Tests: 1218 offline (1183 before), ruff clean.

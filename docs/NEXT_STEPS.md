@@ -11,7 +11,7 @@ Phase letters: phases C and D below continue the MCP and agent track in ROADMAP.
 ## 1. Current state (2026-10-26)
 
 - Head: phase C (PR #4) and the tiered agent (PR #5) are merged into `main`. The generic planning layer (section 4.7) is on `feature/generic-planning` (PR #6, open). Outreach phase 1 (section 4.8) is on `feature/outreach`, branched from `feature/generic-planning` on 2026-10-30, with its PR based on that branch.
-- Tests: `.venv/bin/pytest` gives 1183 passed, 1 deselected (the live test), in about 17 s on the owner's machine (verified 2026-10-30 on `feature/outreach`; 1061 before it). `ruff check src tests` is clean.
+- Tests: `.venv/bin/pytest` gives 1218 passed, 1 deselected (the live test), in about 17 s on the owner's machine (verified 2026-10-31 on `feature/outreach`; 1183 before the phone layout and password gate, 1061 before outreach). `ruff check src tests` is clean.
 - No type checker runs (see H1).
 
 ### 1.1 Components
@@ -156,6 +156,7 @@ How the requirements map to the code today:
 | Process | How it runs | Port | Notes |
 |---|---|---|---|
 | Web app | `nohup`, long-running | 8765 on 127.0.0.1 | WSL2 forwards it to the Windows browser's `localhost` |
+| Web app, public demo | Manual, `web --public` behind `cloudflared tunnel --url` | 8765 (or `--port`) on 127.0.0.1 | Needs `WEB_PASSWORD`; outreach sends are dry runs; stop the tunnel when done |
 | Telegram bot | `nohup`, long-running | none (long polling) | Only one poller per bot token; a second one gets "Conflict" |
 | MCP server, stdio | Started and stopped by the host | none | Logs to stderr |
 | MCP server, HTTP | Manual, `--transport http` | 8766 on 127.0.0.1 | No auth; not running now |
@@ -177,6 +178,8 @@ Each process has its own Carousell session and rate limiter, and they all share 
 | `OUTREACH_MIN_GAP_SECONDS`, `OUTREACH_MAX_GAP_SECONDS` | outreach: the wait between two sends | 30, 60 |
 | `OUTREACH_DRAFT_MODEL` | outreach's drafter | blank: the worker model |
 | `OUTREACH_PROFILE_DIR` | outreach's browser profile | blank: `<data dir>/browser-profile` |
+| `WEB_PASSWORD`, `WEB_USERNAME` | the web app's password gate (HTTP Basic auth on every request) | blank: no gate; username `owner` |
+| `WEB_PUBLIC_DEMO` | the web app: outreach sends forced to dry runs, a banner on every page (`web --public` sets it) | off |
 | `CAROUSEARCH_DATA_DIR` | everything | `~/carousearch/data` |
 
 The web app reads its settings once at start-up, so it needs a restart after `.env` changes.
