@@ -15,7 +15,7 @@
     <tbody>
       {%- for row in rows %}
       <tr>
-        <td class="outreach-status-cell"><span class="outreach-status outreach-status-{{ row.status }}">{{ row.status }}</span>
+        <td class="outreach-state-cell"><span class="outreach-status outreach-status-{{ row.status }}">{{ row.status }}</span>
           {%- if row.chat_url %} <a href="{{ row.chat_url }}" target="_blank" rel="noopener noreferrer">chat</a>{% endif %}</td>
         <td class="outreach-when">{{ row.when }}</td>
         <td class="outreach-listing">
