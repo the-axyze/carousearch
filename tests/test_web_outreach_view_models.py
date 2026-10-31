@@ -47,6 +47,16 @@ def test_drafts_view_unticks_drafts_a_send_would_skip() -> None:
     assert view.cap_line == "1 new conversations allowed in the next 24 hours."
 
 
+def test_drafts_view_says_when_sends_are_forced_to_dry_run() -> None:
+    batch = DraftBatch(
+        run_id="run", drafts=[message(1, "a", status="drafted")], skipped=[], send_preview={}, from_answer=True,
+        cap_remaining=1,
+    )
+
+    assert not drafts_view(batch).dry_run_forced
+    assert drafts_view(batch, dry_run_forced=True).dry_run_forced
+
+
 def test_batch_view_polls_while_running_and_shows_the_summary_when_done() -> None:
     batch = OutreachBatch(batch_id="b1", run_id="run", dry_run=False, started_at=START)
     batch.record(ProgressEvent("sending", "Sending to user1"))

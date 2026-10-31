@@ -113,6 +113,7 @@ class WebServices:
     outreach: OutreachService | None = None  # drafting and sending offer messages; None: the panel is hidden
     outreach_missing_key: str | None = None  # the variable the drafting model needs and lacks, if any
     outreach_batches: OutreachBatchRegistry = field(default_factory=OutreachBatchRegistry)
+    public_demo: bool = False  # WEB_PUBLIC_DEMO / --public: the pages say messages are not sent
 
 
 def search_and_screen(request: SearchRequest, services: WebServices) -> ScreenedPage:

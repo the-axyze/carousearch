@@ -50,12 +50,15 @@ from carousearch.config import (
     DEFAULT_MCP_HTTP_PORT,
     TELEGRAM_BOT_TOKEN_VARIABLE,
     TELEGRAM_OWNER_ID_VARIABLE,
+    WEB_PASSWORD_VARIABLE,
     OutreachSettings,
     TelegramSettings,
+    WebAccessSettings,
     default_data_dir,
     load_outreach_settings,
     load_screening_settings,
     load_telegram_settings,
+    load_web_access_settings,
 )
 from carousearch.filters.schema import MAX_PAGE_SIZE, Condition, DealMethod, SearchRequest, SearchResult, SortOrder
 from carousearch.fixture_capture import capture_fixtures
@@ -186,9 +189,12 @@ def main(
         if arguments.command == "whoami":
             return run_whoami_command(load_telegram_settings(), sys.stdout, sys.stderr)
         if arguments.command == "web":
+            access = load_web_access_settings()
+            if arguments.public:
+                access = public_web_access(access, arguments.host)
             settings = WebSettings(
                 data_dir=data_dir, screening=load_screening_settings(), agent=load_agent_settings(),
-                outreach=load_outreach_settings(),
+                outreach=load_outreach_settings(), access=access,
             )
             return run_web_command(settings, client_factory, rate_limiter, arguments.host, arguments.port)
         if arguments.command == "mcp":
@@ -272,6 +278,9 @@ def build_argument_parser() -> argparse.ArgumentParser:
     web = commands.add_parser("web", help="run the local web app (http://localhost:8765 by default)")
     web.add_argument("--port", type=int, default=DEFAULT_WEB_PORT, help="default %(default)s")
     web.add_argument("--host", default=DEFAULT_WEB_HOST, help="default %(default)s (this machine only)")
+    web.add_argument("--public", action="store_true",
+                     help=f"public demo behind a tunnel: needs {WEB_PASSWORD_VARIABLE}, binds 127.0.0.1, and every "
+                          "outreach send is a dry run")
 
     mcp = commands.add_parser("mcp", help="run the MCP server for agent hosts such as Claude Code (docs/MCP.md)")
     mcp.add_argument("--transport", choices=["stdio", "http"], default="stdio",
@@ -659,6 +668,17 @@ def describe_missing_bot_settings(missing_variables: list[str]) -> str:
     return "\n".join(lines)
 
 
+def public_web_access(access: WebAccessSettings, host: str) -> WebAccessSettings:
+    """The settings for `web --public`: a password is required, the app stays on 127.0.0.1 (the tunnel connects
+    locally) and public-demo mode is on. Raises ValueError, with what to fix, otherwise."""
+    if not access.password:
+        raise ValueError(f"--public needs {WEB_PASSWORD_VARIABLE} set (in .env or the environment) so the page asks "
+                         "for a password")
+    if host != DEFAULT_WEB_HOST:
+        raise ValueError(f"--public binds {DEFAULT_WEB_HOST} only (the tunnel connects locally); drop --host {host}")
+    return replace(access, public_demo=True)
+
+
 def run_web_command(
     settings: WebSettings,
     client_factory: ClientFactory,
@@ -670,6 +690,11 @@ def run_web_command(
     """Serve the web app until Ctrl+C. Its Carousell client and database open when the server starts."""
     logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.INFO)
     app = create_app(settings, services_factory=lambda: build_web_services(settings, client_factory(rate_limiter)))
+    if settings.access.password:
+        logging.getLogger(__name__).info(
+            "Password gate on (username %s)%s", settings.access.username,
+            "; public demo: outreach sends are dry runs" if settings.access.public_demo else "",
+        )
     serve(app, host=host, port=port)
     return EXIT_OK
 

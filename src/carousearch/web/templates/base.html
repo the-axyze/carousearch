@@ -11,6 +11,9 @@
   <script src="/static/app.js" defer></script>
 </head>
 <body>
+{%- if public_demo %}
+<p class="demo-banner" role="status">Public demo: messages are not sent</p>
+{%- endif %}
 {% block body %}{% endblock %}
 </body>
 </html>

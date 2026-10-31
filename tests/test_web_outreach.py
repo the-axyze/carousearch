@@ -75,7 +75,9 @@ def kept(listing_id: str) -> KeptListing:
                        reason="fits")
 
 
-def build_services(tmp_path: Path, session: SessionStatus | None = None, missing_key: str | None = None) -> WebServices:
+def build_services(
+    tmp_path: Path, session: SessionStatus | None = None, missing_key: str | None = None, public_demo: bool = False
+) -> WebServices:
     session = session or SessionStatus(logged_in=True, username="me")
     store = SqliteOutreachStore.open(tmp_path / "outreach.db")
     outreach = OutreachService(
@@ -87,11 +89,12 @@ def build_services(tmp_path: Path, session: SessionStatus | None = None, missing
         clock=Clock(),
         sleep=lambda seconds: None,
         rng=random.Random(4),
+        force_dry_run=public_demo,
     )
     screening = ScreeningServices(client=NoCarousell(), store=None, resolver=None, clock=Clock())
     return WebServices(
         carousell=NoCarousell(), screening=screening, price_lookup_enabled=False, runs_root=tmp_path,
-        outreach=outreach, outreach_missing_key=missing_key,
+        outreach=outreach, outreach_missing_key=missing_key, public_demo=public_demo,
     )
 
 
@@ -240,6 +243,30 @@ def test_a_send_sends_the_ticked_drafts_and_the_outreach_page_lists_them(tmp_pat
     assert page.count("outreach-status-sent") == 2 and page.count("outreach-status-drafted") == 1
     assert "Hi, saw your Lamp 3. Would $220 work?" in page and RUN_FOLDER in page
     assert sent_only.count("outreach-status-") == 2
+
+
+def test_in_public_demo_mode_a_send_is_a_dry_run_and_the_pages_say_so(tmp_path: Path) -> None:
+    services = build_services(tmp_path, public_demo=True)
+    make_run_folder(tmp_path)
+    with open_client(services) as client:
+        drafts_page = draft(client)
+        first, _, _ = message_ids(services)
+        response = client.post(f"/outreach/runs/{RUN_FOLDER}/send", data={"message_id": [str(first)]}, headers=HTMX)
+        final = wait_for_batch(client, batch_id_in(response.text))
+        search_page = client.get("/").text
+        outreach_page = client.get("/outreach").text
+
+    assert "Public demo: a dry run, nothing is sent" in drafts_page and 'name="dry_run"' not in drafts_page
+    assert "Dry run: nothing is sent." in response.text
+    assert "Dry run done (nothing sent or recorded): 1 would be sent" in final
+    assert [message.status for message in services.outreach.store.list_for_run(RUN_FOLDER)] == ["drafted"] * 3
+    assert "Public demo: messages are not sent" in search_page and "Public demo: messages are not sent" in outreach_page
+
+
+def test_without_public_demo_mode_no_banner_is_shown(tmp_path: Path) -> None:
+    with open_client(build_services(tmp_path)) as client:
+        assert "Public demo" not in client.get("/").text
+        assert "Public demo" not in client.get("/outreach").text
 
 
 def test_a_send_is_aborted_when_the_profile_is_not_logged_in(tmp_path: Path) -> None:

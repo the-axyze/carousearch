@@ -89,13 +89,14 @@ class DraftsView:
     notice: str | None
     cap_line: str
     send_count: int
+    dry_run_forced: bool = False  # public-demo mode: the Send button only rehearses
 
     @property
     def send_label(self) -> str:
         return f"Send {self.send_count} message{'' if self.send_count == 1 else 's'}"
 
 
-def drafts_view(batch: "DraftBatch") -> DraftsView:
+def drafts_view(batch: "DraftBatch", dry_run_forced: bool = False) -> DraftsView:
     rows = [
         DraftRowView(
             message_id=draft.id,
@@ -121,6 +122,7 @@ def drafts_view(batch: "DraftBatch") -> DraftsView:
         notice=notice,
         cap_line=f"{batch.cap_remaining} new conversations allowed in the next 24 hours.",
         send_count=sum(row.checked for row in rows),
+        dry_run_forced=dry_run_forced,
     )
 
 

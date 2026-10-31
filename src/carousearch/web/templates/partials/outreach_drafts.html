@@ -28,7 +28,11 @@
   <div class="outreach-actions">
     <button id="outreach-send" class="search-button" type="submit" data-outreach-send
             {%- if not drafts.send_count %} disabled{% endif %}>{{ drafts.send_label }}</button>
+    {%- if drafts.dry_run_forced %}
+    <span class="outreach-dry-run">Public demo: a dry run, nothing is sent</span>
+    {%- else %}
     <label class="outreach-dry-run"><input type="checkbox" name="dry_run" value="1"> Dry run (send nothing)</label>
+    {%- endif %}
     <span class="muted">{{ drafts.cap_line }}</span>
   </div>
 </form>

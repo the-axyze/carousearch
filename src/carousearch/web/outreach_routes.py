@@ -73,7 +73,8 @@ async def draft_messages(
         logger.warning("Outreach drafting for run %s failed: %s: %s", run_id, type(error).__name__, error)
         return outreach_message(request, DRAFTING_FAILED_MESSAGE, 409)
     logger.info("Outreach: %d drafts for run %s", len(batch.drafts), run_id)
-    return TEMPLATES.TemplateResponse(request, "partials/outreach_drafts.html", {"drafts": drafts_view(batch)})
+    view = drafts_view(batch, dry_run_forced=services.outreach.force_dry_run)
+    return TEMPLATES.TemplateResponse(request, "partials/outreach_drafts.html", {"drafts": view})
 
 
 @router.post("/outreach/runs/{run_id}/send", response_class=HTMLResponse)
@@ -90,7 +91,7 @@ async def send_messages(request: Request, services: Services, run_id: RunFolder)
         return outreach_message(request, BATCH_IN_PROGRESS_MESSAGE, 409)
     edits = {message_id: str(form.get(f"body_{message_id}") or "") for message_id in message_ids}
     services.outreach.update_bodies(edits)
-    dry_run = form.get("dry_run") == "1"
+    dry_run = form.get("dry_run") == "1" or services.outreach.force_dry_run  # the service enforces it too
     batch = start_send_batch(
         services.outreach_batches, services.outreach, run_id, message_ids, dry_run, services.screening.clock()
     )
@@ -128,7 +129,7 @@ async def outreach_page(request: Request, services: Services, status: str = "") 
     statuses = (status,) if status in MESSAGE_STATUSES else ()
     messages = services.outreach.store.list_recent(statuses=statuses) if services.outreach else []
     context = {"rows": message_rows(messages), "status": status if statuses else "", "statuses": MESSAGE_STATUSES,
-               "configured": services.outreach is not None}
+               "configured": services.outreach is not None, "public_demo": services.public_demo}
     return TEMPLATES.TemplateResponse(request, "outreach.html", context)
 
 

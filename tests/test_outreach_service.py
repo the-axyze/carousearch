@@ -136,6 +136,28 @@ def test_a_dry_run_sends_nothing_and_changes_nothing(service: OutreachService, t
     assert any(event.kind == "waiting" for event in events)
 
 
+def test_a_service_forced_to_dry_run_never_opens_the_browser_or_records_a_send(
+    service: OutreachService, tmp_path: Path
+) -> None:
+    make_run(tmp_path, [card("1", "a"), card("2", "b")])
+    asyncio.run(service.draft_for_run(RUN_ID, RULE))
+    service.force_dry_run = True
+    service.transport_factory = lambda: pytest.fail("public-demo mode must never open the real browser")
+
+    report = service.approve_and_send(RUN_ID, None, dry_run=False)
+
+    assert report.dry_run and len(report.sent) == 2
+    assert [message.status for message in service.store.list_for_run(RUN_ID)] == ["drafted"] * 2
+
+
+def test_the_real_service_can_be_built_forced_to_dry_run(tmp_path: Path) -> None:
+    built = build_outreach_service(OutreachSettings(), tmp_path, lambda: START, force_dry_run=True)
+    try:
+        assert built.force_dry_run
+    finally:
+        built.store.close()
+
+
 def test_a_send_approves_the_chosen_drafts_and_records_outcomes(service: OutreachService, tmp_path: Path) -> None:
     make_run(tmp_path, [card("1", "a"), card("2", "b"), card("3", "c")])
     transports: list[DryRunChatTransport] = []

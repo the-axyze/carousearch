@@ -105,6 +105,7 @@ async def search_page(request: Request, services: Services) -> HTMLResponse:
         "ask": ask_form_view(services.agent),
         "progress": None if active_run is None else run_progress(active_run, services),
         "plan": None if waiting_plan is None else run_plan(waiting_plan, services),
+        "public_demo": services.public_demo,
     }
     if mode == PageMode.FILTERS and search_request is not None:
         if active_run is not None:

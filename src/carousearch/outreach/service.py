@@ -78,6 +78,7 @@ class OutreachService:
     clock: Callable[[], datetime]
     sleep: Callable[[float], None] = time.sleep
     rng: random.Random = field(default_factory=random.Random)
+    force_dry_run: bool = False  # public-demo mode: every send is a dry run, whatever the caller asks
 
     async def draft_for_run(self, run_id: str, rule: OfferRule, limit: int | None = None) -> DraftBatch:
         """Draft one message per shortlisted listing (up to `limit`), replacing the run's earlier unsent drafts."""
@@ -110,7 +111,9 @@ class OutreachService:
     ) -> SendReport:
         """Approve the chosen drafts (all of the run's unsent ones when `message_ids` is None) and send them. A dry
         run changes nothing in the store, waits no time and sends nothing. `sleep` replaces the service's own for
-        this batch (the web app passes one that a shutdown or the Stop button interrupts)."""
+        this batch (the web app passes one that a shutdown or the Stop button interrupts). With `force_dry_run`
+        set on the service, every send is a dry run."""
+        dry_run = dry_run or self.force_dry_run
         candidates = self.store.list_for_run(run_id, ("drafted", "approved"))
         if message_ids is not None:
             chosen = set(message_ids)
@@ -145,9 +148,10 @@ class OutreachService:
 
 
 def build_outreach_service(
-    settings: OutreachSettings, data_dir: Path, clock: Callable[[], datetime]
+    settings: OutreachSettings, data_dir: Path, clock: Callable[[], datetime], force_dry_run: bool = False
 ) -> OutreachService:
-    """The real service: data/outreach.db, the drafting model, and the browser profile."""
+    """The real service: data/outreach.db, the drafting model, and the browser profile (never opened to send when
+    `force_dry_run` is set)."""
     policy = OutreachPolicy(
         daily_cap=settings.daily_cap, min_gap_seconds=settings.min_gap_seconds, max_gap_seconds=settings.max_gap_seconds
     )
@@ -165,6 +169,7 @@ def build_outreach_service(
         drafter_factory=build_drafter,
         transport_factory=lambda: build_browser(settings, data_dir),
         clock=clock,
+        force_dry_run=force_dry_run,
     )
 
 

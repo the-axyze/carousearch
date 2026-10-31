@@ -486,6 +486,54 @@ def test_importing_the_cli_leaves_pydantic_ai_and_the_mcp_sdk_unloaded() -> None
     assert completed.stdout.strip() == "False False"
 
 
+def test_web_public_without_a_password_exits_with_what_to_set(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli, "run_web_command", lambda *arguments: pytest.fail("the server must not start"))
+    monkeypatch.setenv("WEB_PASSWORD", "")  # the environment wins over any .env value
+
+    exit_code = cli.main(["--data-dir", str(tmp_path), "web", "--public"])
+
+    assert exit_code == 2
+    assert "--public needs WEB_PASSWORD" in capsys.readouterr().err
+
+
+def test_web_public_refuses_any_host_but_this_machine(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli, "run_web_command", lambda *arguments: pytest.fail("the server must not start"))
+    monkeypatch.setenv("WEB_PASSWORD", "secret")
+
+    exit_code = cli.main(["--data-dir", str(tmp_path), "web", "--public", "--host", "0.0.0.0"])
+
+    assert exit_code == 2
+    assert "binds 127.0.0.1 only" in capsys.readouterr().err
+
+
+def test_web_public_with_a_password_turns_on_the_gate_and_demo_mode(tmp_path: Path, monkeypatch) -> None:
+    passed = {}
+
+    def fake_run_web_command(settings, client_factory, rate_limiter, host: str, port: int) -> int:
+        passed.update(settings=settings, host=host)
+        return 0
+
+    monkeypatch.setattr(cli, "run_web_command", fake_run_web_command)
+    monkeypatch.setenv("WEB_PASSWORD", "secret")
+    monkeypatch.setenv("WEB_PUBLIC_DEMO", "")
+
+    exit_code = cli.main(["--data-dir", str(tmp_path), "web", "--public"])
+
+    access = passed["settings"].access
+    assert exit_code == 0 and passed["host"] == "127.0.0.1"
+    assert (access.password, access.public_demo) == ("secret", True)
+
+
+def test_web_without_public_keeps_demo_mode_off(tmp_path: Path, monkeypatch) -> None:
+    passed = {}
+    monkeypatch.setattr(cli, "run_web_command", lambda settings, *rest: passed.update(settings=settings) or 0)
+    monkeypatch.setenv("WEB_PASSWORD", "")
+    monkeypatch.setenv("WEB_PUBLIC_DEMO", "")
+
+    assert cli.main(["--data-dir", str(tmp_path), "web"]) == 0
+    assert (passed["settings"].access.password, passed["settings"].access.public_demo) == (None, False)
+
+
 def test_web_defaults_to_port_8765_on_this_machine_only() -> None:
     arguments = cli.build_argument_parser().parse_args(["web"])
     assert (arguments.host, arguments.port) == ("127.0.0.1", 8765)

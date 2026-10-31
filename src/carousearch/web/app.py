@@ -89,7 +89,9 @@ def build_web_services(settings: WebSettings, carousell_client: CarousellClient)
         max_detail_fetches=settings.max_detail_fetches,
     )
 
-    outreach = build_outreach_service(settings.outreach, settings.data_dir, utc_now)
+    outreach = build_outreach_service(
+        settings.outreach, settings.data_dir, utc_now, force_dry_run=settings.access.public_demo
+    )
 
     def close() -> None:
         carousell_client.close()
@@ -107,6 +109,7 @@ def build_web_services(settings: WebSettings, carousell_client: CarousellClient)
         knowledge_dir=settings.knowledge_dir,
         outreach=outreach,
         outreach_missing_key=settings.outreach.missing_key_variable(),
+        public_demo=settings.access.public_demo,
     )
 
 
